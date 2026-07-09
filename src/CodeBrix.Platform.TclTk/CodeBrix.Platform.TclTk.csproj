@@ -33,11 +33,14 @@
                                        guards, which the analyzer cannot see.
         * CS0162 / CS0164 / CS0649 / CS8073 / CS9191 / CA2022 / CA2259
                                      - benign artifacts of heavy conditional compilation in the port.
+        * CS8981                     - the UNIX interop layer mirrors POSIX type names verbatim
+                                       (dlopen, rlimit, timespec, utsname, ...); renaming them would
+                                       break port fidelity with upstream.
       A future pass may retire these individually (HttpClient migration, X509CertificateLoader,
       OperatingSystem.IsWindows() annotations). Precedent for situational NoWarn: CodeBrix.AssemblyTools,
       CodeBrix.Platform.OpenGL.
     -->
-    <NoWarn>1591;CS0162;CS0164;CS0612;CS0618;CS0649;CS0672;CS8073;CS9191;CA1416;CA2022;CA2259;SYSLIB0003;SYSLIB0005;SYSLIB0006;SYSLIB0007;SYSLIB0012;SYSLIB0013;SYSLIB0014;SYSLIB0018;SYSLIB0019;SYSLIB0021;SYSLIB0022;SYSLIB0023;SYSLIB0044;SYSLIB0045;SYSLIB0057</NoWarn>
+    <NoWarn>1591;CS0162;CS0164;CS0612;CS0618;CS0649;CS0672;CS8073;CS8981;CS9191;CA1416;CA2022;CA2259;SYSLIB0003;SYSLIB0005;SYSLIB0006;SYSLIB0007;SYSLIB0012;SYSLIB0013;SYSLIB0014;SYSLIB0018;SYSLIB0019;SYSLIB0021;SYSLIB0022;SYSLIB0023;SYSLIB0044;SYSLIB0045;SYSLIB0057</NoWarn>
     <!--
       Generate assembly attributes from the version block / metadata below. The
       ported Properties/AssemblyInfo.cs (which carried its own, wildcard-versioned
@@ -129,22 +132,27 @@
     on cross-platform net10.0: System.Web (WEB), BinaryFormatter (SERIALIZATION),
     native interop (NATIVE*), the native-Tcl bridge (TCL*), WinForms/desktop,
     remoting/CAS, and Mono legacy hacks. Tuned in P3 against the compiler.
+    UNIX matches the upstream EagleNetStandard2X default (EagleUnix=true,
+    EagleWindows=false); it enables the pthread/rlimit native stack checking
+    that converts deep-evaluation C# stack exhaustion (SIGABRT/exit 134) into
+    a graceful Tcl "out of stack space" error, plus the other runtime-guarded
+    Unix support (uname, symlinks, dlopen, ANSI console).
   -->
   <PropertyGroup>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <DefineConstants>$(DefineConstants);TCLTK;SHELL;THROW_ON_DISPOSED;APPROVED_VERBS;CONSOLE;HISTORY;NETWORK;NET_40;MONO_HACKS;MONO_LEGACY;DATA;EMIT;RESULT_LIMITS;XML;UNSAFE;NET_STANDARD_20;NET_STANDARD_21;NET_CORE_REFERENCES;DEBUGGER;DEBUGGER_ARGUMENTS;DEBUGGER_ENGINE;DEBUGGER_EXECUTE;DEBUGGER_EXPRESSION;DEBUGGER_VARIABLE;BREAK_ON_EXITING;DEBUGGER_BREAKPOINTS;PROFILER;NOTIFY;NOTIFY_ARGUMENTS;NOTIFY_EXCEPTION;NOTIFY_EXECUTE;NOTIFY_EXPRESSION;NOTIFY_GLOBAL;NOTIFY_OBJECT;NOTIFY_TCL;DEBUG_TRACE;DEBUG_WRITE;PREVIOUS_RESULT;INTERACTIVE_COMMANDS;CALLBACK_QUEUE;TEST;TEST_PLUGIN;THREADING;NATIVE;NATIVE_PACKAGE;NATIVE_THREAD_ID;NATIVE_UTILITY;NATIVE_UTILITY_BSTR;LIBRARY;ARGUMENT_CACHE;PARSE_CACHE;LIST_CACHE;EXECUTE_CACHE;EXPRESSION_FLAGS;TYPE_CACHE;COM_TYPE_CACHE;CACHE_ARGUMENT_TOSTRING;CACHE_RESULT_TOSTRING;CACHE_ARGUMENTLIST_TOSTRING;CACHE_STRINGLIST_TOSTRING;CACHE_STATISTICS;DYNAMIC;TCL;TCL_KITS;TCL_THREADED;TCL_THREADS;TCL_UNICODE</DefineConstants>
+    <DefineConstants>$(DefineConstants);TCLTK;UNIX;SHELL;THROW_ON_DISPOSED;APPROVED_VERBS;CONSOLE;HISTORY;NETWORK;NET_40;MONO_HACKS;MONO_LEGACY;DATA;EMIT;RESULT_LIMITS;XML;UNSAFE;NET_STANDARD_20;NET_STANDARD_21;NET_CORE_REFERENCES;DEBUGGER;DEBUGGER_ARGUMENTS;DEBUGGER_ENGINE;DEBUGGER_EXECUTE;DEBUGGER_EXPRESSION;DEBUGGER_VARIABLE;BREAK_ON_EXITING;DEBUGGER_BREAKPOINTS;PROFILER;NOTIFY;NOTIFY_ARGUMENTS;NOTIFY_EXCEPTION;NOTIFY_EXECUTE;NOTIFY_EXPRESSION;NOTIFY_GLOBAL;NOTIFY_OBJECT;NOTIFY_TCL;DEBUG_TRACE;DEBUG_WRITE;PREVIOUS_RESULT;INTERACTIVE_COMMANDS;CALLBACK_QUEUE;TEST;TEST_PLUGIN;THREADING;NATIVE;NATIVE_PACKAGE;NATIVE_THREAD_ID;NATIVE_UTILITY;NATIVE_UTILITY_BSTR;LIBRARY;ARGUMENT_CACHE;PARSE_CACHE;LIST_CACHE;EXECUTE_CACHE;EXPRESSION_FLAGS;TYPE_CACHE;COM_TYPE_CACHE;CACHE_ARGUMENT_TOSTRING;CACHE_RESULT_TOSTRING;CACHE_ARGUMENTLIST_TOSTRING;CACHE_STRINGLIST_TOSTRING;CACHE_STATISTICS;DYNAMIC;TCL;TCL_KITS;TCL_THREADED;TCL_THREADS;TCL_UNICODE</DefineConstants>
   </PropertyGroup>
 
   <!--
     Platform/feature files excluded from the cross-platform core build.
-      * AnsiConsole.cs           - needs the UNIX native-console feature (NATIVE && UNIX).
+      * NativeConsole.cs         - needs native Windows console support (NATIVE && WINDOWS);
+                                    AnsiConsole.cs (NATIVE && UNIX) is compiled in.
       * WinForms form/key feature - KeyOps/FormOps/KeyEventManager/StatusFormOps/WindowOps
                                     depend unconditionally on System.Windows.Forms (Windows-only).
       * WinTrust/Authenticode     - WinTrustDotNet2/WinTrustOps are Windows-only signature checks.
     These features cannot run cross-platform; their remaining references are gated out in P3.
   -->
   <ItemGroup>
-    <Compile Remove="Components\Private\AnsiConsole.cs" />
     <Compile Remove="Components\Private\NativeConsole.cs" />
     <Compile Remove="Components\Private\KeyOps.cs" />
     <Compile Remove="Components\Private\FormOps.cs" />

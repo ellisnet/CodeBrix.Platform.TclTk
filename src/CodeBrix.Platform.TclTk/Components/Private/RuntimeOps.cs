@@ -310,6 +310,25 @@ namespace CodeBrix.Platform.TclTk._Components.Private //was previously: Eagle._C
         /// checked during expression evaluation.
         /// </summary>
         private static int NoStackExpressionLevels = 100;
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: Threads whose native stacks are smaller than this size may
+        //       run out of native stack space well before reaching any of
+        //       the "NoStack*Levels" nesting levels above (e.g. the ~1MB
+        //       worker threads used by some unit testing frameworks);
+        //       therefore, threads with stacks smaller than this size have
+        //       their native stack space checked at every nesting level.
+        //
+        // HACK: This is purposely not read-only.
+        //
+        /// <summary>
+        /// The native stack size, in bytes, below which the nesting level
+        /// exemptions are skipped and native stack space is checked at every
+        /// nesting level.
+        /// </summary>
+        private static ulong SmallStackSize = 0x400000; /* 4MB */
 #endif
         #endregion
 
@@ -1087,6 +1106,91 @@ namespace CodeBrix.Platform.TclTk._Components.Private //was previously: Eagle._C
 
         ///////////////////////////////////////////////////////////////////////
 
+        //
+        // NOTE: This method must be callable from the very hot path in the
+        //       ShouldCheckForStackSpace method; therefore, it purposely
+        //       avoids acquiring the lock and querying any native APIs.
+        //
+        /// <summary>
+        /// This method determines whether the outer native stack pointer has
+        /// already been captured (saved) for the current thread, using only
+        /// the per-thread cached data.
+        /// </summary>
+        /// <returns>
+        /// True if the outer native stack pointer has been captured for the
+        /// current thread; otherwise, false (including when the thread data
+        /// slots are unavailable).
+        /// </returns>
+        private static bool HaveNativeStackPointers()
+        {
+            try
+            {
+                LocalDataStoreSlot slot = stackPtrSlot;
+
+                if (slot == null)
+                    return false;
+
+                /* THREAD-SAFE, per-thread data */
+                object stackPtrData = Thread.GetData(slot); /* throw */
+
+                return (stackPtrData is UIntPtr) &&
+                    ((UIntPtr)stackPtrData != UIntPtr.Zero);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: This method must be callable from the very hot path in the
+        //       ShouldCheckForStackSpace method; therefore, it purposely
+        //       avoids acquiring the lock and querying any native APIs.
+        //
+        /// <summary>
+        /// This method determines whether the current thread is known to have
+        /// a small native stack (i.e. one smaller than the size specified by
+        /// the <see cref="SmallStackSize" /> field), using only the per-thread
+        /// cached stack size information.
+        /// </summary>
+        /// <returns>
+        /// True if the current thread is known to have a small native stack;
+        /// otherwise, false (including when no cached stack size information
+        /// exists yet for the current thread).
+        /// </returns>
+        private static bool IsSmallNativeStack()
+        {
+            try
+            {
+                LocalDataStoreSlot slot = stackSizeSlot;
+
+                if (slot == null)
+                    return false;
+
+                /* THREAD-SAFE, per-thread data */
+                NativeStack.StackSize stackSize = Thread.GetData(
+                    slot) as NativeStack.StackSize; /* throw */
+
+                if (stackSize == null)
+                    return false;
+
+                UIntPtr maximum = stackSize.maximum;
+
+                if (maximum == UIntPtr.Zero)
+                    return false;
+
+                return maximum.ToUInt64() < SmallStackSize;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
         /// <summary>
         /// This method determines whether the native stack space should be
         /// checked, based on the specified ready flags and the various nesting
@@ -1155,6 +1259,37 @@ namespace CodeBrix.Platform.TclTk._Components.Private //was previously: Eagle._C
             //       just do it.
             //
             if (FlagOps.HasFlags(flags, ReadyFlags.ForceStack, true))
+                return true;
+
+            //
+            // BUGFIX: If this thread has not captured its outer native stack
+            //         pointer yet and this is the outermost evaluation level,
+            //         check now.  This captures (anchors) the outer native
+            //         stack pointer while still near the top of the thread
+            //         stack and caches the per-thread stack size information;
+            //         otherwise, the used space calculations performed by all
+            //         subsequent checks on this thread would under-report by
+            //         however much native stack space was already in use when
+            //         the first check happened to run (i.e. potentially very
+            //         deep within the stack), rendering the native stack
+            //         overflow detection ineffective.
+            //
+            if ((levels <= 1) && (parserLevels <= 1) &&
+                (expressionLevels <= 1) && !HaveNativeStackPointers())
+            {
+                return true;
+            }
+
+            //
+            // BUGFIX: Threads with small native stacks (e.g. the ~1MB worker
+            //         threads used by some unit testing frameworks) may run
+            //         out of native stack space well before reaching any of
+            //         the "NoStack*Levels" nesting levels checked below;
+            //         therefore, check them at every nesting level.  This
+            //         relies upon the per-thread cached stack size, which is
+            //         populated by the outermost level check above.
+            //
+            if (IsSmallNativeStack())
                 return true;
 
             //

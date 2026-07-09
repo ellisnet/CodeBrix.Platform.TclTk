@@ -63,6 +63,13 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
     [ObjectGroup("fileSystem")]
     internal sealed class _File : Core
     {
+        //
+        // NOTE: These dictionaries are initialized inline (rather than lazily
+        //       from the constructor) so that two interpreters constructing
+        //       their "file" commands concurrently cannot race and observe a
+        //       partially populated collection (or double-add a key).  The
+        //       CLR guarantees the thread safety of static initialization.
+        //
         /// <summary>
         /// The collection of callbacks, keyed by qualified name (for example
         /// <c>file.ctime</c> or <c>directory.mtime</c>), used to query the
@@ -70,7 +77,16 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
         /// This is a one-time, shared initialization and is not a
         /// per-interpreter datum.
         /// </summary>
-        private static Dictionary<string, GetDateTimeCallback> GetTimeCallbacks = null;
+        private static readonly Dictionary<string, GetDateTimeCallback> GetTimeCallbacks =
+            new Dictionary<string, GetDateTimeCallback>
+        {
+            { "file.ctime", File.GetCreationTimeUtc },
+            { "file.mtime", File.GetLastWriteTimeUtc },
+            { "file.atime", File.GetLastAccessTimeUtc },
+            { "directory.ctime", Directory.GetCreationTimeUtc },
+            { "directory.mtime", Directory.GetLastWriteTimeUtc },
+            { "directory.atime", Directory.GetLastAccessTimeUtc }
+        };
         /// <summary>
         /// The collection of callbacks, keyed by qualified name (for example
         /// <c>file.ctime</c> or <c>directory.mtime</c>), used to set the
@@ -78,7 +94,16 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
         /// This is a one-time, shared initialization and is not a
         /// per-interpreter datum.
         /// </summary>
-        private static Dictionary<string, SetDateTimeCallback> SetTimeCallbacks = null;
+        private static readonly Dictionary<string, SetDateTimeCallback> SetTimeCallbacks =
+            new Dictionary<string, SetDateTimeCallback>
+        {
+            { "file.ctime", File.SetCreationTimeUtc },
+            { "file.mtime", File.SetLastWriteTimeUtc },
+            { "file.atime", File.SetLastAccessTimeUtc },
+            { "directory.ctime", Directory.SetCreationTimeUtc },
+            { "directory.mtime", Directory.SetLastWriteTimeUtc },
+            { "directory.atime", Directory.SetLastAccessTimeUtc }
+        };
 
         ///////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -94,39 +119,8 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
             )
             : base(commandData)
         {
-            //
-            // NOTE: One-time initialization, this is not a per-interpreter
-            //       datum and it never changes.
-            //
-            if (GetTimeCallbacks == null)
-            {
-                GetTimeCallbacks = new Dictionary<string, GetDateTimeCallback>();
-
-                GetTimeCallbacks.Add("file.ctime", File.GetCreationTimeUtc);
-                GetTimeCallbacks.Add("file.mtime", File.GetLastWriteTimeUtc);
-                GetTimeCallbacks.Add("file.atime", File.GetLastAccessTimeUtc);
-
-                GetTimeCallbacks.Add("directory.ctime", Directory.GetCreationTimeUtc);
-                GetTimeCallbacks.Add("directory.mtime", Directory.GetLastWriteTimeUtc);
-                GetTimeCallbacks.Add("directory.atime", Directory.GetLastAccessTimeUtc);
-            }
-
-            //
-            // NOTE: One-time initialization, this is not a per-interpreter
-            //       datum and it never changes.
-            //
-            if (SetTimeCallbacks == null)
-            {
-                SetTimeCallbacks = new Dictionary<string, SetDateTimeCallback>();
-
-                SetTimeCallbacks.Add("file.ctime", File.SetCreationTimeUtc);
-                SetTimeCallbacks.Add("file.mtime", File.SetLastWriteTimeUtc);
-                SetTimeCallbacks.Add("file.atime", File.SetLastAccessTimeUtc);
-
-                SetTimeCallbacks.Add("directory.ctime", Directory.SetCreationTimeUtc);
-                SetTimeCallbacks.Add("directory.mtime", Directory.SetLastWriteTimeUtc);
-                SetTimeCallbacks.Add("directory.atime", Directory.SetLastAccessTimeUtc);
-            }
+            // NOTE: The GetTimeCallbacks and SetTimeCallbacks collections
+            //       are initialized inline; see above.
         }
 
         ///////////////////////////////////////////////////////////////////////////////////////////////

@@ -134,8 +134,13 @@ public class InterpreterEvaluationTests
         using Interpreter interpreter = TclTkTest.CreateInterpreter();
 
         //Act
+        // NOTE: The ';' after the "if" command is required: without it, the
+        //       "return [expr ...]" words become extra arguments to "if" and
+        //       (per Tcl substitution rules) the recursive [fact ...] call in
+        //       them is substituted unconditionally - even when $n <= 1 - so
+        //       the recursion never terminates.
         TclTkTest.Eval(interpreter,
-            "proc fact {n} { if {$n <= 1} { return 1 } return [expr {$n * [fact [expr {$n - 1}]]}] }");
+            "proc fact {n} { if {$n <= 1} { return 1 }; return [expr {$n * [fact [expr {$n - 1}]]}] }");
         string result = TclTkTest.Eval(interpreter, "fact 5");
 
         //Assert
