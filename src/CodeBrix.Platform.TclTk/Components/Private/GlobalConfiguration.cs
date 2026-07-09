@@ -1,0 +1,842 @@
+/*
+ * GlobalConfiguration.cs --
+ *
+ * Copyright (c) 2007-2012 by Joe Mistachkin.  All rights reserved.
+ *
+ * See the file "license.terms" for information on usage and redistribution of
+ * this file, and for a DISCLAIMER OF ALL WARRANTIES.
+ *
+ * RCS: @(#) $Id: $
+ */
+
+using System;
+using CodeBrix.Platform.TclTk._Attributes;
+using CodeBrix.Platform.TclTk._Components.Public;
+using CodeBrix.Platform.TclTk._Containers.Public;
+using CodeBrix.Platform.TclTk._Constants;
+
+namespace CodeBrix.Platform.TclTk._Components.Private //was previously: Eagle._Components.Private;
+{
+    /// <summary>
+    /// This class provides centralized access to the package-wide global
+    /// configuration values, which may be backed by environment variables
+    /// and/or application settings.  It supports querying, setting, and
+    /// removing these values, optionally using a package name prefix, and
+    /// emits diagnostic trace messages describing each operation.
+    /// </summary>
+    [ObjectId("ec7e7b01-b6c3-40fb-87a0-4a9eefc6f192")]
+    internal static class GlobalConfiguration
+    {
+        #region Private Constants
+        //
+        // NOTE: This format string is used when building the package
+        //       prefixed environment variable names (e.g. TclTk_Foo).
+        //
+        /// <summary>
+        /// The format string used when building the package-prefixed
+        /// environment variable names (e.g. <c>TclTk_Foo</c>).
+        /// </summary>
+        private static readonly string EnvVarFormat = "{0}_{1}";
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        //
+        // NOTE: This is the prefix (not including the trailing underscore)
+        //       that is used when handling environment variables that are
+        //       package-specific.
+        //
+        // WARNING: *HACK* Hard-code the package environment variable prefix
+        //          here because using the package name would require using
+        //          the GlobalState class, which relies upon this class.
+        //
+        /// <summary>
+        /// The prefix, not including the trailing underscore, used when
+        /// handling environment variables that are package-specific.
+        /// </summary>
+        private static readonly string EnvVarPrefix = "TclTk";
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////
+
+        #region Private Data
+        //
+        // NOTE: When this value is non-zero, trace messages will be written
+        //       whenever a global configuration value is read, modified, or
+        //       removed.
+        //
+        // HACK: This is purposely not read-only.
+        //
+        /// <summary>
+        /// When this value is non-zero, trace messages will be written
+        /// whenever a global configuration value is read, modified, or
+        /// removed.
+        /// </summary>
+        private static bool DefaultVerbose = ShouldBeVerbose();
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: These flags will be added (or removed) from every call into
+        //       this class that uses the GetFlags helper method.  This will
+        //       be very useful in testing and debugging.
+        //
+        // HACK: These are purposely not read-only.
+        //
+        /// <summary>
+        /// These flags will be added to every call into this class that uses
+        /// the <see cref="GetFlags" /> helper method.
+        /// </summary>
+        private static ConfigurationFlags enableFlags = ConfigurationFlags.None;
+        /// <summary>
+        /// These flags will be removed from every call into this class that
+        /// uses the <see cref="GetFlags" /> helper method.
+        /// </summary>
+        private static ConfigurationFlags disableFlags = ConfigurationFlags.None;
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////
+
+        #region Private Helper Methods
+        /// <summary>
+        /// This method determines whether verbose diagnostic tracing should be
+        /// enabled by default for global configuration operations.
+        /// </summary>
+        /// <returns>
+        /// True if verbose tracing should be enabled by default; otherwise,
+        /// false.
+        /// </returns>
+        private static bool ShouldBeVerbose() /* THREAD-SAFE */
+        {
+            if (!Build.Debug)
+                return false;
+
+            if (CommonOps.Environment.DoesVariableExist(EnvVars.NoVerbose))
+                return false;
+
+            return true;
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method formats a diagnostic fragment indicating whether the
+        /// specified configuration value was found.
+        /// </summary>
+        /// <param name="value">
+        /// The configuration value that was looked up, or null if it was not
+        /// found.
+        /// </param>
+        /// <returns>
+        /// A string indicating whether the value exists.
+        /// </returns>
+        private static string FormatDoesExist(
+            string value /* in */
+            ) /* THREAD-SAFE */
+        {
+            return String.Format(
+                "DOES {0}EXIST", (value == null) ? "NOT " : String.Empty);
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method conditionally transforms a configuration value based on
+        /// the specified flags, optionally expanding embedded variables,
+        /// splitting it into a list, and/or normalizing path components to
+        /// their native form.
+        /// </summary>
+        /// <param name="flags">
+        /// The flags that control how the value should be mutated.
+        /// </param>
+        /// <param name="value">
+        /// The configuration value to be mutated, in place.  Upon failure,
+        /// this is set to null.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, this will contain an appropriate error message.
+        /// </param>
+        /// <returns>
+        /// True if the value was successfully mutated (or required no
+        /// mutation); otherwise, false.
+        /// </returns>
+        private static bool MaybeMutateValue(
+            ConfigurationFlags flags, /* in */
+            ref string value,         /* in, out */
+            ref Result error          /* out */
+            ) /* THREAD-SAFE */
+        {
+            if (FlagOps.HasFlags(flags, ConfigurationFlags.Expand, true))
+                value = CommonOps.Environment.ExpandVariables(value);
+
+            if (FlagOps.HasFlags(flags, ConfigurationFlags.ListValue, true))
+            {
+                //
+                // TODO: *PERF* We cannot have this call to SplitList perform
+                //       any caching because the returned list is modified by
+                //       the code below.
+                //
+                StringList list = null;
+
+                if (ParserOps<string>.SplitList(
+                        null, value, 0, Length.Invalid, false, ref list,
+                        ref error) != ReturnCode.Ok)
+                {
+                    value = null;
+                    return false;
+                }
+
+                if (FlagOps.HasFlags(
+                        flags, ConfigurationFlags.NativePathValue, true))
+                {
+                    int count = list.Count;
+
+                    for (int index = 0; index < count; index++)
+                        list[index] = PathOps.GetNativePath(list[index]);
+                }
+
+                value = list.ToString();
+            }
+            else
+            {
+                if (FlagOps.HasFlags(
+                        flags, ConfigurationFlags.NativePathValue, true))
+                {
+                    value = PathOps.GetNativePath(value);
+                }
+            }
+
+            return true;
+        }
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////
+
+        #region Private Configuration Value Management Methods
+        /// <summary>
+        /// This method retrieves a global configuration value from the
+        /// environment variables and/or application settings, optionally using
+        /// the package name prefix, and mutating the value as directed by the
+        /// specified flags.
+        /// </summary>
+        /// <param name="variable">
+        /// The name of the configuration value to retrieve.
+        /// </param>
+        /// <param name="flags">
+        /// The flags that control how the value is looked up and mutated.
+        /// </param>
+        /// <param name="prefixedVariable">
+        /// Upon return, this will contain the variable name with the package
+        /// name prefix applied, if requested.
+        /// </param>
+        /// <returns>
+        /// The configuration value, or null if it does not exist.
+        /// </returns>
+        private static string GetValue(
+            string variable,            /* in */
+            ConfigurationFlags flags,   /* in */
+            ref string prefixedVariable /* out */
+            ) /* THREAD-SAFE */
+        {
+            //
+            // NOTE: The error message, if any, of a step in the process
+            //       that failed and caused a null value to be returned.
+            //
+            string value = null;
+
+            //
+            // NOTE: The error message, if any, of a step in the process that
+            //       failed and caused a null value to be returned.
+            //
+            Result error = null;
+
+            //
+            // NOTE: If the variable name is null or empty, return the default
+            //       value (null) instead of potentially throwing an exception
+            //       later.
+            //
+            if (String.IsNullOrEmpty(variable))
+                goto done;
+
+            //
+            // NOTE: Try to get the variable name without the package name
+            //       prefix?
+            //
+            bool unprefixed = FlagOps.HasFlags(
+                flags, ConfigurationFlags.Unprefixed, true);
+
+            //
+            // NOTE: Set the variable name prefixed by package name instead?
+            //
+            if ((EnvVarPrefix != null) &&
+                FlagOps.HasFlags(flags, ConfigurationFlags.Prefixed, true))
+            {
+                prefixedVariable = String.Format(
+                    EnvVarFormat, EnvVarPrefix, variable);
+            }
+
+            //
+            // NOTE: Does the caller want to check the environment variables?
+            //
+            if (FlagOps.HasFlags(flags, ConfigurationFlags.Environment, true))
+            {
+                //
+                // NOTE: Try the variable name prefixed by our package name
+                //       first?
+                //
+                if ((prefixedVariable != null) && (value == null))
+                    value = CommonOps.Environment.GetVariable(prefixedVariable);
+
+                //
+                // NOTE: Failing that, just try for the variable name?
+                //
+                if (unprefixed && !FlagOps.HasFlags(
+                        flags, ConfigurationFlags.SkipUnprefixedEnvironment,
+                        true) && (value == null))
+                {
+                    value = CommonOps.Environment.GetVariable(variable);
+                }
+            }
+
+            //
+            // NOTE: Does the caller want to check the loaded AppSettings?
+            //
+            if (FlagOps.HasFlags(flags, ConfigurationFlags.AppSettings, true))
+            {
+                //
+                // NOTE: Try the variable name prefixed by our package name
+                //       first?
+                //
+                if ((prefixedVariable != null) && (value == null))
+                    value = ConfigurationOps.GetAppSetting(prefixedVariable);
+
+                //
+                // NOTE: Failing that, just try for the variable name?
+                //
+                if (unprefixed && !FlagOps.HasFlags(
+                        flags, ConfigurationFlags.SkipUnprefixedAppSettings,
+                        true) && (value == null))
+                {
+                    value = ConfigurationOps.GetAppSetting(variable);
+                }
+            }
+
+            //
+            // NOTE: If necessary, mutate the value to be returned based on
+            //       the flags specified by the caller.
+            //
+            if (!String.IsNullOrEmpty(value) &&
+                !MaybeMutateValue(flags, ref value, ref error))
+            {
+                goto done; /* REDUNDANT */
+            }
+
+        done:
+
+            //
+            // NOTE: Output diagnostic message about the configuration value
+            //       request, if necessary.
+            //
+            if (!FlagOps.HasFlags(
+                    flags, ConfigurationFlags.ExistOnly, true) &&
+                (DefaultVerbose || FlagOps.HasFlags(
+                    flags, ConfigurationFlags.Verbose, true)))
+            {
+                TraceOps.DebugTrace(String.Format(
+                    "GetValue: variable = {0}, prefixedVariable = {1}, " +
+                    "value = {2}, defaultVerbose = {3}, flags = {4}, " +
+                    "error = {5}", FormatOps.WrapOrNull(variable),
+                    FormatOps.WrapOrNull(prefixedVariable),
+                    FormatOps.WrapOrNull(value), DefaultVerbose,
+                    FormatOps.WrapOrNull(flags),
+                    FormatOps.WrapOrNull(error)),
+                    typeof(GlobalConfiguration).Name,
+                    TracePriority.StartupDebug);
+            }
+
+            return value;
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method stores a global configuration value into the
+        /// environment variables and/or application settings, optionally using
+        /// the package name prefix, and mutating the value as directed by the
+        /// specified flags.
+        /// </summary>
+        /// <param name="variable">
+        /// The name of the configuration value to set.
+        /// </param>
+        /// <param name="value">
+        /// The configuration value to set.
+        /// </param>
+        /// <param name="flags">
+        /// The flags that control how the value is stored and mutated.
+        /// </param>
+        /// <param name="prefixedVariable">
+        /// Upon return, this will contain the variable name with the package
+        /// name prefix applied, if requested.
+        /// </param>
+        private static void SetValue(
+            string variable,            /* in */
+            string value,               /* in */
+            ConfigurationFlags flags,   /* in */
+            ref string prefixedVariable /* out */
+            ) /* THREAD-SAFE */
+        {
+            //
+            // NOTE: The error message, if any, of a step in the process
+            //       that failed and caused a null value to be returned.
+            //
+            Result error = null;
+
+            //
+            // NOTE: If the variable name is null or empty, do nothing.
+            //
+            if (String.IsNullOrEmpty(variable))
+                goto done;
+
+            //
+            // NOTE: Try to set the variable name without the package name
+            //       prefix?
+            //
+            bool unprefixed = FlagOps.HasFlags(
+                flags, ConfigurationFlags.Unprefixed, true);
+
+            //
+            // NOTE: Set the variable name prefixed by package name instead?
+            //
+            if ((EnvVarPrefix != null) &&
+                FlagOps.HasFlags(flags, ConfigurationFlags.Prefixed, true))
+            {
+                prefixedVariable = String.Format(
+                    EnvVarFormat, EnvVarPrefix, variable);
+            }
+
+            //
+            // NOTE: If necessary, mutate the value to be returned based on
+            //       the flags specified by the caller.
+            //
+            if (!String.IsNullOrEmpty(value) &&
+                !MaybeMutateValue(flags, ref value, ref error))
+            {
+                goto done;
+            }
+
+            //
+            // NOTE: Does the caller want to modify the loaded AppSettings?
+            //
+            if (FlagOps.HasFlags(flags, ConfigurationFlags.AppSettings, true))
+            {
+                //
+                // NOTE: Attempt to set the requested AppSettings value,
+                //       also using the prefixed name if requested.
+                //
+                if (unprefixed && !FlagOps.HasFlags(
+                        flags, ConfigurationFlags.SkipUnprefixedAppSettings,
+                        true))
+                {
+                    /* NO RESULT */
+                    ConfigurationOps.SetAppSetting(variable, value);
+                }
+
+                if (prefixedVariable != null)
+                {
+                    /* NO RESULT */
+                    ConfigurationOps.SetAppSetting(prefixedVariable, value);
+                }
+            }
+
+            //
+            // NOTE: Does the caller want to modify the environment variables?
+            //
+            if (FlagOps.HasFlags(flags, ConfigurationFlags.Environment, true))
+            {
+                //
+                // NOTE: Attempt to set the requested environment variable,
+                //       also using the prefixed name if requested.
+                //
+                if (unprefixed && !FlagOps.HasFlags(
+                        flags, ConfigurationFlags.SkipUnprefixedEnvironment,
+                        true))
+                {
+                    /* IGNORED */
+                    CommonOps.Environment.SetVariable(variable, value);
+                }
+
+                if (prefixedVariable != null)
+                {
+                    /* IGNORED */
+                    CommonOps.Environment.SetVariable(prefixedVariable, value);
+                }
+            }
+
+        done:
+
+            //
+            // NOTE: Output diagnostic message about the configuration value
+            //       request, if necessary.
+            //
+            if (DefaultVerbose ||
+                FlagOps.HasFlags(flags, ConfigurationFlags.Verbose, true))
+            {
+                TraceOps.DebugTrace(String.Format(
+                    "SetValue: variable = {0}, prefixedVariable = {1}, " +
+                    "value = {2}, defaultVerbose = {3}, flags = {4}, " +
+                    "error = {5}", FormatOps.WrapOrNull(variable),
+                    FormatOps.WrapOrNull(prefixedVariable),
+                    FormatOps.WrapOrNull(value), DefaultVerbose,
+                    FormatOps.WrapOrNull(flags),
+                    FormatOps.WrapOrNull(error)),
+                    typeof(GlobalConfiguration).Name,
+                    TracePriority.StartupDebug);
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method removes a global configuration value from the
+        /// environment variables and/or application settings, optionally using
+        /// the package name prefix.
+        /// </summary>
+        /// <param name="variable">
+        /// The name of the configuration value to remove.
+        /// </param>
+        /// <param name="flags">
+        /// The flags that control how the value is removed.
+        /// </param>
+        /// <param name="prefixedVariable">
+        /// Upon return, this will contain the variable name with the package
+        /// name prefix applied, if requested.
+        /// </param>
+        private static void UnsetValue(
+            string variable,            /* in */
+            ConfigurationFlags flags,   /* in */
+            ref string prefixedVariable /* out */
+            ) /* THREAD-SAFE */
+        {
+            //
+            // NOTE: If the variable name is null or empty, do nothing.
+            //
+            if (String.IsNullOrEmpty(variable))
+                goto done;
+
+            //
+            // NOTE: Try to unset the variable name without the package name
+            //       prefix?
+            //
+            bool unprefixed = FlagOps.HasFlags(
+                flags, ConfigurationFlags.Unprefixed, true);
+
+            //
+            // NOTE: Set the variable name prefixed by package name instead?
+            //
+            if ((EnvVarPrefix != null) &&
+                FlagOps.HasFlags(flags, ConfigurationFlags.Prefixed, true))
+            {
+                prefixedVariable = String.Format(
+                    EnvVarFormat, EnvVarPrefix, variable);
+            }
+
+            //
+            // NOTE: Does the caller want to remove the loaded AppSettings?
+            //
+            if (FlagOps.HasFlags(flags, ConfigurationFlags.AppSettings, true))
+            {
+                //
+                // NOTE: Try to unset the requested AppSettings value(s).
+                //
+                if (unprefixed && !FlagOps.HasFlags(
+                        flags, ConfigurationFlags.SkipUnprefixedAppSettings,
+                        true))
+                {
+                    /* NO RESULT */
+                    ConfigurationOps.UnsetAppSetting(variable);
+                }
+
+                if (prefixedVariable != null)
+                {
+                    /* NO RESULT */
+                    ConfigurationOps.UnsetAppSetting(prefixedVariable);
+                }
+            }
+
+            //
+            // NOTE: Does the caller want to remove the environment variables?
+            //
+            if (FlagOps.HasFlags(flags, ConfigurationFlags.Environment, true))
+            {
+                //
+                // NOTE: Try to unset the requested environment variable(s).
+                //
+                if (unprefixed && !FlagOps.HasFlags(
+                        flags, ConfigurationFlags.SkipUnprefixedEnvironment,
+                        true))
+                {
+                    /* IGNORED */
+                    CommonOps.Environment.UnsetVariable(variable);
+                }
+
+                if (prefixedVariable != null)
+                {
+                    /* IGNORED */
+                    CommonOps.Environment.UnsetVariable(prefixedVariable);
+                }
+            }
+
+        done:
+
+            //
+            // NOTE: Output diagnostic message about the configuration value
+            //       request, if necessary.
+            //
+            if (DefaultVerbose ||
+                FlagOps.HasFlags(flags, ConfigurationFlags.Verbose, true))
+            {
+                TraceOps.DebugTrace(String.Format(
+                    "UnsetValue: variable = {0}, prefixedVariable = {1}, " +
+                    "defaultVerbose = {2}, flags = {3}",
+                    FormatOps.WrapOrNull(variable),
+                    FormatOps.WrapOrNull(prefixedVariable),
+                    DefaultVerbose, FormatOps.WrapOrNull(flags)),
+                    typeof(GlobalConfiguration).Name,
+                    TracePriority.StartupDebug);
+            }
+        }
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////
+
+        #region Public Configuration Value Management Methods
+        /// <summary>
+        /// This method combines the specified configuration flags with the
+        /// flags that are globally enabled and/or disabled for this class,
+        /// optionally adding the verbose flag.
+        /// </summary>
+        /// <param name="flags">
+        /// The base configuration flags to start from.
+        /// </param>
+        /// <param name="verbose">
+        /// Non-zero to add the verbose flag to the resulting flags.
+        /// </param>
+        /// <returns>
+        /// The resulting configuration flags.
+        /// </returns>
+        public static ConfigurationFlags GetFlags(
+            ConfigurationFlags flags, /* in */
+            bool verbose              /* in */
+            ) /* THREAD-SAFE */
+        {
+            ConfigurationFlags result = flags;
+
+            if (verbose)
+                result |= ConfigurationFlags.Verbose;
+
+            ConfigurationFlags localFlags = enableFlags;
+
+            if (localFlags != ConfigurationFlags.None)
+                result |= localFlags;
+
+            localFlags = disableFlags;
+
+            if (localFlags != ConfigurationFlags.None)
+                result &= ~localFlags;
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether the specified global configuration
+        /// value exists.
+        /// </summary>
+        /// <param name="variable">
+        /// The name of the configuration value to check.
+        /// </param>
+        /// <param name="flags">
+        /// The flags that control how the value is looked up.
+        /// </param>
+        /// <returns>
+        /// True if the configuration value exists; otherwise, false.
+        /// </returns>
+        public static bool DoesValueExist(
+            string variable,         /* in */
+            ConfigurationFlags flags /* in */
+            ) /* THREAD-SAFE */
+        {
+            //
+            // NOTE: The default value is null, which means that the value
+            //       is not available and/or not set.
+            //
+            string value = null; /* NOT USED */
+
+            //
+            // NOTE: Delegate to the private method.  This does the actual
+            //       work, including any necessary diagnostic messaging.
+            //
+            return DoesValueExist(variable, flags, ref value);
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether the specified global configuration
+        /// value exists, also returning its value.
+        /// </summary>
+        /// <param name="variable">
+        /// The name of the configuration value to check.
+        /// </param>
+        /// <param name="flags">
+        /// The flags that control how the value is looked up.
+        /// </param>
+        /// <param name="value">
+        /// Upon return, this will contain the configuration value, or null if
+        /// it does not exist.
+        /// </param>
+        /// <returns>
+        /// True if the configuration value exists; otherwise, false.
+        /// </returns>
+        public static bool DoesValueExist(
+            string variable,          /* in */
+            ConfigurationFlags flags, /* in */
+            ref string value          /* out */
+            ) /* THREAD-SAFE */
+        {
+            //
+            // NOTE: This will contain the variable name, with the optional
+            //       default prefix, if necessary.
+            //
+            string prefixedVariable = null;
+
+            //
+            // NOTE: Delegate to the private method.  This does the actual
+            //       work; however, prevent it from emitting a diagnostic
+            //       message by passing the ExistOnly flag (i.e. we have a
+            //       diagnostic message of our own).
+            //
+            string localValue = GetValue(variable,
+                flags | ConfigurationFlags.ExistOnly, ref prefixedVariable);
+
+            //
+            // NOTE: Output diagnostic message about the configuration value
+            //       request, if necessary.
+            //
+            if (DefaultVerbose ||
+                FlagOps.HasFlags(flags, ConfigurationFlags.Verbose, true))
+            {
+                TraceOps.DebugTrace(String.Format(
+                    "DoesValueExist: variable = {0}, " +
+                    "prefixedVariable = {1}, {2}, " +
+                    "defaultVerbose = {3}, flags = {4}",
+                    FormatOps.WrapOrNull(variable),
+                    FormatOps.WrapOrNull(prefixedVariable),
+                    FormatDoesExist(localValue), DefaultVerbose,
+                    FormatOps.WrapOrNull(flags)),
+                    typeof(GlobalConfiguration).Name,
+                    TracePriority.StartupDebug);
+            }
+
+            //
+            // NOTE: This method returns non-zero if the specified variable
+            //       exists.  Given how this subsystem works, a null value
+            //       can never be valid for a variable that exists.
+            //
+            value = localValue;
+
+            return (localValue != null);
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method retrieves the specified global configuration value.
+        /// </summary>
+        /// <param name="variable">
+        /// The name of the configuration value to retrieve.
+        /// </param>
+        /// <param name="flags">
+        /// The flags that control how the value is looked up and mutated.
+        /// </param>
+        /// <returns>
+        /// The configuration value, or null if it does not exist.
+        /// </returns>
+        public static string GetValue(
+            string variable,         /* in */
+            ConfigurationFlags flags /* in */
+            ) /* THREAD-SAFE */
+        {
+            //
+            // NOTE: This will contain the variable name, with the optional
+            //       default prefix, if necessary.  The resulting value is
+            //       not used by this method.
+            //
+            string prefixedVariable = null; /* NOT USED */
+
+            //
+            // NOTE: Delegate to the private method.  This does the actual
+            //       work, including any necessary diagnostic messaging.
+            //
+            return GetValue(variable, flags, ref prefixedVariable);
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method stores the specified global configuration value.
+        /// </summary>
+        /// <param name="variable">
+        /// The name of the configuration value to set.
+        /// </param>
+        /// <param name="value">
+        /// The configuration value to set.
+        /// </param>
+        /// <param name="flags">
+        /// The flags that control how the value is stored and mutated.
+        /// </param>
+        public static void SetValue(
+            string variable,         /* in */
+            string value,            /* in */
+            ConfigurationFlags flags /* in */
+            ) /* THREAD-SAFE */
+        {
+            //
+            // NOTE: This will contain the variable name, with the optional
+            //       default prefix, if necessary.  The resulting value is
+            //       not used by this method.
+            //
+            string prefixedVariable = null; /* NOT USED */
+
+            SetValue(variable, value, flags, ref prefixedVariable);
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method removes the specified global configuration value.
+        /// </summary>
+        /// <param name="variable">
+        /// The name of the configuration value to remove.
+        /// </param>
+        /// <param name="flags">
+        /// The flags that control how the value is removed.
+        /// </param>
+        public static void UnsetValue(
+            string variable,         /* in */
+            ConfigurationFlags flags /* in */
+            ) /* THREAD-SAFE */
+        {
+            //
+            // NOTE: This will contain the variable name, with the optional
+            //       default prefix, if necessary.  The resulting value is
+            //       not used by this method.
+            //
+            string prefixedVariable = null; /* NOT USED */
+
+            UnsetValue(variable, flags, ref prefixedVariable);
+        }
+        #endregion
+    }
+}

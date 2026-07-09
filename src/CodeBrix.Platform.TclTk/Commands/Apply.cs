@@ -1,0 +1,648 @@
+/*
+ * Apply.cs --
+ *
+ * Copyright (c) 2007-2012 by Joe Mistachkin.  All rights reserved.
+ *
+ * See the file "license.terms" for information on usage and redistribution of
+ * this file, and for a DISCLAIMER OF ALL WARRANTIES.
+ *
+ * RCS: @(#) $Id: $
+ */
+
+using System;
+using CodeBrix.Platform.TclTk._Attributes;
+using CodeBrix.Platform.TclTk._Components.Private;
+using CodeBrix.Platform.TclTk._Components.Public;
+using CodeBrix.Platform.TclTk._Constants;
+using CodeBrix.Platform.TclTk._Containers.Public;
+using CodeBrix.Platform.TclTk._Interfaces.Public;
+
+namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
+{
+    /// <summary>
+    /// This class implements the TclTk <c>apply</c> command, which applies an
+    /// anonymous procedure (a lambda expression of the form
+    /// <c>{args body}</c> or <c>{args body namespace}</c>) to a set of
+    /// arguments, evaluating its body in a temporary call frame.  See
+    /// <c>core_language.md</c> for the command syntax and semantics.
+    /// </summary>
+    [ObjectId("2bf60b1f-86bd-4271-952a-847b72b613c4")]
+    [CommandFlags(
+        CommandFlags.Safe | CommandFlags.Standard |
+        CommandFlags.SecuritySdk)]
+    [ObjectGroup("procedure")]
+    internal sealed class Apply : Core
+    {
+        #region Private Static Methods
+        /// <summary>
+        /// This method constructs and returns a per-interpreter unique,
+        /// fully qualified command name within the specified namespace,
+        /// suitable for naming the temporary call frame used to evaluate the
+        /// lambda body.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context this command is executing in, used to
+        /// obtain the next unique identifier.  This parameter should not be
+        /// null.
+        /// </param>
+        /// <param name="namespace">
+        /// The namespace in which the generated name should reside, which may
+        /// be the global namespace.  This parameter may be null.
+        /// </param>
+        /// <returns>
+        /// A per-interpreter unique, absolute (fully qualified) name based on
+        /// this command's name and the next interpreter-wide identifier.
+        /// </returns>
+        private string NextName(
+            Interpreter interpreter, /* in */
+            INamespace @namespace    /* in */
+            )
+        {
+            //
+            // NOTE: Create and return a per-interpreter unique name in
+            //       the specified namespace (which may be global).
+            //
+            return NamespaceOps.MakeAbsoluteName(
+                NamespaceOps.MakeQualifiedName(interpreter, @namespace,
+                StringList.MakeList(this.Name, GlobalState.NextId(
+                interpreter))));
+        }
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// Constructs an instance of the <c>apply</c> command.
+        /// </summary>
+        /// <param name="commandData">
+        /// The data used to create and identify this command, such as its
+        /// name and flags.  This parameter may be null.
+        /// </param>
+        public Apply(
+            ICommandData commandData
+            )
+            : base(commandData)
+        {
+            // do nothing.
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region IExecute Members
+        /// <summary>
+        /// This method executes the <c>apply</c> command.  It interprets the
+        /// first argument as a lambda expression, binds the supplied arguments
+        /// to the lambda's formal parameters in a temporary call frame, and
+        /// evaluates the lambda body, returning its result.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context this command is executing in.  This
+        /// parameter should not be null.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra, command-specific data supplied when this command was
+        /// created, if any.  This parameter may be null.
+        /// </param>
+        /// <param name="arguments">
+        /// The list of arguments for this invocation.  Element zero is the
+        /// command name; element one is the lambda expression; any remaining
+        /// elements are the values bound to the lambda's formal parameters.
+        /// This parameter should not be null.
+        /// </param>
+        /// <param name="result">
+        /// Upon success, this contains the result produced by evaluating the
+        /// lambda body.  Upon failure, this contains an appropriate error
+        /// message.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success, with the lambda body's
+        /// result placed in <paramref name="result" />; otherwise, a non-Ok
+        /// value (e.g. <see cref="ReturnCode.Error" />) when the lambda
+        /// expression is malformed, the wrong number of arguments is supplied,
+        /// the interpreter or argument list is null, or evaluating the lambda
+        /// body fails, with details placed in <paramref name="result" />.
+        /// </returns>
+        public override ReturnCode Execute(
+            Interpreter interpreter, /* in */
+            IClientData clientData,  /* in */
+            ArgumentList arguments,  /* in */
+            ref Result result        /* out */
+            )
+        {
+            ReturnCode code = ReturnCode.Ok;
+
+            if (interpreter != null)
+            {
+                if (arguments != null)
+                {
+                    int argumentCount = arguments.Count;
+
+                    if (argumentCount >= 2)
+                    {
+                        //
+                        // NOTE: lambdaExpr must be a two element list {args body} or a three element
+                        //       list {args body namespace}.
+                        //
+                        StringList lambdaExpr = null;
+
+                        code = ListOps.GetOrCopyOrSplitList(
+                            interpreter, arguments[1], true, ref lambdaExpr, ref result);
+
+                        if (code == ReturnCode.Ok)
+                        {
+                            if ((lambdaExpr.Count == 2) || (lambdaExpr.Count == 3))
+                            {
+                                bool isLibrary = false;
+                                bool isFast = false;
+                                bool isAtomic = false;
+                                bool isInline = false;
+
+#if ARGUMENT_CACHE || PARSE_CACHE
+                                bool isNonCaching = false;
+#endif
+
+                                bool isMatchTypes = false;
+                                ArgumentList overwriteArguments = null;
+                                ArgumentList cleanArguments = null;
+
+                                if (!interpreter.InternalIsSafe())
+                                {
+                                    ScriptOps.ShouldProcedureHaveFlags(
+                                        interpreter, null, lambdaExpr[1],
+                                        interpreter.InternalCultureInfo,
+                                        out isLibrary, out isFast,
+                                        out isAtomic, out isInline,
+#if ARGUMENT_CACHE || PARSE_CACHE
+                                        out isNonCaching,
+#endif
+                                        out isMatchTypes, out overwriteArguments,
+                                        out cleanArguments);
+
+                                    code = ScriptOps.SanityCheckProcedureFlags(
+                                        isLibrary, isFast, isAtomic, isInline,
+#if ARGUMENT_CACHE || PARSE_CACHE
+                                        isNonCaching,
+#endif
+                                        isMatchTypes, ref result);
+
+                                    if (code != ReturnCode.Ok)
+                                        goto done;
+                                }
+
+                                byte[] hashValue = arguments[1].GetHashValue(ref result);
+
+                                if (hashValue != null)
+                                {
+                                    INamespace @namespace = null;
+
+                                    if (lambdaExpr.Count == 3)
+                                    {
+                                        @namespace = NamespaceOps.Lookup(
+                                            interpreter, lambdaExpr[2], true, false,
+                                            ref result);
+
+                                        if (@namespace == null)
+                                            code = ReturnCode.Error;
+                                    }
+
+                                    if (code == ReturnCode.Ok)
+                                    {
+                                        //
+                                        // NOTE: Parse the arguments into a list and make sure there are enough
+                                        //       supplied to satisfy the request.
+                                        //
+                                        StringList list1 = null;
+
+                                        code = ParserOps<string>.SplitList(
+                                            interpreter, lambdaExpr[0], 0,
+                                            Length.Invalid, true, ref list1,
+                                            ref result);
+
+                                        if (code == ReturnCode.Ok)
+                                        {
+                                            StringPairList list2 = null;
+
+                                            code = RuntimeOps.GetFormalArgumentNamesAndDefaults(
+                                                interpreter, list1, ref list2, ref result);
+
+                                            if (code == ReturnCode.Ok)
+                                            {
+                                                //
+                                                // HACK: This name is needed for several error messages, see below.
+                                                //
+                                                string name = NextName(interpreter, @namespace);
+
+                                                //
+                                                // NOTE: We *MUST* have the formal arguments in an actual ArgumentList
+                                                //       container now.  The variadic and optional argument semantics
+                                                //       depend on it.
+                                                //
+                                                ArgumentList formalArguments = new ArgumentList(
+                                                    list2, ArgumentFlags.NameOnly);
+
+                                                //
+                                                // NOTE: Compare lambda argument count with the total outer argument
+                                                //       count minus the "apply" and "lambdaExpr" arguments.
+                                                //
+                                                bool hasArgs = formalArguments.IsVariadic(true);
+                                                int totalArgs = hasArgs ? formalArguments.Count - 1 : formalArguments.Count;
+                                                int optionalArgs = formalArguments.GetOptionalCount();
+
+                                                if ((((argumentCount - 2) >= (totalArgs - optionalArgs)) &&
+                                                     ((argumentCount - 2) <= totalArgs)) ||
+                                                    (hasArgs && ((argumentCount - 2) >= (totalArgs - optionalArgs))))
+                                                {
+                                                    int saveCount = 0;
+                                                    int restoreCount = 0;
+
+                                                    ICallFrame frame = null;
+                                                    VariableDictionary savedVariables = null;
+
+                                                    VariableFlags variableFlags = isInline ?
+                                                        VariableFlags.None : VariableFlags.Argument;
+
+                                                    try
+                                                    {
+                                                        if (isInline)
+                                                        {
+                                                            code = interpreter.GetVariableFrameViaResolvers(
+                                                                LookupFlags.Default, ref frame, ref result);
+
+                                                            if (code != ReturnCode.Ok)
+                                                                goto done;
+
+                                                            ArgumentList finalArguments;
+
+                                                            ScriptOps.GetFinalArguments(
+                                                                formalArguments, overwriteArguments,
+                                                                out finalArguments);
+
+                                                            code = frame.Save(
+                                                                interpreter, finalArguments, ref savedVariables,
+                                                                ref saveCount, ref result);
+
+                                                            if (code != ReturnCode.Ok)
+                                                                goto done;
+                                                        }
+                                                        else
+                                                        {
+                                                            CallFrameFlags callFrameFlags =
+                                                                CallFrameFlags.Procedure | CallFrameFlags.Lambda;
+
+                                                            if (isLibrary)
+                                                                callFrameFlags |= CallFrameFlags.Library;
+
+                                                            if (isFast)
+                                                                callFrameFlags |= CallFrameFlags.Fast;
+
+                                                            if (isMatchTypes)
+                                                                callFrameFlags |= CallFrameFlags.MatchTypes;
+
+                                                            frame = interpreter.NewProcedureCallFrame(
+                                                                name, callFrameFlags, new ClientData(hashValue),
+                                                                this, arguments);
+                                                        }
+
+                                                        StringDictionary alreadySet = new StringDictionary();
+                                                        ArgumentList frameProcedureArguments = isInline ? null : new ArgumentList();
+
+                                                        if (!isInline)
+                                                        {
+                                                            frameProcedureArguments.Add(arguments[0]);
+                                                            frame.ProcedureArguments = frameProcedureArguments;
+                                                        }
+
+                                                        for (int argumentIndex = 0; argumentIndex < formalArguments.Count; argumentIndex++)
+                                                        {
+                                                            string varName = formalArguments[argumentIndex].Name;
+
+                                                            if (!alreadySet.ContainsKey(varName))
+                                                            {
+                                                                ArgumentFlags argumentFlags = ArgumentFlags.None;
+                                                                object varValue;
+
+                                                                if (hasArgs && (argumentIndex == (formalArguments.Count - 1)))
+                                                                {
+                                                                    //
+                                                                    // NOTE: This argument is part of an argument list.
+                                                                    //
+                                                                    argumentFlags |= ArgumentFlags.List;
+
+                                                                    //
+                                                                    // NOTE: Build the list for the final formal argument value,
+                                                                    //       which consists of all the remaining argument values.
+                                                                    //
+                                                                    ArgumentList argsArguments = new ArgumentList();
+
+                                                                    for (int argsArgumentIndex = argumentIndex + 2;
+                                                                        argsArgumentIndex < argumentCount; argsArgumentIndex++)
+                                                                    {
+                                                                        //
+                                                                        // NOTE: Sync up the argument name and flags for use when
+                                                                        //       debugging (below).
+                                                                        //
+                                                                        Argument argsArgument = Argument.GetOrCreate(
+                                                                            interpreter, arguments[argsArgumentIndex].Flags | argumentFlags,
+                                                                            String.Format("{0}{1}{2}", varName, Characters.Space,
+                                                                            argsArguments.Count), arguments[argsArgumentIndex],
+                                                                            interpreter.HasNoCacheArgument());
+
+                                                                        argsArguments.Add(argsArgument);
+                                                                    }
+
+                                                                    varValue = argsArguments;
+                                                                }
+                                                                else
+                                                                {
+                                                                    if ((argumentIndex + 2) < argumentCount)
+                                                                    {
+                                                                        //
+                                                                        // NOTE: Sync up the argument name for use when
+                                                                        //       debugging (below) and use the value
+                                                                        //       supplied by the caller.
+                                                                        //
+                                                                        varValue = Argument.GetOrCreate(interpreter,
+                                                                            arguments[argumentIndex + 2].Flags | argumentFlags,
+                                                                            varName, arguments[argumentIndex + 2],
+                                                                            interpreter.HasNoCacheArgument());
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        //
+                                                                        // NOTE: We cannot sync up the argument name here
+                                                                        //       because we are out-of-bounds on that list
+                                                                        //       and it cannot be extended (i.e. it would
+                                                                        //       break [info level]); therefore, we punt
+                                                                        //       on that for now.  Use the default value
+                                                                        //       for this argument, if any; otherwise, use
+                                                                        //       an empty string.
+                                                                        //
+                                                                        object @default = formalArguments[argumentIndex].Default;
+                                                                        varValue = (@default != null) ? @default : Argument.NoValue;
+                                                                    }
+                                                                }
+
+                                                                code = interpreter.SetVariableValue2(
+                                                                    variableFlags, frame, varName, varValue, ref result);
+
+                                                                if (code != ReturnCode.Ok)
+                                                                    break;
+
+                                                                //
+                                                                // BUGFIX: Now, also keep track of this argument in the procedure
+                                                                //         arguments list.  Primarily because we do not want to
+                                                                //         have to redo this logic later (i.e. for [scope]).
+                                                                //
+                                                                if (!isInline)
+                                                                {
+                                                                    if (varValue is Argument)
+                                                                    {
+                                                                        frameProcedureArguments.Add((Argument)varValue);
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        frameProcedureArguments.Add(Argument.GetOrCreate(
+                                                                            interpreter, argumentFlags, varName, varValue,
+                                                                            interpreter.HasNoCacheArgument()));
+                                                                    }
+                                                                }
+
+                                                                alreadySet.Add(varName, null);
+                                                            }
+                                                        }
+
+                                                        //
+                                                        // NOTE: Make sure we succeeded in creating the call frame.
+                                                        //
+                                                        if (code == ReturnCode.Ok)
+                                                        {
+                                                            ICallFrame savedFrame = null;
+
+                                                            if (!isInline)
+                                                                interpreter.PushProcedureCallFrame(frame, true, ref savedFrame);
+
+                                                            try
+                                                            {
+#if DEBUGGER && DEBUGGER_EXECUTE
+                                                                if (DebuggerOps.CanHitBreakpoints(interpreter,
+                                                                        EngineFlags.None, BreakpointType.BeforeLambdaBody))
+                                                                {
+                                                                    code = interpreter.CheckBreakpoints(
+                                                                        code, BreakpointType.BeforeLambdaBody, this.Name,
+                                                                        null, null, this, null, clientData, arguments,
+                                                                        ref result);
+                                                                }
+#endif
+
+                                                                if (code == ReturnCode.Ok)
+                                                                {
+                                                                    bool locked = false;
+
+                                                                    try
+                                                                    {
+                                                                        if (isAtomic)
+                                                                            interpreter.InternalHardTryLock(ref locked); /* TRANSACTIONAL */
+
+                                                                        if (!isAtomic || locked)
+                                                                        {
+#if ARGUMENT_CACHE || PARSE_CACHE
+                                                                            EngineFlags savedEngineFlags = EngineFlags.None;
+
+                                                                            if (isNonCaching)
+                                                                            {
+                                                                                interpreter.BeginProcedureBodyNoCaching(
+                                                                                    ref savedEngineFlags);
+                                                                            }
+#endif
+
+                                                                            try
+                                                                            {
+                                                                                interpreter.ReturnCode = ReturnCode.Ok;
+
+                                                                                code = interpreter.EvaluateScript(
+                                                                                    lambdaExpr[1], (IScriptLocation)arguments[1],
+                                                                                    ref result);
+                                                                            }
+                                                                            catch (Exception e)
+                                                                            {
+                                                                                result = e;
+                                                                                code = ReturnCode.Error;
+                                                                            }
+#if ARGUMENT_CACHE || PARSE_CACHE
+                                                                            finally
+                                                                            {
+                                                                                if (isNonCaching)
+                                                                                {
+                                                                                    interpreter.EndProcedureBodyNoCaching(
+                                                                                        ref savedEngineFlags);
+                                                                                }
+                                                                            }
+#endif
+                                                                        }
+                                                                        else
+                                                                        {
+                                                                            TraceOps.LockTrace(
+                                                                                "Execute",
+                                                                                typeof(Apply).Name, false,
+                                                                                TracePriority.LockError,
+                                                                                interpreter.MaybeWhoHasLock());
+
+                                                                            result = "could not lock interpreter";
+                                                                            code = ReturnCode.Error;
+                                                                        }
+                                                                    }
+                                                                    finally
+                                                                    {
+                                                                        interpreter.InternalExitLock(ref locked); /* TRANSACTIONAL */
+                                                                    }
+
+#if DEBUGGER && DEBUGGER_EXECUTE
+                                                                    if (DebuggerOps.CanHitBreakpoints(interpreter,
+                                                                            EngineFlags.None, BreakpointType.AfterLambdaBody))
+                                                                    {
+                                                                        code = interpreter.CheckBreakpoints(
+                                                                            code, BreakpointType.AfterLambdaBody, this.Name,
+                                                                            null, null, this, null, clientData, arguments,
+                                                                            ref result);
+                                                                    }
+#endif
+
+                                                                    //
+                                                                    // BUGFIX: If an opaque object handle is being returned, add
+                                                                    //         a reference to it now.
+                                                                    //
+                                                                    if (ResultOps.IsOkOrReturn(code))
+                                                                    {
+                                                                        code = interpreter.AddObjectReference(
+                                                                            code, result, ObjectReferenceType.Return,
+                                                                            ref result);
+                                                                    }
+
+                                                                    if (code == ReturnCode.Return)
+                                                                    {
+                                                                        code = Engine.UpdateReturnInformation(interpreter);
+                                                                    }
+                                                                    else if (code == ReturnCode.Error)
+                                                                    {
+                                                                        /* IGNORED */
+                                                                        Engine.AddErrorInformation(interpreter, result,
+                                                                            String.Format("{0}    (lambda term \"{1}\" line {2})",
+                                                                                Environment.NewLine, FormatOps.Ellipsis(arguments[1]),
+                                                                                Interpreter.GetErrorLine(interpreter)));
+                                                                    }
+                                                                }
+                                                            }
+                                                            finally
+                                                            {
+                                                                if (!isInline)
+                                                                {
+                                                                    /* IGNORED */
+                                                                    interpreter.PopProcedureCallFrame(frame, ref savedFrame);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    finally
+                                                    {
+                                                        if (frame != null)
+                                                        {
+                                                            if (isInline)
+                                                            {
+                                                                ScriptOps.UnsetArgumentsOrComplain(
+                                                                    interpreter, frame, formalArguments,
+                                                                    cleanArguments);
+
+                                                                ReturnCode restoreCode;
+                                                                Result restoreError = null;
+
+                                                                restoreCode = frame.Restore(interpreter,
+                                                                    formalArguments, ref savedVariables,
+                                                                    ref restoreCount, ref restoreError);
+
+                                                                if ((restoreCode == ReturnCode.Ok) &&
+                                                                    (restoreCount != saveCount))
+                                                                {
+                                                                    restoreError = String.Format(
+                                                                        "failed to properly restore call frame {0} for " +
+                                                                        "procedure {1}: restored {2} versus saved {3}",
+                                                                        frame.Name, formalArguments, restoreCount,
+                                                                        saveCount);
+
+                                                                    restoreCode = ReturnCode.Error;
+                                                                }
+
+                                                                if (restoreCode != ReturnCode.Ok)
+                                                                {
+                                                                    DebugOps.Complain(
+                                                                        interpreter, restoreCode,
+                                                                        restoreError);
+                                                                }
+                                                            }
+                                                            else
+                                                            {
+                                                                IDisposable disposable = frame as IDisposable;
+
+                                                                if (disposable != null)
+                                                                {
+                                                                    disposable.Dispose();
+                                                                    disposable = null;
+                                                                }
+                                                            }
+
+                                                            frame = null;
+                                                        }
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    result = String.Format(
+                                                        "wrong # args: should be \"apply lambdaExpr {0}\"", /* SKIP */
+                                                        formalArguments.ToRawString(ToStringFlags.Decorated,
+                                                            Characters.SpaceString));
+
+                                                    code = ReturnCode.Error;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    code = ReturnCode.Error;
+                                }
+                            }
+                            else
+                            {
+                                result =  String.Format(
+                                    "can't interpret \"{0}\" as a lambda expression",
+                                    arguments[1]);
+
+                                code = ReturnCode.Error;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        result = "wrong # args: should be \"apply lambdaExpr ?arg1 arg2 ...?\"";
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    result = "invalid argument list";
+                    code = ReturnCode.Error;
+                }
+            }
+            else
+            {
+                result = "invalid interpreter";
+                code = ReturnCode.Error;
+            }
+
+        done:
+
+            return code;
+        }
+        #endregion
+    }
+}

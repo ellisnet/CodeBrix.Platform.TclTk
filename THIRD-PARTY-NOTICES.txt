@@ -1,0 +1,118 @@
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+CodeBrix.Platform.TclTk is a fully managed, cross-platform implementation of the
+Tcl scripting language for .NET. It is a port (source-derivative) of the Eagle
+project by Joe Mistachkin and the Eagle Development Team; the CodeBrix.Platform.TclTk
+assembly incorporates source code derived from that project.
+
+The sections below identify the third-party software whose source code has been
+incorporated into this repository, together with the applicable copyright notices
+and license terms.
+
+================================================================================
+1. The Eagle Project
+================================================================================
+
+    Project:      Eagle (An implementation of the Tcl scripting language)
+    Author(s):    Joe Mistachkin and the Eagle Development Team
+    Source:       https://github.com/mistachkin/eagle
+                  https://eagle.to/
+    License:      Tcl/Tk License (see "license.terms" in the upstream project;
+                  its text is reproduced verbatim below and is also the basis of
+                  the LICENSE file at the root of this repository)
+
+    Portions of CodeBrix.Platform.TclTk are derived from the Eagle source code
+    that is compiled into the "Eagle.dll" assembly shipped by the upstream
+    "Eagle.DotNet.Standard.2.1" NuGet package (built from the upstream
+    "Library/EagleNetStandard2X.csproj" project). The Tcl core script library
+    embedded in the assembly is likewise derived from the upstream "lib/Eagle1.0"
+    scripts.
+
+    Modifications made during the port (documented per the upstream license, which
+    requires that new terms and changes be indicated):
+
+      * All namespaces, type names, method names, identifiers, string literals,
+        embedded-script identifiers, and resource names were rebranded from the
+        upstream "Eagle" naming to "CodeBrix.Platform.TclTk" / "TclTk". Each ported
+        source file records its original upstream namespace in a
+        "//was previously: Eagle.<original>;" provenance comment. (Copyright,
+        license, and provenance text retains the original "Eagle" attribution.)
+      * The library was retargeted from .NET Standard 2.x to .NET 10.0 as a single
+        cross-platform ("core") build. Windows-only, desktop-GUI (WinForms/WPF),
+        .NET-Framework-only (remoting, CAS policy, AppDomain-based features),
+        native-interop, and enterprise code-signing (Harpy) features that are not
+        applicable to the cross-platform core build were compiled out or omitted.
+      * Test code was re-authored against xUnit v3 and SilverAssertions per the
+        CodeBrix family conventions rather than ported verbatim from the upstream
+        test suite.
+
+    The upstream "Eagle" name is retained in this file, in the LICENSE file, and in
+    per-file provenance comments solely for copyright, license, and attribution
+    purposes, as required by the upstream license.
+
+    ---------------------------- Tcl/Tk License --------------------------------
+
+    This software is copyrighted by Joe Mistachkin and other parties.  The
+    following terms apply to all files associated with the software unless
+    explicitly disclaimed in individual files.
+
+    The authors hereby grant permission to use, copy, modify, distribute,
+    and license this software and its documentation for any purpose, provided
+    that existing copyright notices are retained in all copies and that this
+    notice is included verbatim in any distributions.  No written agreement,
+    license, or royalty fee is required for any of the authorized uses.
+    Modifications to this software may be copyrighted by their authors
+    and need not follow the licensing terms described here, provided that
+    the new terms are clearly indicated on the first page of each file where
+    they apply.
+
+    IN NO EVENT SHALL THE AUTHORS OR DISTRIBUTORS BE LIABLE TO ANY PARTY
+    FOR DIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES
+    ARISING OUT OF THE USE OF THIS SOFTWARE, ITS DOCUMENTATION, OR ANY
+    DERIVATIVES THEREOF, EVEN IF THE AUTHORS HAVE BEEN ADVISED OF THE
+    POSSIBILITY OF SUCH DAMAGE.
+
+    THE AUTHORS AND DISTRIBUTORS SPECIFICALLY DISCLAIM ANY WARRANTIES,
+    INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.  THIS SOFTWARE
+    IS PROVIDED ON AN "AS IS" BASIS, AND THE AUTHORS AND DISTRIBUTORS HAVE
+    NO OBLIGATION TO PROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR
+    MODIFICATIONS.
+
+    GOVERNMENT USE: If you are acquiring this software on behalf of the
+    U.S. government, the Government shall have only "Restricted Rights"
+    in the software and related documentation as defined in the Federal
+    Acquisition Regulations (FARs) in Clause 52.227.19 (c) (2).  If you
+    are acquiring the software on behalf of the Department of Defense, the
+    software shall be classified as "Commercial Computer Software" and the
+    Government shall have only "Restricted Rights" as defined in Clause
+    252.227-7013 (c) (1) of DFARs.  Notwithstanding the foregoing, the
+    authors grant the U.S. Government and others acting in its behalf
+    permission to use and distribute the software in accordance with the
+    terms specified in this license.
+
+================================================================================
+
+NOTE ON THE Tcl LANGUAGE
+
+CodeBrix.Platform.TclTk implements the Tcl scripting language. "Tcl" refers to the
+Tool Command Language originally created by John Ousterhout. CodeBrix.Platform.TclTk
+is a managed, from-source implementation (via the Eagle project above) and does NOT
+incorporate the source code of the reference native Tcl/Tk distribution.
+
+NOTE ON MODIFICATIONS
+
+Modifications made by the CodeBrix.Platform.TclTk project (see LICENSE-MODIFICATIONS.txt)
+are licensed under the BSD 2-Clause License, as permitted by the upstream Tcl/Tk
+License. Jeremy Ellis and contributors license the CodeBrix.Platform.TclTk project to
+you under the combined terms set forth in the LICENSE and LICENSE-MODIFICATIONS.txt
+files at the root of this repository.
+
+If you have any questions about any third-party code referenced here, or if you
+believe that any third-party code has been included in CodeBrix.Platform.TclTk in
+error, please open a new issue at:
+https://github.com/ellisnet/CodeBrix.Platform.TclTk/issues
+
+================================================================================
+
+END OF THIRD-PARTY SOFTWARE NOTICES AND INFORMATION

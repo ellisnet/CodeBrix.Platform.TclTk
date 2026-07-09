@@ -1,0 +1,1473 @@
+/*
+ * Package.cs --
+ *
+ * Copyright (c) 2007-2012 by Joe Mistachkin.  All rights reserved.
+ *
+ * See the file "license.terms" for information on usage and redistribution of
+ * this file, and for a DISCLAIMER OF ALL WARRANTIES.
+ *
+ * RCS: @(#) $Id: $
+ */
+
+using System;
+using CodeBrix.Platform.TclTk._Attributes;
+using CodeBrix.Platform.TclTk._Components.Private;
+using CodeBrix.Platform.TclTk._Components.Public;
+using CodeBrix.Platform.TclTk._Components.Public.Delegates;
+using CodeBrix.Platform.TclTk._Constants;
+using CodeBrix.Platform.TclTk._Containers.Private;
+using CodeBrix.Platform.TclTk._Containers.Public;
+using CodeBrix.Platform.TclTk._Interfaces.Public;
+using SharedStringOps = CodeBrix.Platform.TclTk._Components.Shared.StringOps;
+using _ClientData = CodeBrix.Platform.TclTk._Components.Public.ClientData;
+
+#if NET_STANDARD_21
+using Index = CodeBrix.Platform.TclTk._Constants.Index;
+#endif
+
+namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
+{
+    /// <summary>
+    /// This class implements the <c>package</c> command, which manages the
+    /// loading, registration, and version negotiation of script packages.
+    /// It is an ensemble whose sub-commands provide, require, query, and
+    /// withdraw packages, scan for package indexes, and compare or sort
+    /// version numbers.  See <c>core_language.md</c> for the command syntax
+    /// and semantics.
+    /// </summary>
+    [ObjectId("c8fd57c0-20b3-4594-a5a7-919d6f9a8272")]
+    /* 
+     * POLICY: We allow certain "safe" sub-commands.
+     */
+    [CommandFlags(
+        CommandFlags.Unsafe | CommandFlags.Standard |
+        CommandFlags.Initialize | CommandFlags.SecuritySdk |
+        CommandFlags.LicenseSdk)]
+    [ObjectGroup("scriptEnvironment")]
+    internal sealed class Package : Core
+    {
+        /// <summary>
+        /// Constructs an instance of the <c>package</c> command.
+        /// </summary>
+        /// <param name="commandData">
+        /// The data used to create and identify this command, such as its
+        /// name and flags.  This parameter may be null.
+        /// </param>
+        public Package(
+            ICommandData commandData
+            )
+            : base(commandData)
+        {
+            // do nothing.
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region IEnsemble Members
+        /// <summary>
+        /// The collection of sub-command names supported by this ensemble
+        /// command, used to dispatch each invocation to the appropriate
+        /// sub-command handler.
+        /// </summary>
+        private readonly EnsembleDictionary subCommands = new EnsembleDictionary(new string[] {
+            "absent", "alias", "aliases", "forget", "ifneeded", "indexes", "info",
+            "loaded", "names", "pending", "present", "provide", "relativefilename",
+            "require", "reset", "scan", "unknown", "vcompare", "versions", "vloaded",
+            "vsatisfies", "vsort", "withdraw"
+        });
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// Gets the collection of sub-command names supported by this ensemble
+        /// command.
+        /// </summary>
+        public override EnsembleDictionary SubCommands
+        {
+            get { return subCommands; }
+        }
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region IPolicyEnsemble Members
+        /// <summary>
+        /// The collection of sub-command names that are not permitted to
+        /// execute when this command is invoked, as determined by the active
+        /// policy configuration.
+        /// </summary>
+        private readonly EnsembleDictionary disallowedSubCommands = new EnsembleDictionary(
+            PolicyOps.DisallowedPackageSubCommandNames);
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// Gets the collection of sub-command names that are not permitted to
+        /// execute when this command is invoked.
+        /// </summary>
+        public override EnsembleDictionary DisallowedSubCommands
+        {
+            get { return disallowedSubCommands; }
+        }
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region IExecute Members
+        /// <summary>
+        /// This method executes the <c>package</c> command.  It dispatches to
+        /// the requested ensemble sub-command (for example <c>provide</c>,
+        /// <c>require</c>, <c>ifneeded</c>, <c>present</c>, <c>scan</c>,
+        /// <c>forget</c>, or <c>vsatisfies</c>) in order to register, query,
+        /// load, or withdraw packages and to compare or sort version numbers,
+        /// honoring the recognized options for each sub-command.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context this command is executing in.  This
+        /// parameter should not be null.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra, command-specific data supplied when this command was
+        /// created, if any.  This parameter may be null.
+        /// </param>
+        /// <param name="arguments">
+        /// The list of arguments for this invocation.  Element zero is the
+        /// command name and element one is the sub-command name, followed by
+        /// any sub-command-specific arguments.  This parameter should not be
+        /// null.
+        /// </param>
+        /// <param name="result">
+        /// Upon success, this contains the result produced by the dispatched
+        /// sub-command.  Upon failure, this contains an appropriate error
+        /// message.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" /> when the wrong number of arguments
+        /// is supplied, the interpreter is null, the argument list is null, or
+        /// the dispatched sub-command fails, with details placed in
+        /// <paramref name="result" />.
+        /// </returns>
+        public override ReturnCode Execute(
+            Interpreter interpreter,
+            IClientData clientData,
+            ArgumentList arguments,
+            ref Result result
+            )
+        {
+            ReturnCode code = ReturnCode.Ok;
+
+            if (interpreter != null)
+            {
+                if (arguments != null)
+                {
+                    if (arguments.Count >= 2)
+                    {
+                        string subCommand = arguments[1];
+                        bool tried = false;
+
+                        code = ScriptOps.TryExecuteSubCommandFromEnsemble(
+                            interpreter, this, clientData, arguments, true,
+                            null, ref subCommand, ref tried, ref result);
+
+                        if ((code == ReturnCode.Ok) && !tried)
+                        {
+                            switch (subCommand)
+                            {
+                                case "absent":
+                                    {
+                                        if (arguments.Count >= 3)
+                                        {
+                                            OptionDictionary options =
+                                                CommandOptions.GetCommandOptions(
+                                                    CommandOptionType.Package_Absent);
+
+                                            int argumentIndex = Index.Invalid;
+
+                                            code = interpreter.GetOptions(
+                                                options, arguments, 0, 2, Index.Invalid,
+                                                false, ref argumentIndex, ref result);
+
+                                            if (code == ReturnCode.Ok)
+                                            {
+                                                if ((argumentIndex != Index.Invalid) &&
+                                                    ((argumentIndex + 2) >= arguments.Count))
+                                                {
+                                                    string packageName = arguments[argumentIndex];
+                                                    bool exact = false;
+
+                                                    if (options.IsPresent("-exact"))
+                                                        exact = true;
+
+                                                    Version version = null;
+
+                                                    if ((argumentIndex + 1) < arguments.Count)
+                                                    {
+                                                        code = Value.GetVersion(
+                                                            arguments[argumentIndex + 1],
+                                                            interpreter.InternalCultureInfo,
+                                                            ref version, ref result);
+                                                    }
+
+                                                    if (code == ReturnCode.Ok)
+                                                    {
+                                                        code = interpreter.AbsentPackage(
+                                                            packageName, version, exact,
+                                                            ref result);
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    if ((argumentIndex != Index.Invalid) &&
+                                                        Option.LooksLikeOption(arguments[argumentIndex]))
+                                                    {
+                                                        result = OptionDictionary.BadOption(
+                                                            options, arguments[argumentIndex], !interpreter.InternalIsSafe());
+                                                    }
+                                                    else
+                                                    {
+                                                        result = "wrong # args: should be \"package absent ?options? package ?version?\"";
+                                                    }
+
+                                                    code = ReturnCode.Error;
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package absent ?options? package ?version?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "alias":
+                                    {
+                                        if (arguments.Count >= 3)
+                                        {
+                                            OptionDictionary options =
+                                                CommandOptions.GetCommandOptions(
+                                                    CommandOptionType.Package_Alias);
+
+                                            int argumentIndex = Index.Invalid;
+
+                                            code = interpreter.GetOptions(options, arguments, 0, 2, Index.Invalid, false, ref argumentIndex, ref result);
+
+                                            if (code == ReturnCode.Ok)
+                                            {
+                                                if ((argumentIndex != Index.Invalid) &&
+                                                    ((argumentIndex + 1) <= arguments.Count) &&
+                                                    ((argumentIndex + 3) >= arguments.Count))
+                                                {
+                                                    bool overwrite = false;
+
+                                                    if (options.IsPresent("-overwrite"))
+                                                        overwrite = true;
+
+                                                    bool disabled = false;
+
+                                                    if (options.IsPresent("-disabled"))
+                                                        disabled = true;
+
+                                                    bool exact = false;
+
+                                                    if (options.IsPresent("-exact"))
+                                                        exact = true;
+
+                                                    string aliasName = arguments[argumentIndex];
+                                                    string packageName = null;
+
+                                                    if ((argumentIndex + 1) < arguments.Count)
+                                                        packageName = arguments[argumentIndex + 1];
+
+                                                    Version version = null;
+
+                                                    if ((argumentIndex + 2) < arguments.Count)
+                                                    {
+                                                        code = Value.GetVersion(
+                                                            arguments[argumentIndex + 2],
+                                                            interpreter.InternalCultureInfo,
+                                                            ref version, ref result);
+                                                    }
+
+                                                    if (code == ReturnCode.Ok)
+                                                    {
+                                                        PackageFlags? flags = null;
+
+                                                        if (overwrite || disabled || exact)
+                                                        {
+                                                            PackageFlags localFlags = PackageFlags.None;
+
+                                                            if (overwrite)
+                                                            {
+                                                                if (String.IsNullOrEmpty(packageName))
+                                                                {
+                                                                    result = "must specify name with -overwrite";
+                                                                    code = ReturnCode.Error;
+                                                                    goto done;
+                                                                }
+
+                                                                localFlags |= PackageFlags.Overwrite;
+                                                            }
+
+                                                            if (disabled)
+                                                            {
+                                                                if (String.IsNullOrEmpty(packageName))
+                                                                {
+                                                                    result = "must specify name with -disabled";
+                                                                    code = ReturnCode.Error;
+                                                                    goto done;
+                                                                }
+
+                                                                if (version != null)
+                                                                {
+                                                                    result = "cannot specify version with -disabled";
+                                                                    code = ReturnCode.Error;
+                                                                    goto done;
+                                                                }
+
+                                                                localFlags |= PackageFlags.Disabled;
+                                                            }
+
+                                                            if (exact)
+                                                            {
+                                                                if (String.IsNullOrEmpty(packageName) ||
+                                                                    (version == null))
+                                                                {
+                                                                    result = "must specify name and version with -exact";
+                                                                    code = ReturnCode.Error;
+                                                                    goto done;
+                                                                }
+
+                                                                localFlags |= PackageFlags.Exact;
+                                                            }
+
+                                                            flags = localFlags;
+                                                        }
+
+                                                        if (code == ReturnCode.Ok)
+                                                        {
+                                                            code = interpreter.PkgAlias(
+                                                                aliasName, packageName, version,
+                                                                clientData, flags, ref result);
+                                                        }
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    if ((argumentIndex != Index.Invalid) &&
+                                                        Option.LooksLikeOption(arguments[argumentIndex]))
+                                                    {
+                                                        result = OptionDictionary.BadOption(
+                                                            options, arguments[argumentIndex], !interpreter.InternalIsSafe());
+                                                    }
+                                                    else
+                                                    {
+                                                        result = "wrong # args: should be \"package alias ?options? name ?package? ?version?\"";
+                                                    }
+
+                                                    code = ReturnCode.Error;
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package alias ?options? name ?package? ?version?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "aliases":
+                                    {
+                                        if ((arguments.Count == 2) || (arguments.Count == 3))
+                                        {
+                                            string pattern = null;
+
+                                            if (arguments.Count == 3)
+                                                pattern = arguments[2];
+
+                                            code = interpreter.PkgAliases(
+                                                pattern, false, ref result);
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package aliases ?pattern?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "forget":
+                                    {
+                                        if (arguments.Count >= 2)
+                                        {
+                                            code = interpreter.PkgForget(
+                                                new StringList(arguments, 2), _ClientData.Empty, ref result);
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package forget ?package package ...?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "ifneeded":
+                                    {
+                                        if ((arguments.Count >= 4) && (arguments.Count <= 6))
+                                        {
+                                            Version version = null;
+
+                                            code = Value.GetVersion(
+                                                arguments[3], interpreter.InternalCultureInfo,
+                                                ref version, ref result);
+
+                                            if (code == ReturnCode.Ok)
+                                            {
+                                                string text = null;
+
+                                                if (arguments.Count >= 5)
+                                                    text = arguments[4];
+
+                                                PackageFlags flags = interpreter.PackageFlags;
+
+                                                if (arguments.Count >= 6)
+                                                {
+                                                    object enumValue = EnumOps.TryParseFlags(
+                                                        interpreter, typeof(PackageFlags),
+                                                        flags.ToString(), arguments[5],
+                                                        interpreter.InternalCultureInfo,
+                                                        true, true, true, ref result);
+
+                                                    if (enumValue is PackageFlags)
+                                                        flags = (PackageFlags)enumValue;
+                                                    else
+                                                        code = ReturnCode.Error;
+                                                }
+
+                                                if (code == ReturnCode.Ok)
+                                                {
+                                                    code = interpreter.PkgIfNeeded(
+                                                        arguments[2], version, text, _ClientData.Empty,
+                                                        flags, ref result);
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package ifneeded package version ?script? ?flags?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "indexes":
+                                    {
+                                        if ((arguments.Count == 2) || (arguments.Count == 3))
+                                        {
+                                            string pattern = null;
+
+                                            if (arguments.Count == 3)
+                                                pattern = arguments[2];
+
+                                            code = interpreter.PkgIndexes(
+                                                pattern, false, ref result);
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package indexes ?pattern?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "info":
+                                    {
+                                        if (arguments.Count == 3)
+                                        {
+                                            IPackage package = null;
+
+                                            code = interpreter.GetPackage(
+                                                arguments[2], LookupFlags.Default,
+                                                ref package, ref result);
+
+                                            if (code == ReturnCode.Ok)
+                                            {
+                                                bool scrub = interpreter.InternalIsSafe();
+                                                PackageFlags flags = package.Flags;
+                                                Guid id = AttributeOps.GetObjectId(package);
+
+                                                result = StringList.MakeList(
+                                                    "kind", package.Kind,
+                                                    "id", package.Id.Equals(Guid.Empty) ? id : package.Id,
+                                                    "name", package.Name,
+                                                    "description", package.Description,
+                                                    "indexFileName", scrub ? PathOps.ScrubPath(
+                                                        GlobalState.GetBasePath(), package.IndexFileName) :
+                                                        package.IndexFileName,
+                                                    "provideFileName", scrub ? PathOps.ScrubPath(
+                                                        GlobalState.GetBasePath(), package.ProvideFileName) :
+                                                        package.ProvideFileName,
+                                                    "flags", flags,
+                                                    "loaded", (package.Loaded != null) ? package.Loaded : null,
+                                                    "ifNeeded", (!scrub && (package.IfNeeded != null)) ?
+                                                        package.IfNeeded.KeysAndValuesToString(null, false) :
+                                                        null,
+                                                    "wasNeeded", package.WasNeeded);
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package info name\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "loaded":
+                                    {
+                                        if ((arguments.Count == 2) || (arguments.Count == 3))
+                                        {
+                                            string pattern = null;
+
+                                            if (arguments.Count == 3)
+                                                pattern = arguments[2];
+
+                                            code = interpreter.PkgLoaded(
+                                                pattern, false, false, ref result);
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package loaded ?pattern?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "names":
+                                    {
+                                        if ((arguments.Count == 2) || (arguments.Count == 3))
+                                        {
+                                            string pattern = null;
+
+                                            if (arguments.Count == 3)
+                                                pattern = arguments[2];
+
+                                            code = interpreter.PkgNames(
+                                                pattern, false, ref result);
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package names ?pattern?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "pending":
+                                    {
+                                        if ((arguments.Count == 2) || (arguments.Count == 3))
+                                        {
+                                            if (arguments.Count == 3)
+                                            {
+                                                IPackage package = null;
+
+                                                code = interpreter.GetPackage(
+                                                    arguments[2], LookupFlags.Default, ref package,
+                                                    ref result);
+
+                                                if (code == ReturnCode.Ok)
+                                                {
+                                                    result = FlagOps.HasFlags(
+                                                        package.Flags, PackageFlags.Loading, true);
+                                                }
+                                            }
+                                            else
+                                            {
+                                                result = (interpreter.PackageLevels > 0);
+                                                code = ReturnCode.Ok;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package pending ?name?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "present":
+                                    {
+                                        if (arguments.Count >= 3)
+                                        {
+                                            OptionDictionary options =
+                                                CommandOptions.GetCommandOptions(
+                                                    CommandOptionType.Package_Present);
+
+                                            int argumentIndex = Index.Invalid;
+
+                                            code = interpreter.GetOptions(options, arguments, 0, 2, Index.Invalid, false, ref argumentIndex, ref result);
+
+                                            if (code == ReturnCode.Ok)
+                                            {
+                                                if ((argumentIndex != Index.Invalid) &&
+                                                    ((argumentIndex + 2) >= arguments.Count))
+                                                {
+                                                    bool exact = false;
+
+                                                    if (options.IsPresent("-exact"))
+                                                        exact = true;
+
+                                                    Version version = null;
+
+                                                    if ((argumentIndex + 1) < arguments.Count)
+                                                        code = Value.GetVersion(
+                                                            arguments[argumentIndex + 1], interpreter.InternalCultureInfo,
+                                                            ref version, ref result);
+
+                                                    if (code == ReturnCode.Ok)
+                                                        code = interpreter.PresentPackage(
+                                                            arguments[argumentIndex], version, exact, ref result);
+                                                }
+                                                else
+                                                {
+                                                    if ((argumentIndex != Index.Invalid) &&
+                                                        Option.LooksLikeOption(arguments[argumentIndex]))
+                                                    {
+                                                        result = OptionDictionary.BadOption(
+                                                            options, arguments[argumentIndex], !interpreter.InternalIsSafe());
+                                                    }
+                                                    else
+                                                    {
+                                                        result = "wrong # args: should be \"package present ?options? package ?version?\"";
+                                                    }
+
+                                                    code = ReturnCode.Error;
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package present ?options? package ?version?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "provide":
+                                    {
+                                        if ((arguments.Count == 3) || (arguments.Count == 4))
+                                        {
+                                            PackageFlags flags = interpreter.PackageFlags;
+
+                                            if (!FlagOps.HasFlags(flags, PackageFlags.NoProvide, true))
+                                            {
+                                                Version version = null;
+
+                                                if (arguments.Count == 4)
+                                                {
+                                                    code = Value.GetVersion(
+                                                        arguments[3], interpreter.InternalCultureInfo,
+                                                        ref version, ref result);
+                                                }
+
+                                                if (code == ReturnCode.Ok)
+                                                {
+                                                    code = interpreter.PkgProvide(
+                                                        arguments[2], version, _ClientData.Empty,
+                                                        flags, ref result);
+                                                }
+                                            }
+                                            else
+                                            {
+                                                //
+                                                // HACK: Do nothing, provide no package, and return nothing.
+                                                //
+                                                result = String.Empty;
+                                                code = ReturnCode.Ok;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package provide package ?version?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "relativefilename":
+                                    {
+                                        if ((arguments.Count == 3) || (arguments.Count == 4))
+                                        {
+                                            PathComparisonType pathComparisonType = PathComparisonType.Default;
+
+                                            if (arguments.Count == 4)
+                                            {
+                                                object enumValue = EnumOps.TryParseFlags(
+                                                    interpreter, typeof(PathComparisonType),
+                                                    pathComparisonType.ToString(), arguments[3],
+                                                    interpreter.InternalCultureInfo, true, true, true,
+                                                    ref result);
+
+                                                if (enumValue is EventFlags)
+                                                    pathComparisonType = (PathComparisonType)enumValue;
+                                                else
+                                                    code = ReturnCode.Error;
+                                            }
+
+                                            if (code == ReturnCode.Ok)
+                                            {
+                                                string fileName = null;
+
+                                                code = PackageOps.GetRelativeFileName(
+                                                    interpreter, arguments[2], pathComparisonType,
+                                                    ref fileName, ref result);
+
+                                                if (code == ReturnCode.Ok)
+                                                    result = fileName;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package relativefilename fileName ?type?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "require":
+                                    {
+                                        if (arguments.Count >= 3)
+                                        {
+                                            OptionDictionary options =
+                                                CommandOptions.GetCommandOptions(
+                                                    CommandOptionType.Package_Require);
+
+                                            int argumentIndex = Index.Invalid;
+
+                                            code = interpreter.GetOptions(options, arguments, 0, 2, Index.Invalid, false, ref argumentIndex, ref result);
+
+                                            if (code == ReturnCode.Ok)
+                                            {
+                                                if ((argumentIndex != Index.Invalid) && ((argumentIndex + 2) >= arguments.Count))
+                                                {
+                                                    string packageName = arguments[argumentIndex];
+                                                    IVariant value = null;
+                                                    bool? autoScan = null;
+
+                                                    if (options.IsPresent("-autoscan", ref value))
+                                                        autoScan = (bool)value.Value;
+
+                                                    bool exact = false;
+
+                                                    if (options.IsPresent("-exact"))
+                                                        exact = true;
+
+                                                    Version version = null;
+
+                                                    if ((argumentIndex + 1) < arguments.Count)
+                                                    {
+                                                        code = Value.GetVersion(
+                                                            arguments[argumentIndex + 1],
+                                                            interpreter.InternalCultureInfo,
+                                                            ref version, ref result);
+                                                    }
+
+                                                    if (code == ReturnCode.Ok)
+                                                    {
+                                                        code = interpreter.RequirePackage(
+                                                            packageName, version, exact, ref result);
+
+                                                        if ((code != ReturnCode.Ok) &&
+                                                            interpreter.ShouldPackageAutoScan(autoScan))
+                                                        {
+                                                            ResultList errors = null;
+                                                            Result error = null;
+
+                                                            code = Interpreter.PkgAutoScan(
+                                                                interpreter, null, ref error);
+
+                                                            if (code == ReturnCode.Ok)
+                                                            {
+                                                                Result localResult = null;
+
+                                                                code = interpreter.RequirePackage(
+                                                                    packageName, version, exact,
+                                                                    ref localResult);
+
+                                                                if (code == ReturnCode.Ok)
+                                                                {
+                                                                    result = localResult;
+                                                                }
+                                                                else if (localResult != null)
+                                                                {
+                                                                    if (errors == null)
+                                                                        errors = new ResultList();
+
+                                                                    errors.Add("auto-scan successfully completed");
+                                                                    errors.Add(localResult);
+                                                                }
+                                                            }
+                                                            else if (error != null)
+                                                            {
+                                                                if (errors == null)
+                                                                    errors = new ResultList();
+
+                                                                errors.Add(error);
+                                                            }
+
+                                                            if (errors != null)
+                                                            {
+                                                                if (result != null)
+                                                                    errors.Insert(0, result);
+
+                                                                result = errors;
+                                                            }
+                                                        }
+
+                                                        if (code != ReturnCode.Ok)
+                                                        {
+                                                            TraceOps.DebugTrace(String.Format(
+                                                                "Execute: REQUIRE FAILURE, interpreter = {0}, " +
+                                                                "packageName = {1}, version = {2}, exact = {3}, " +
+                                                                "code = {4}, result = {5}, packageIndexes = {6}",
+                                                                FormatOps.InterpreterNoThrow(interpreter),
+                                                                FormatOps.WrapOrNull(packageName),
+                                                                FormatOps.WrapOrNull(version), exact,
+                                                                code, FormatOps.WrapOrNull(result),
+                                                                FormatOps.WrapOrNull(
+                                                                    interpreter.CopyPackageIndexes())),
+                                                                typeof(Package).Name,
+                                                                TracePriority.PackageError3);
+                                                        }
+                                                    }
+
+                                                    //
+                                                    // NOTE: This is a new feature.  If the initial attempt to
+                                                    //       require a package fails, call the package fallback
+                                                    //       delegate for the interpreter and then try requiring
+                                                    //       the package again.
+                                                    //
+                                                    if ((code != ReturnCode.Ok) && !ScriptOps.HasFlags(
+                                                            interpreter, InterpreterFlags.NoPackageFallback, true))
+                                                    {
+                                                        PackageCallback packageFallback = interpreter.PackageFallback;
+
+                                                        if (packageFallback != null)
+                                                        {
+                                                            PackageFlags flags = interpreter.PackageFlags;
+
+                                                            code = packageFallback(
+                                                                interpreter, packageName, version, null, flags,
+                                                                exact, ref result);
+
+                                                            if (code == ReturnCode.Ok)
+                                                            {
+                                                                code = interpreter.RequirePackage(
+                                                                    packageName, version, exact, ref result);
+                                                            }
+                                                        }
+                                                        else
+                                                        {
+                                                            TraceOps.DebugTrace(String.Format(
+                                                                "Execute: package fallback not " +
+                                                                "configured for interpreter {0}",
+                                                                FormatOps.InterpreterNoThrow(
+                                                                interpreter)), typeof(Package).Name,
+                                                                TracePriority.PackageDebug2);
+                                                        }
+                                                    }
+
+                                                    //
+                                                    // BUGFIX: This is really a new feature.  In the event of a failure
+                                                    //         here, we now fallback to the "unknown package handler",
+                                                    //         just like Tcl does.
+                                                    //
+                                                    if ((code != ReturnCode.Ok) && !ScriptOps.HasFlags(
+                                                            interpreter, InterpreterFlags.NoPackageUnknown, true))
+                                                    {
+                                                        string packageUnknown = interpreter.PackageUnknown;
+
+                                                        if (packageUnknown != null) /* UNCONFIGURED? */
+                                                        {
+                                                            string text = ScriptOps.GetPackageUnknownScript(
+                                                                packageUnknown, packageName, version);
+
+                                                            code = interpreter.EvaluateScript(
+                                                                text, ref result); /* EXEMPT */
+
+                                                            if (code == ReturnCode.Ok)
+                                                            {
+                                                                code = interpreter.RequirePackage(
+                                                                    packageName, version, exact,
+                                                                    ref result);
+                                                            }
+                                                        }
+                                                        else
+                                                        {
+                                                            TraceOps.DebugTrace(String.Format(
+                                                                "Execute: package unknown not " +
+                                                                "configured for interpreter {0}",
+                                                                FormatOps.InterpreterNoThrow(
+                                                                interpreter)), typeof(Package).Name,
+                                                                TracePriority.PackageDebug2);
+                                                        }
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    if ((argumentIndex != Index.Invalid) &&
+                                                        Option.LooksLikeOption(arguments[argumentIndex]))
+                                                    {
+                                                        result = OptionDictionary.BadOption(
+                                                            options, arguments[argumentIndex], !interpreter.InternalIsSafe());
+                                                    }
+                                                    else
+                                                    {
+                                                        result = "wrong # args: should be \"package require ?options? package ?version?\"";
+                                                    }
+
+                                                    code = ReturnCode.Error;
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package require ?options? package ?version?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "reset":
+                                    {
+                                        if (arguments.Count == 2)
+                                        {
+                                            code = interpreter.ResetPkgIndexes(false, ref result);
+
+                                            if (code == ReturnCode.Ok)
+                                                result = String.Empty;
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package reset\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "scan":
+                                    {
+                                        if (arguments.Count >= 2)
+                                        {
+                                            PackageIndexFlags oldFlags = Defaults.PackageIndexFlags;
+                                            int argumentIndex; /* REUSED */
+
+                                            if (arguments.Count > 2)
+                                            {
+                                                OptionDictionary preOptions =
+                                                    CommandOptions.GetCommandOptions(
+                                                        CommandOptionType.Package_ScanPreOptions);
+
+                                                argumentIndex = Index.Invalid; /* IGNORED */
+
+                                                code = interpreter.CheckOptions(
+                                                    preOptions, arguments, 0, 2, Index.Invalid,
+                                                    ref argumentIndex, ref result);
+
+                                                if ((code == ReturnCode.Ok) &&
+                                                    preOptions.IsPresent("-interpreter"))
+                                                {
+                                                    oldFlags = interpreter.PackageIndexFlags;
+                                                }
+                                            }
+
+                                            if (code == ReturnCode.Ok)
+                                            {
+                                                OptionDictionary options = CommandOptions.GetCommandOptions(
+                                                    CommandOptionType.Package_Scan, interpreter, null, null,
+                                                    null, oldFlags, null, null);
+
+                                                argumentIndex = Index.Invalid;
+
+                                                if (arguments.Count > 2)
+                                                    code = interpreter.GetOptions(options, arguments, 0, 2, Index.Invalid, true, ref argumentIndex, ref result);
+                                                else
+                                                    code = ReturnCode.Ok;
+
+                                                if (code == ReturnCode.Ok)
+                                                {
+                                                    lock (interpreter.InternalSyncRoot) /* TRANSACTIONAL */
+                                                    {
+                                                        bool reset = false;
+
+                                                        if (options.IsPresent("-reset"))
+                                                            reset = true;
+
+                                                        bool autoPath = false;
+
+                                                        if (options.IsPresent("-autopath"))
+                                                            autoPath = true;
+
+                                                        bool whatIf = false;
+
+                                                        if (options.IsPresent("-whatif"))
+                                                            whatIf = true;
+
+                                                        IVariant value = null;
+                                                        PackageIndexFlags newFlags = oldFlags;
+
+                                                        if (whatIf)
+                                                        {
+                                                            newFlags &= ~PackageIndexFlags.Host;
+                                                            newFlags &= ~PackageIndexFlags.Bundle;
+
+#if APPDOMAINS || ISOLATED_INTERPRETERS || ISOLATED_PLUGINS
+                                                            newFlags &= ~PackageIndexFlags.Plugin;
+#endif
+
+                                                            newFlags |= PackageIndexFlags.WhatIf;
+                                                        }
+
+                                                        if (options.IsPresent("-flags", ref value))
+                                                            newFlags = (PackageIndexFlags)value.Value;
+
+                                                        if (options.IsPresent("-preferfilesystem"))
+                                                            newFlags |= PackageIndexFlags.PreferFileSystem;
+
+                                                        if (options.IsPresent("-preferhost"))
+                                                            newFlags |= PackageIndexFlags.PreferHost;
+
+                                                        if (options.IsPresent("-host"))
+                                                            newFlags |= PackageIndexFlags.Host;
+
+                                                        if (options.IsPresent("-nohost"))
+                                                            newFlags &= ~PackageIndexFlags.Host;
+
+                                                        if (options.IsPresent("-bundle"))
+                                                            newFlags |= PackageIndexFlags.Bundle;
+
+                                                        if (options.IsPresent("-nobundle"))
+                                                            newFlags &= ~PackageIndexFlags.Bundle;
+
+#if APPDOMAINS || ISOLATED_INTERPRETERS || ISOLATED_PLUGINS
+                                                        if (options.IsPresent("-plugin"))
+                                                            newFlags |= PackageIndexFlags.Plugin;
+
+                                                        if (options.IsPresent("-noplugin"))
+                                                            newFlags &= ~PackageIndexFlags.Plugin;
+#endif
+
+                                                        if (options.IsPresent("-temporary"))
+                                                            newFlags |= PackageIndexFlags.Temporary;
+
+                                                        if (options.IsPresent("-primary"))
+                                                            newFlags |= PackageIndexFlags.Primary;
+
+                                                        if (options.IsPresent("-noprimary"))
+                                                            newFlags &= ~PackageIndexFlags.Primary;
+
+                                                        if (options.IsPresent("-tagged"))
+                                                            newFlags |= PackageIndexFlags.Tagged;
+
+                                                        if (options.IsPresent("-notagged"))
+                                                            newFlags &= ~PackageIndexFlags.Tagged;
+
+                                                        if (options.IsPresent("-normal"))
+                                                            newFlags |= PackageIndexFlags.Normal;
+
+                                                        if (options.IsPresent("-nonormal"))
+                                                            newFlags |= PackageIndexFlags.NoNormal;
+
+                                                        if (options.IsPresent("-dump"))
+                                                            newFlags |= PackageIndexFlags.Dump;
+
+                                                        if (options.IsPresent("-nodump"))
+                                                            newFlags &= ~PackageIndexFlags.Dump;
+
+                                                        if (options.IsPresent("-recursive"))
+                                                            newFlags |= PackageIndexFlags.Recursive;
+
+                                                        if (options.IsPresent("-refresh"))
+                                                            newFlags |= PackageIndexFlags.Refresh;
+
+                                                        if (options.IsPresent("-resolve"))
+                                                            newFlags |= PackageIndexFlags.Resolve;
+
+                                                        if (options.IsPresent("-trace"))
+                                                            newFlags |= PackageIndexFlags.Trace;
+
+                                                        if (options.IsPresent("-verbose"))
+                                                            newFlags |= PackageIndexFlags.Verbose;
+
+                                                        if (options.IsPresent("-notrusted"))
+                                                            newFlags |= PackageIndexFlags.NoTrusted;
+
+                                                        if (options.IsPresent("-noverified"))
+                                                            newFlags |= PackageIndexFlags.NoVerified;
+
+                                                        bool noComplain = false;
+
+                                                        if (options.IsPresent("-nocomplain"))
+                                                            noComplain = true;
+
+                                                        if (options.IsPresent("-fileerror"))
+                                                            newFlags &= ~PackageIndexFlags.NoFileError;
+
+                                                        StringList paths = null;
+
+                                                        if (argumentIndex != Index.Invalid)
+                                                        {
+                                                            //
+                                                            // NOTE: Refresh the specified path list.
+                                                            //
+                                                            paths = new StringList(arguments, argumentIndex);
+                                                        }
+                                                        else if (!whatIf)
+                                                        {
+                                                            //
+                                                            // NOTE: Refresh the default path list.
+                                                            //
+                                                            paths = GlobalState.GetAutoPathList(interpreter, autoPath);
+
+                                                            //
+                                                            // NOTE: Did they request the auto-path be rebuilt?
+                                                            //
+                                                            if (autoPath)
+                                                            {
+                                                                //
+                                                                // NOTE: Since the actual auto-path may have changed,
+                                                                //       update the variable now.  We disable traces
+                                                                //       here because we manually rescan, if necessary,
+                                                                //       below.
+                                                                //
+                                                                code = interpreter.SetAutoPathList(
+                                                                    paths, true, noComplain, ref result);
+                                                            }
+                                                        }
+                                                        else
+                                                        {
+                                                            result = "must scan specific directories in \"what-if\" mode";
+                                                            code = ReturnCode.Error;
+                                                        }
+
+                                                        if (code == ReturnCode.Ok)
+                                                        {
+                                                            if (whatIf)
+                                                            {
+                                                                ResultList errors = null;
+
+                                                                if (FlagOps.HasFlags(newFlags, PackageIndexFlags.Host, true))
+                                                                {
+                                                                    if (errors == null)
+                                                                        errors = new ResultList();
+
+                                                                    errors.Add(String.Format(
+                                                                        "cannot use {0} package index flag in \"what-if\" mode",
+                                                                        PackageIndexFlags.Host));
+                                                                }
+
+                                                                if (FlagOps.HasFlags(newFlags, PackageIndexFlags.Bundle, true))
+                                                                {
+                                                                    if (errors == null)
+                                                                        errors = new ResultList();
+
+                                                                    errors.Add(String.Format(
+                                                                        "cannot use {0} package index flag in \"what-if\" mode",
+                                                                        PackageIndexFlags.Bundle));
+                                                                }
+
+#if APPDOMAINS || ISOLATED_INTERPRETERS || ISOLATED_PLUGINS
+                                                                if (FlagOps.HasFlags(newFlags, PackageIndexFlags.Plugin, true))
+                                                                {
+                                                                    if (errors == null)
+                                                                        errors = new ResultList();
+
+                                                                    errors.Add(String.Format(
+                                                                        "cannot use {0} package index flag in \"what-if\" mode",
+                                                                        PackageIndexFlags.Plugin));
+                                                                }
+#endif
+
+                                                                if (errors != null)
+                                                                {
+                                                                    result = errors;
+                                                                    code = ReturnCode.Error;
+                                                                }
+                                                            }
+
+                                                            if (code == ReturnCode.Ok)
+                                                            {
+                                                                PackageIndexDictionary packageIndexes = reset ?
+                                                                    null : interpreter.CopyPackageIndexes();
+
+                                                                if (whatIf)
+                                                                {
+                                                                    PackageContextClientData packageContext =
+                                                                        new PackageContextClientData();
+
+                                                                    code = PackageOps.FindAll(
+                                                                        interpreter, paths, newFlags,
+                                                                        interpreter.PathComparisonType,
+                                                                        ref packageIndexes, ref packageContext,
+                                                                        ref result);
+
+                                                                    if (code == ReturnCode.Ok)
+                                                                        result = packageContext.ToString();
+                                                                }
+                                                                else
+                                                                {
+                                                                    code = PackageOps.FindAll(
+                                                                        interpreter, paths, newFlags,
+                                                                        interpreter.PathComparisonType,
+                                                                        ref packageIndexes, ref result);
+
+                                                                    if (code == ReturnCode.Ok)
+                                                                    {
+                                                                        interpreter.PackageIndexes = packageIndexes;
+                                                                        result = String.Empty;
+                                                                    }
+                                                                }
+                                                            }
+
+                                                            if (code == ReturnCode.Ok)
+                                                            {
+                                                                TraceOps.DebugTrace(String.Format(
+                                                                    "Execute: SCAN SUCCESS, interpreter = {0}, " +
+                                                                    "arguments = {1}, whatIf = {2}, code = {3}, " +
+                                                                    "result = {4}",
+                                                                    FormatOps.InterpreterNoThrow(interpreter),
+                                                                    FormatOps.WrapOrNull(arguments), whatIf,
+                                                                    code, FormatOps.WrapOrNull(result)),
+                                                                    typeof(Package).Name,
+                                                                    TracePriority.PackageDebug5);
+                                                            }
+                                                            else
+                                                            {
+                                                                TraceOps.DebugTrace(String.Format(
+                                                                    "Execute: SCAN FAILURE, interpreter = {0}, " +
+                                                                    "arguments = {1}, whatIf = {2}, code = {3}, " +
+                                                                    "result = {4}",
+                                                                    FormatOps.InterpreterNoThrow(interpreter),
+                                                                    FormatOps.WrapOrNull(arguments), whatIf,
+                                                                    code, FormatOps.WrapOrNull(result)),
+                                                                    typeof(Package).Name,
+                                                                    TracePriority.PackageError3);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package scan ?options? ?dir dir ...?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "unknown":
+                                    {
+                                        if ((arguments.Count == 2) || (arguments.Count == 3))
+                                        {
+                                            if (arguments.Count == 3)
+                                            {
+                                                interpreter.PackageUnknown = arguments[2];
+                                                result = String.Empty;
+                                            }
+                                            else
+                                            {
+                                                result = interpreter.PackageUnknown;
+                                            }
+
+                                            code = ReturnCode.Ok;
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package unknown ?command?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "vcompare":
+                                case "vsort":
+                                    {
+                                        if (arguments.Count == 4)
+                                        {
+                                            bool vsort = SharedStringOps.SystemEquals(subCommand, "vsort");
+
+                                            string versionString1 = arguments[2];
+                                            Version version1 = null;
+
+                                            code = Value.GetVersion(
+                                                versionString1, interpreter.InternalCultureInfo,
+                                                ref version1, ref result);
+
+                                            if ((code != ReturnCode.Ok) && vsort)
+                                            {
+                                                version1 = null; /* REDUNDANT */
+                                                code = ReturnCode.Ok;
+                                            }
+
+                                            string versionString2 = arguments[3];
+                                            Version version2 = null;
+
+                                            if (code == ReturnCode.Ok)
+                                            {
+                                                code = Value.GetVersion(
+                                                    versionString2, interpreter.InternalCultureInfo,
+                                                    ref version2, ref result);
+
+                                                if ((code != ReturnCode.Ok) && vsort)
+                                                {
+                                                    version2 = null; /* REDUNDANT */
+                                                    code = ReturnCode.Ok;
+                                                }
+                                            }
+
+                                            if (code == ReturnCode.Ok)
+                                            {
+                                                if ((version1 == null) && (version2 == null))
+                                                {
+                                                    result = SharedStringOps.SystemCompare(
+                                                        versionString1, versionString2);
+                                                }
+                                                else
+                                                {
+                                                    result = PackageOps.VersionCompare(
+                                                        version1, version2);
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = String.Format(
+                                                "wrong # args: should be \"{0} {1} version1 version2\"",
+                                                this.Name, subCommand);
+
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "versions":
+                                    {
+                                        if (arguments.Count == 3)
+                                        {
+                                            code = interpreter.PkgVersions(
+                                                arguments[2], ref result);
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package versions package\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "vloaded":
+                                    {
+                                        if ((arguments.Count == 2) || (arguments.Count == 3))
+                                        {
+                                            string pattern = null;
+
+                                            if (arguments.Count == 3)
+                                                pattern = arguments[2];
+
+                                            code = interpreter.PkgLoaded(
+                                                pattern, false, true, ref result);
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package vloaded ?pattern?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "vsatisfies":
+                                    {
+                                        if (arguments.Count == 4)
+                                        {
+                                            PackageFlags flags = interpreter.PackageFlags;
+
+                                            if (!FlagOps.HasFlags(flags, PackageFlags.AlwaysSatisfy, true))
+                                            {
+                                                Version version1 = null;
+
+                                                code = Value.GetVersion(
+                                                    arguments[2], interpreter.InternalCultureInfo,
+                                                    ref version1, ref result);
+
+                                                Version version2 = null;
+
+                                                if (code == ReturnCode.Ok)
+                                                {
+                                                    code = Value.GetVersion(
+                                                        arguments[3], interpreter.InternalCultureInfo,
+                                                        ref version2, ref result);
+                                                }
+
+                                                if (code == ReturnCode.Ok)
+                                                {
+                                                    result = PackageOps.VersionSatisfies(
+                                                        version1, version2, false);
+                                                }
+                                            }
+                                            else
+                                            {
+                                                //
+                                                // HACK: Always fake that this was a satisfied package request.
+                                                //
+                                                result = true;
+                                                code = ReturnCode.Ok;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package vsatisfies version1 version2\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "withdraw":
+                                    {
+                                        if ((arguments.Count == 3) || (arguments.Count == 4))
+                                        {
+                                            Version version = null;
+
+                                            if (arguments.Count == 4)
+                                                code = Value.GetVersion(
+                                                    arguments[3], interpreter.InternalCultureInfo,
+                                                    ref version, ref result);
+
+                                            if (code == ReturnCode.Ok)
+                                                code = interpreter.WithdrawPackage(
+                                                    arguments[2], version, ref result);
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"package withdraw package ?version?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                default:
+                                    {
+                                        result = ScriptOps.BadSubCommand(
+                                            interpreter, null, null, subCommand, this, null, null);
+
+                                        code = ReturnCode.Error;
+                                        break;
+                                    }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        result = "wrong # args: should be \"package arg ?arg ...?\"";
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    result = "invalid argument list";
+                    code = ReturnCode.Error;
+                }
+            }
+            else
+            {
+                result = "invalid interpreter";
+                code = ReturnCode.Error;
+            }
+
+        done:
+
+            return code;
+        }
+        #endregion
+    }
+}

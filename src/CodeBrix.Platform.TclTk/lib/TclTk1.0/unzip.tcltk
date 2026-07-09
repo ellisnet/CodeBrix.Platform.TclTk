@@ -1,0 +1,391 @@
+###############################################################################
+#
+# unzip.tcltk --
+#
+# Extensible Adaptable Generalized Logic Engine (TclTk)
+# TclTk Unzip Package File
+#
+# Copyright (c) 2007-2012 by Joe Mistachkin.  All rights reserved.
+#
+# See the file "license.terms" for information on usage and redistribution of
+# this file, and for a DISCLAIMER OF ALL WARRANTIES.
+#
+# RCS: @(#) $Id: $
+#
+###############################################################################
+
+#
+# NOTE: Use our own namespace here because even though we do not directly
+#       support namespaces ourselves, we do not want to pollute the global
+#       namespace if this script actually ends up being evaluated in Tcl.
+#
+namespace eval ::TclTk {
+  #
+  # NOTE: This procedure sets up the default values for all configuration
+  #       parameters used by this package.  If the force argument is non-zero,
+  #       any existing values will be overwritten and set back to their
+  #       default values.
+  #
+  proc setupUnzipVars { force {cleanup false} } {
+    # <help>
+    # This procedure establishes the default values for all of the
+    # configuration variables used by the unzip package, or, alternatively,
+    # removes them.  These namespace variables control where the UnZip command
+    # line tool may be downloaded from, how to detect whether UnZip is already
+    # installed locally, and how to invoke it to extract an archive.  It is
+    # called by [extractZipArchive] to ensure the configuration exists before
+    # use, and may also be called directly to force a reset or a cleanup.
+    #
+    # How it works: for each configuration variable it follows one of three
+    # paths.  When cleanup is true, the variable is unset (via [unset
+    # -nocomplain], harmlessly even if it was never set).  Otherwise, when
+    # force is true or the variable does not yet exist, the variable is
+    # (re)initialized to its default; an already-existing variable is left
+    # alone unless force is given.  The configured variables are: baseUri (the
+    # base download URI -- obtained from [getAuxiliaryBaseUri], which requires
+    # the update package, when running under TclTk, and a fixed fallback URI
+    # otherwise); unzipUrn (the download path relative to the base URI);
+    # unzipUri (a template combining the base URI and URN, stored unsubstituted
+    # so it can be expanded later); unzipInstalledCommand (the command used to
+    # probe for a local UnZip); unzipInstalledPattern (a regular expression
+    # matched against that command's output to confirm a supported Info-ZIP
+    # version); and unzipExtractCommand (a command template, with placeholders
+    # for the archive file name and target directory, used to perform the
+    # extraction).
+    #
+    # Tricky details: the unzipUri and unzipExtractCommand defaults are stored
+    # in a brace-quoted, unsubstituted form on purpose; their embedded dollar
+    # placeholders are expanded later (via [subst]) at the point of use, after
+    # the referenced variables have their final values.
+    #
+    # Arguments:
+    #   force   -- When true, existing configuration variables are overwritten
+    #              with their default values; when false, existing variables
+    #              are preserved and only missing ones are created.
+    #   cleanup -- When true, the configuration variables are removed instead
+    #              of being set, and the force argument is effectively ignored.
+    #              Defaults to false.
+    #
+    # Results:
+    #   The result is not meaningful; this procedure is called for its side
+    #   effect of creating, resetting, or removing the package configuration
+    #   variables.
+    # </help>
+
+    #
+    # NOTE: Using the [getAuxiliaryBaseUri] procedure requires the update
+    #       package.
+    #
+    # NOTE: The base URI used to build the URIs for the unzip command line
+    #       tool downloads.
+    #
+    variable baseUri; # DEFAULT: [getAuxiliaryBaseUri] -OR- https://urn.to/r
+
+    if {$cleanup} then {
+      unset -nocomplain baseUri
+    } elseif {$force || ![info exists baseUri]} then {
+      if {[isTclTk]} then {
+        set baseUri [getAuxiliaryBaseUri]
+      } else {
+        set baseUri https://urn.to/r
+      }
+    }
+
+    #
+    # NOTE: The URN, relative to the base URI, where the unzip command
+    #       line tool may be downloaded.
+    #
+    variable unzipUrn; # DEFAULT: unzip
+
+    if {$cleanup} then {
+      unset -nocomplain unzipUrn
+    } elseif {$force || ![info exists unzipUrn]} then {
+      set unzipUrn unzip
+    }
+
+    #
+    # NOTE: The URI where the unzip command line tool may be downloaded.
+    #
+    variable unzipUri; # DEFAULT: ${baseUri}/${unzipUrn}
+
+    if {$cleanup} then {
+      unset -nocomplain unzipUri
+    } elseif {$force || ![info exists unzipUri]} then {
+      set unzipUri {${baseUri}/${unzipUrn}}
+    }
+
+    #
+    # NOTE: The command to use when attempting to verify that UnZip is
+    #       installed locally.
+    #
+    variable unzipInstalledCommand; # DEFAULT: unzip
+
+    if {$cleanup} then {
+      unset -nocomplain unzipInstalledCommand
+    } elseif {$force || ![info exists unzipInstalledCommand]} then {
+      set unzipInstalledCommand unzip
+    }
+
+    #
+    # NOTE: The regular expression pattern used when attempting to verify
+    #       that UnZip is installed locally.
+    #
+    variable unzipInstalledPattern; # DEFAULT: ^UnZip ..., by Info-ZIP\.
+
+    if {$cleanup} then {
+      unset -nocomplain unzipInstalledPattern
+    } elseif {$force || ![info exists unzipInstalledPattern]} then {
+      set unzipInstalledPattern \
+          {^UnZip \d+\.\d+ of \d{1,2} \w+ \d{4},[\w\s\.]* by Info-ZIP\.}
+    }
+
+    #
+    # NOTE: The command to use when attempting to unzip an archive.
+    #
+    variable unzipExtractCommand; # DEFAULT: unzip ...
+
+    if {$cleanup} then {
+      unset -nocomplain unzipExtractCommand
+    } elseif {$force || ![info exists unzipExtractCommand]} then {
+      set unzipExtractCommand {unzip -n {${fileName}} -d {${directory}}}
+    }
+  }
+
+  #
+  # NOTE: This procedure attempts to verify that an implementation of the
+  #       unzip command line tool is installed locally.  There are no
+  #       arguments.  Script errors are raised if any problems are found.
+  #       The return value is undefined.
+  #
+  proc unzipMustBeInstalled {} {
+    # <help>
+    # This procedure verifies that a usable implementation of the UnZip
+    # command line tool is installed and available on the executable search
+    # path, raising a script error if it is not.  It is used as a precondition
+    # check before attempting to extract an archive.  It takes no arguments.
+    #
+    # How it works: it reads the configured unzipInstalledCommand and
+    # unzipInstalledPattern variables, then runs the probe command (using
+    # [exec], requesting a success indication under TclTk).  If the command
+    # cannot be run at all, it raises a detailed, multi-line error message
+    # explaining that UnZip does not appear to be installed and how to obtain
+    # it (from the Info-ZIP web site or via the operating system's package
+    # manager).  If the command did run, its output is matched against the
+    # installed pattern (a regular expression identifying a supported Info-ZIP
+    # version); if the output is missing or does not match, a different error
+    # is raised reporting an unknown or unsupported version.
+    #
+    # Arguments:
+    #   None.
+    #
+    # Results:
+    #   An empty string when a supported UnZip is confirmed installed.  A
+    #   script error is raised when UnZip is not installed or its version is
+    #   unknown or unsupported.
+    # </help>
+
+    variable unzipInstalledCommand
+    variable unzipInstalledPattern
+
+    set message {
+      Cannot use UnZip: it does not appear to be installed.
+
+      UnZip may be downloaded from "https://www.info-zip.org/"
+      and then installed by copying the (single) UnZip binary to
+      a directory that lies somewhere along the executable search
+      path.
+
+      Alternatively, it may be possible to install UnZip via the
+      package management subsystem included with your operating
+      system.
+    }
+
+    if {[isTclTk]} then {
+      if {[catch {
+        eval exec -success Success $unzipInstalledCommand
+      } result]} then {
+        error $message
+      }
+    } else {
+      if {[catch {
+        eval exec $unzipInstalledCommand
+      } result]} then {
+        error $message
+      }
+    }
+
+    if {![info exists result] || \
+        ![regexp -- $unzipInstalledPattern $result]} then {
+      error "cannot use UnZip: unknown or unsupported version"
+    }
+
+    return ""
+  }
+
+  #
+  # NOTE: This procedure attempts to use the unzip command line tool in order
+  #       to extract a ZIP archive file.  The archiveFileName argument is the
+  #       ZIP archive file to extract.  The extractRootDirectory argument is
+  #       the location of a directory that should contain a new temporary
+  #       extraction directory.  The actual temporary extraction directory is
+  #       returned.
+  #
+  proc extractZipArchive {
+          archiveFileName {extractRootDirectory ""} {rootOnly false} } {
+    # <help>
+    # This procedure extracts a ZIP archive using the UnZip command line tool,
+    # placing the extracted contents into a directory and returning the path
+    # of that extraction directory.  By default it creates a fresh, uniquely
+    # named temporary subdirectory under the extraction root so that repeated
+    # extractions do not collide; on Windows it can even download and verify a
+    # signed copy of UnZip on the fly when one is not already installed.
+    #
+    # How it works: it first ensures the package configuration variables exist
+    # (via [setupUnzipVars]) and computes a native form of the archive file
+    # name.  If no extraction root directory is supplied, it requires the
+    # TclTk.Test package and uses the temporary path as the root, forcing
+    # per-extraction subdirectory creation (using the temporary directory
+    # itself as the target is forbidden).  When rootOnly is true the root
+    # directory is used directly as the extraction target; otherwise a unique
+    # subdirectory name is built from a fixed prefix, the process Id, and the
+    # current clock seconds.  Under TclTk on Windows, if UnZip does not appear
+    # to be installed, it expands the download URI, downloads the tool to a
+    # temporary file, and -- for security -- verifies the file is properly
+    # signed (deleting it and raising an error if not); it then creates a new
+    # temporary directory, copies the tool into it as unzip.exe, and adds that
+    # directory to the executable search path.  After confirming UnZip is
+    # installed (via [unzipMustBeInstalled]), it expands the extraction command
+    # template and runs it via [exec] to perform the extraction, raising an
+    # error that includes the underlying failure text if the command fails.
+    # The behavior differs slightly between TclTk and native Tcl in how the
+    # file name and directory are quoted and whether a success indication is
+    # requested from [exec].
+    #
+    # Tricky details: the downloaded UnZip must be signed or it is rejected;
+    # the temporary download file is deleted afterward unless the global
+    # no(deleteExtractZipArchiveFile) element is set.  The extraction command
+    # is a template whose placeholders are expanded with [subst] only at the
+    # point of use, after the file name and directory variables are finalized.
+    #
+    # Arguments:
+    #   archiveFileName     -- The path of the ZIP archive file to extract.
+    #   extractRootDirectory -- The directory under which the extraction
+    #                           directory is created.  When empty, the system
+    #                           temporary path is used and a unique
+    #                           subdirectory is always created.  Defaults to an
+    #                           empty string.
+    #   rootOnly            -- When true, the extraction root directory is used
+    #                          directly as the extraction target instead of
+    #                          creating a unique subdirectory; this is
+    #                          forbidden (and forced off) when the temporary
+    #                          path is used as the root.  Defaults to false.
+    #
+    # Results:
+    #   The path of the directory into which the archive was extracted.  A
+    #   script error is raised if UnZip is unavailable, a downloaded copy is
+    #   unsigned, or the extraction command fails.
+    # </help>
+
+    setupUnzipVars false
+
+    variable baseUri
+    variable unzipExtractCommand
+    variable unzipUri
+    variable unzipUrn
+    variable unzipVersionCommand
+
+    set fileName [file nativename $archiveFileName]
+
+    if {[string length $extractRootDirectory] == 0} then {
+      package require TclTk.Test; # [getTemporaryPath]
+      set extractRootDirectory [getTemporaryPath]; # good default?
+      set rootOnly false; # true is forbidden for TEMP root.
+    }
+
+    if {$rootOnly} then {
+      set extractDirectory $extractRootDirectory
+    } else {
+      set extractDirectory [file join $extractRootDirectory \
+          [appendArgs ea-uz-xa- [pid] - [string trim [clock seconds] -]]]
+    }
+
+    set directory [file nativename $extractDirectory]
+
+    if {[isTclTk]} then {
+      #
+      # HACK: On Windows only, when the unzip command line tool does
+      #       not appear to be installed, attempt to download it to a
+      #       temporary directory and use it from there.  In theory,
+      #       if this procedure is called multiple times, this should
+      #       only be necessary the first time.
+      #
+      if {[isWindows] && [catch {unzipMustBeInstalled}]} then {
+        set uri [subst $unzipUri]
+        set exeFileName [file tempname]
+
+        uri download -timeouttype network -- $uri $exeFileName
+
+        #
+        # NOTE: *SECURITY* The downloaded unzip command line tool must
+        #       be signed; otherwise, it will be deleted and a script
+        #       error will be raised.
+        #
+        if {[catch {library certificate $exeFileName}]} then {
+          if {![info exists ::no(deleteExtractZipArchiveFile)]} then {
+            catch {file delete $exeFileName}
+          }
+
+          error "cannot use UnZip: downloaded file was not properly signed"
+        }
+
+        #
+        # NOTE: Create a brand new temporary directory, underneath the
+        #       extraction root directory, that will be added to the
+        #       executable search path and move the downloaded file to
+        #       it.
+        #
+        set exeDirectory [file join $extractRootDirectory \
+            [appendArgs ea-uz-xt- [pid] - [string trim [clock seconds] -]]]
+
+        file mkdir $exeDirectory
+        file copy $exeFileName [file join $exeDirectory unzip.exe]
+
+        if {![info exists ::no(deleteExtractZipArchiveFile)]} then {
+          catch {file delete $exeFileName}
+        }
+
+        addToPath $exeDirectory
+      }
+
+      unzipMustBeInstalled
+
+      set fileName [appendArgs \" $fileName \"]
+      set directory [appendArgs \" $directory \"]
+
+      if {[catch {
+        eval exec -success Success [subst $unzipExtractCommand]
+      } error]} then {
+        error [appendArgs \
+            "could not extract archive " $fileName ": " $error]
+      }
+    } else {
+      unzipMustBeInstalled
+
+      if {[catch {
+        eval exec [subst $unzipExtractCommand]
+      } error]} then {
+        error [appendArgs \
+            "could not extract archive \"" $fileName "\": " $error]
+      }
+    }
+
+    return $extractDirectory
+  }
+
+  #
+  # NOTE: Provide the TclTk "unzip" package to the interpreter.
+  #
+  package provide TclTk.Unzip \
+    [expr {[isTclTk] ? [info engine PatchLevel] : "1.0"}]
+}
+

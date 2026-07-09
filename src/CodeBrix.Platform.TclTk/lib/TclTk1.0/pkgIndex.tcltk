@@ -1,0 +1,98 @@
+###############################################################################
+#
+# pkgIndex.tcltk --
+#
+# Extensible Adaptable Generalized Logic Engine (TclTk)
+# Package Index File
+#
+# Copyright (c) 2007-2012 by Joe Mistachkin.  All rights reserved.
+#
+# See the file "license.terms" for information on usage and redistribution of
+# this file, and for a DISCLAIMER OF ALL WARRANTIES.
+#
+# RCS: @(#) $Id: $
+#
+###############################################################################
+
+if {![package vsatisfies [package provide Tcl] 8.4]} {return}
+if {![package vsatisfies [package provide TclTk] 1.0]} {return}
+
+package ifneeded TclTk.Auxiliary 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir auxiliary.tcltk]]
+
+package ifneeded TclTk.Tcl.Compatibility 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir compat.tcltk]]
+
+package ifneeded TclTk.CSharp 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir csharp.tcltk]]
+
+package ifneeded TclTk.Database 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir database.tcltk]]
+
+package ifneeded TclTk.Execute 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir exec.tcltk]]
+
+package ifneeded TclTk.File 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir file1.tcltk]]
+
+package ifneeded TclTk.File.Types 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir file2.tcltk]]
+
+package ifneeded TclTk.File.Utf8 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir file2u.tcltk]]
+
+package ifneeded TclTk.File.Finder 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir file3.tcltk]]
+
+package ifneeded TclTk.Information 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir info.tcltk]]
+
+package ifneeded TclTk.Library 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir init.tcltk]]
+
+package ifneeded TclTk.List 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir list.tcltk]]
+
+package ifneeded TclTk.Object 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir object.tcltk]]
+
+package ifneeded TclTk.Package.Toolset 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir pkgt.tcltk]]
+
+package ifneeded TclTk.Platform 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir platform.tcltk]]
+
+package ifneeded TclTk.Process 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir process.tcltk]]
+
+package ifneeded TclTk.Runtime.Option 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir runopt.tcltk]]
+
+package ifneeded TclTk.Safe 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir safe.tcltk]]
+
+package ifneeded TclTk.Shell 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir shell.tcltk]]
+
+package ifneeded TclTk.Tcl.Shim 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir shim.tcltk]]
+
+package ifneeded TclTk.Test 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir test.tcltk]]
+
+package ifneeded TclTk.Test.Log 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir testlog.tcltk]]
+
+package ifneeded TclTk.Unknown.Object 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir unkobj.tcltk]]
+
+package ifneeded TclTk.Unzip 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir unzip.tcltk]]
+
+package ifneeded TclTk.Update 1.0 \
+    [list sourceWithInfo -library true -- [file join $dir update.tcltk]]
+
+package ifneeded TclTk.Loader 1.0 \
+    [list sourceWithInfo -library true -- [file join lib Loader1.0 loader.tcltk]]
+
+package ifneeded Garuda 1.0 [list loadGarudaForUseByTclTk]

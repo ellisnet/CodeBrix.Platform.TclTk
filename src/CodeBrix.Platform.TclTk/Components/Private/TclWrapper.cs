@@ -1,0 +1,11569 @@
+/*
+ * TclWrapper.cs --
+ *
+ * Copyright (c) 2007-2012 by Joe Mistachkin.  All rights reserved.
+ *
+ * See the file "license.terms" for information on usage and redistribution of
+ * this file, and for a DISCLAIMER OF ALL WARRANTIES.
+ *
+ * RCS: @(#) $Id: $
+ */
+
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.RegularExpressions;
+
+#if !NET_STANDARD_20
+using Microsoft.Win32;
+#endif
+
+using CodeBrix.Platform.TclTk._Attributes;
+using CodeBrix.Platform.TclTk._Components.Private.Tcl.Delegates;
+using CodeBrix.Platform.TclTk._Components.Public;
+using CodeBrix.Platform.TclTk._Constants;
+using CodeBrix.Platform.TclTk._Containers.Private;
+using CodeBrix.Platform.TclTk._Containers.Private.Tcl;
+using CodeBrix.Platform.TclTk._Containers.Public;
+using CodeBrix.Platform.TclTk._Interfaces.Private.Tcl;
+using CodeBrix.Platform.TclTk._Interfaces.Public;
+using MajorsDictionary = System.Collections.Generic.Dictionary<int, object>;
+
+#if NET_STANDARD_21
+using Index = CodeBrix.Platform.TclTk._Constants.Index;
+#endif
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+// *WARNING* *WARNING* *WARNING* *WARNING* *WARNING* *WARNING* *WARNING* *WARNING* *WARNING*
+//
+// Please do not add any non-static members to this class.  It is not allowed to maintain any
+// kind of state information because all Tcl/Tk state information is stored in the TclApi
+// object(s).
+//
+// *WARNING* *WARNING* *WARNING* *WARNING* *WARNING* *WARNING* *WARNING* *WARNING* *WARNING*
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+namespace CodeBrix.Platform.TclTk._Components.Private.Tcl //was previously: Eagle._Components.Private.Tcl;
+{
+    /// <summary>
+    /// This class provides the low-level support for locating, loading,
+    /// unloading, and interacting with one or more native Tcl/Tk libraries
+    /// from within TclTk.  It identifies candidate Tcl/Tk dynamic link
+    /// library files using per-platform file name patterns, extracts their
+    /// version information, manages reference-counted module handles, and
+    /// exposes the native Tcl API entry points.  This class is purely static
+    /// and is not permitted to hold any per-instance state; all Tcl/Tk state
+    /// is stored in the associated <see cref="TclApi" /> object(s).
+    /// </summary>
+    [ObjectId("22f1829e-895c-4d61-a300-a94c42877c02")]
+#if TCL_WRAPPER
+    public
+#else
+    internal
+#endif
+    static class TclWrapper
+    {
+        #region Private Constants
+        #region ActiveTcl Naming Constants
+        //
+        // NOTE: If the fully qualified file name for a Tcl dynamic link
+        //       library matches this pattern, it likely originated from
+        //       ActiveState (i.e. it is likely ActiveTcl).
+        //
+        // HACK: This is purposely not read-only.
+        //
+        /// <summary>
+        /// The wildcard pattern used to detect whether the fully qualified
+        /// file name of a Tcl dynamic link library likely originated from
+        /// ActiveState (i.e. it is likely ActiveTcl).
+        /// </summary>
+        private static string ActiveStatePattern = "*ActiveState*";
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: If the fully qualified file name for a Tcl dynamic link
+        //       library matches this pattern, it is likely ActiveTcl.
+        //
+        // HACK: This is purposely not read-only.
+        //
+        /// <summary>
+        /// The wildcard pattern used to detect whether the fully qualified
+        /// file name of a Tcl dynamic link library is likely ActiveTcl.
+        /// </summary>
+        private static string ActiveTclPattern = "*ActiveTcl*";
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+#if !NET_STANDARD_20
+        //
+        // NOTE: The Windows registry key where information about installed
+        //       ActiveTcl distributions is known to reside.
+        //
+        /// <summary>
+        /// The Windows registry key path where information about installed
+        /// ActiveTcl distributions is known to reside.
+        /// </summary>
+        private const string ActiveTclKeyPath =
+            "Software\\ActiveState\\ActiveTcl"; /* WINDOWS */
+#endif
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region IronTcl Naming Constants
+        //
+        // NOTE: If the fully qualified file name for a Tcl dynamic link
+        //       library matches this pattern, it likely originated from
+        //       Eyrie Solutions (i.e. it is likely IronTcl).
+        //
+        // HACK: This is purposely not read-only.
+        //
+        /// <summary>
+        /// The wildcard pattern used to detect whether the fully qualified
+        /// file name of a Tcl dynamic link library likely originated from
+        /// Eyrie Solutions (i.e. it is likely IronTcl).
+        /// </summary>
+        private static string EyriePattern = "*Eyrie*";
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: If the fully qualified file name for a Tcl dynamic link
+        //       library matches this pattern, it is likely IronTcl.
+        //
+        // HACK: This is purposely not read-only.
+        //
+        /// <summary>
+        /// The wildcard pattern used to detect whether the fully qualified
+        /// file name of a Tcl dynamic link library is likely IronTcl.
+        /// </summary>
+        private static string IronTclPattern = "*IronTcl*";
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region Default Versions
+        //
+        // NOTE: This is the bare minimum version of Tcl/Tk that we support
+        //       and should be changed with extreme caution (null indicates
+        //       that there is no such restriction).
+        //
+        /// <summary>
+        /// The bare minimum version of Tcl/Tk that is supported; a null value
+        /// indicates that there is no such restriction.
+        /// </summary>
+        private static readonly Version DefaultMinimumVersion =
+            GlobalState.GetTwoPartVersion(8, 4);
+
+        //
+        // NOTE: This is the maximum version of Tcl/Tk that we support and
+        //       should be changed with extreme caution (null indicates that
+        //       there is no such restriction).
+        //
+        /// <summary>
+        /// The maximum version of Tcl/Tk that is supported; a null value
+        /// indicates that there is no such restriction.
+        /// </summary>
+        private static readonly Version DefaultMaximumVersion = null;
+
+        //
+        // NOTE: This is the "unknown" version of Tcl/Tk when we cannot
+        //       determine the version based on the file name (null indicates
+        //       that it is an error if we cannot determine the version based
+        //       on the file name).
+        //
+        /// <summary>
+        /// The version of Tcl/Tk to assume when the version cannot be
+        /// determined from the file name; a null value indicates that it is an
+        /// error if the version cannot be determined from the file name.
+        /// </summary>
+        private static readonly Version DefaultUnknownVersion =
+            DefaultMinimumVersion;
+
+        //
+        // NOTE: This is the minimum version of Tcl/Tk when the threaded builds
+        //       became the official default on Windows (e.g. 8.4.11.2.201775,
+        //       13-Oct-2005 08:27) and Mac OS X.
+        //
+        /// <summary>
+        /// The minimum version of Tcl/Tk at which threaded builds became the
+        /// official default on Windows and Mac OS X.
+        /// </summary>
+        private static readonly Version DefaultThreadedNonUnixMinimumVersion =
+            GlobalState.GetThreePartVersion(8, 4, 11);
+
+        //
+        // NOTE: This is the minimum version of Tcl/Tk when the threaded builds
+        //       became the official default on Unix (e.g. 8.5.0).
+        //
+        /// <summary>
+        /// The minimum version of Tcl/Tk at which threaded builds became the
+        /// official default on Unix.
+        /// </summary>
+        private static readonly Version DefaultThreadedUnixMinimumVersion =
+            GlobalState.GetThreePartVersion(8, 5, 0);
+
+        //
+        // NOTE: This is the amount of increment the major version used when
+        //       iterating through a range of versions.
+        //
+        /// <summary>
+        /// The amount by which the major version is incremented when iterating
+        /// through a range of versions.
+        /// </summary>
+        private static readonly int DefaultMajorIncrement = 1;
+
+        //
+        // NOTE: This is the amount of increment the minor version used when
+        //       iterating through a range of versions.
+        //
+        /// <summary>
+        /// The amount by which the minor version is incremented when iterating
+        /// through a range of versions.
+        /// </summary>
+        private static readonly int DefaultMinorIncrement = 1;
+
+        //
+        // NOTE: This is the minimum minor component of the version used when
+        //       iterating through a range of versions.
+        //
+        /// <summary>
+        /// The minimum minor component of the version used when iterating
+        /// through a range of versions.
+        /// </summary>
+        private static readonly int DefaultIntermediateMinimum = 0;
+
+        //
+        // NOTE: This is the maximum minor component of the version used when
+        //       iterating through a range of versions.
+        //
+        /// <summary>
+        /// The maximum minor component of the version used when iterating
+        /// through a range of versions.
+        /// </summary>
+        private static readonly int DefaultIntermediateMaximum = 9;
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region Default Scripts
+        //
+        // NOTE: This is the default script fragment used to find a native
+        //       Tcl library (i.e. if the caller specifies a null script).
+        //       This procedure is defined in the "pkgt.tcltk" core script
+        //       library file.
+        //
+        /// <summary>
+        /// The default script fragment used to find a native Tcl library when
+        /// the caller specifies a null script.  This procedure is defined in
+        /// the <c>pkgt.tcltk</c> core script library file.
+        /// </summary>
+        private static string DefaultFindViaEvaluateScript =
+            "downloadAndExtractNativeTclKitDll";
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region Per-Platform File Extension Patterns
+        //
+        // NOTE: These are the shared library extension pattern fragments
+        //       for the platforms we support.
+        //
+        // HACK: These are purposely not read-only.
+        //
+        /// <summary>
+        /// The shared library file extension pattern fragment for Windows.
+        /// </summary>
+        private static string windowsLibraryExtensionPattern;
+        /// <summary>
+        /// The shared library file extension pattern fragment for Unix.
+        /// </summary>
+        private static string unixLibraryExtensionPattern;
+        /// <summary>
+        /// The shared library file extension pattern fragment for Mac OS X.
+        /// </summary>
+        private static string macintoshLibraryExtensionPattern;
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: The file name pattern(s) for finding candidate Tcl and/or
+        //       Tk dynamic link library file names that we might want to
+        //       load.
+        //
+        #region Per-Platform Library File Name Patterns
+        #region Windows
+        //
+        // EXAMPLE: "tcl86tg.dll" (Tcl for Windows)
+        //
+        // HACK: These are purposely not read-only.
+        //
+        /// <summary>
+        /// The regular expression used to match candidate Tcl/Tk dynamic link
+        /// library file names on Windows.
+        /// </summary>
+        private static Regex windowsLibraryRegEx;
+        /// <summary>
+        /// The regular expression used to match candidate BaseKit dynamic link
+        /// library file names on Windows.
+        /// </summary>
+        private static Regex windowsBaseKitRegEx;
+        /// <summary>
+        /// The regular expression used to match candidate TclKit dynamic link
+        /// library file names on Windows.
+        /// </summary>
+        private static Regex windowsTclKitRegEx;
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region Unix (FreeBSD, OpenBSD, Linux, etc)
+        //
+        // EXAMPLE: "libtcl8.6.so" (Tcl for FreeBSD/Linux)
+        //          "libtcl8.6.so.1.0" (Tcl for OpenBSD)
+        //
+        // HACK: These are purposely not read-only.
+        //
+        /// <summary>
+        /// The regular expression used to match candidate Tcl/Tk dynamic link
+        /// library file names on Unix.
+        /// </summary>
+        private static Regex unixLibraryRegEx;
+        /// <summary>
+        /// The regular expression used to match candidate BaseKit dynamic link
+        /// library file names on Unix.
+        /// </summary>
+        private static Regex unixBaseKitRegEx;
+        /// <summary>
+        /// The regular expression used to match candidate TclKit dynamic link
+        /// library file names on Unix.
+        /// </summary>
+        private static Regex unixTclKitRegEx;
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region Mac OS X
+        //
+        // EXAMPLE: "libtcl8.6.dylib" (Tcl for Mac OS X)
+        //
+        // HACK: These are purposely not read-only.
+        //
+        /// <summary>
+        /// The regular expression used to match candidate Tcl/Tk dynamic link
+        /// library file names on Mac OS X.
+        /// </summary>
+        private static Regex macintoshLibraryRegEx;
+        /// <summary>
+        /// The regular expression used to match candidate BaseKit dynamic link
+        /// library file names on Mac OS X.
+        /// </summary>
+        private static Regex macintoshBaseKitRegEx;
+        /// <summary>
+        /// The regular expression used to match candidate TclKit dynamic link
+        /// library file names on Mac OS X.
+        /// </summary>
+        private static Regex macintoshTclKitRegEx;
+        #endregion
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region Global File Name Pattern Lists
+        //
+        // NOTE: Create the list of primary regular expression patterns
+        //       to check candidate file names against.
+        //
+        // HACK: This is purposely not read-only.
+        //
+        /// <summary>
+        /// The list of primary regular expression patterns used to check
+        /// candidate file names against.
+        /// </summary>
+        private static RegExList primaryNameRegExList;
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: Create the list of secondary regular expression patterns
+        //       to check candidate file names against.
+        //
+        // HACK: This is purposely not read-only.
+        //
+        /// <summary>
+        /// The list of secondary regular expression patterns used to check
+        /// candidate file names against.
+        /// </summary>
+        private static RegExList secondaryNameRegExList;
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: Create the list of "other" regular expression patterns
+        //       to check candidate file names against.
+        //
+        // HACK: This is purposely not read-only.
+        //
+        /// <summary>
+        /// The list of "other" regular expression patterns used to check
+        /// candidate file names against.
+        /// </summary>
+        private static RegExList otherNameRegExList;
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: The file name pattern(s) for extracting the Tcl version
+        //       number (and possibly the threaded flag) from the file
+        //       name.
+        //
+        #region Per-Platform Library File Name Patterns (Capture)
+        #region Windows
+        //
+        // EXAMPLE: "86" OR "86tg" (Tcl for Windows)
+        //
+        // HACK: These are purposely not read-only.
+        //
+        /// <summary>
+        /// The regular expression used to extract the Tcl version number (and
+        /// possibly the threaded flag) from a Tcl/Tk library file name on
+        /// Windows.
+        /// </summary>
+        private static Regex windowsLibraryVersionRegEx;
+        /// <summary>
+        /// The regular expression used to extract the Tcl version number (and
+        /// possibly the threaded flag) from a BaseKit library file name on
+        /// Windows.
+        /// </summary>
+        private static Regex windowsBaseKitVersionRegEx;
+        /// <summary>
+        /// The regular expression used to extract the Tcl version number (and
+        /// possibly the threaded flag) from a TclKit library file name on
+        /// Windows.
+        /// </summary>
+        private static Regex windowsTclKitVersionRegEx;
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region Unix (FreeBSD, OpenBSD, Linux, etc)
+        //
+        // EXAMPLE: "8.6" (Tcl for Unix)
+        //
+        // HACK: These are purposely not read-only.
+        //
+        /// <summary>
+        /// The regular expression used to extract the Tcl version number (and
+        /// possibly the threaded flag) from a Tcl/Tk library file name on
+        /// Unix.
+        /// </summary>
+        private static Regex unixLibraryVersionRegEx;
+        /// <summary>
+        /// The regular expression used to extract the Tcl version number (and
+        /// possibly the threaded flag) from a BaseKit library file name on
+        /// Unix.
+        /// </summary>
+        private static Regex unixBaseKitVersionRegEx;
+        /// <summary>
+        /// The regular expression used to extract the Tcl version number (and
+        /// possibly the threaded flag) from a TclKit library file name on
+        /// Unix.
+        /// </summary>
+        private static Regex unixTclKitVersionRegEx;
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region Mac OS X
+        //
+        // EXAMPLE: "8.6" (Tcl for Mac OS X)
+        //
+        // HACK: These are purposely not read-only.
+        //
+        /// <summary>
+        /// The regular expression used to extract the Tcl version number (and
+        /// possibly the threaded flag) from a Tcl/Tk library file name on
+        /// Mac OS X.
+        /// </summary>
+        private static Regex macintoshLibraryVersionRegEx;
+        /// <summary>
+        /// The regular expression used to extract the Tcl version number (and
+        /// possibly the threaded flag) from a BaseKit library file name on
+        /// Mac OS X.
+        /// </summary>
+        private static Regex macintoshBaseKitVersionRegEx;
+        /// <summary>
+        /// The regular expression used to extract the Tcl version number (and
+        /// possibly the threaded flag) from a TclKit library file name on
+        /// Mac OS X.
+        /// </summary>
+        private static Regex macintoshTclKitVersionRegEx;
+        #endregion
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region Global File Name Pattern Dictionary (OperatingSystemId)
+        //
+        // NOTE: Create a dictionary that maps regular expression patterns
+        //       to a particular operating system we support.
+        //
+        // HACK: This is purposely not read-only.
+        //
+        /// <summary>
+        /// The dictionary that maps version-extraction regular expression
+        /// patterns to the particular operating system they apply to.
+        /// </summary>
+        private static RegExEnumDictionary primaryVersionRegExDictionary;
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: Used to delimit the major, minor, build, and revision
+        //       numbers in a version string.
+        //
+        /// <summary>
+        /// The character used to delimit the major, minor, build, and revision
+        /// numbers in a version string.
+        /// </summary>
+        private const char VersionSeparator = Characters.Period;
+
+        //
+        // NOTE: This object is used to synchronize access to the Tcl modules
+        //       collection and the regular expression pattern lists (below),
+        //       among other things.
+        //
+        /// <summary>
+        /// The object used to synchronize access to the Tcl modules collection
+        /// and the regular expression pattern lists, among other things.
+        /// </summary>
+        private static readonly object syncRoot = new object();
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region Private Data
+        //
+        // NOTE: If this flag is non-zero, all candidate Tcl library files
+        //       will be tested for validity by using LoadLibrary on them;
+        //       otherwise, they will be checked only for existence.
+        //
+        /// <summary>
+        /// When non-zero, all candidate Tcl library files will be tested for
+        /// validity by loading them; otherwise, they will be checked only for
+        /// existence.
+        /// </summary>
+        private static bool? forceTestLoadTclLibraryFile = null;
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: This is the cached path of a candidate Tcl library from
+        //       the evaluation of the default script within the method
+        //       FindViaEvaluateScript.
+        //
+        /// <summary>
+        /// The cached path of a candidate Tcl library from the evaluation of
+        /// the default script within the FindViaEvaluateScript method.
+        /// </summary>
+        private static Result cachedFindViaEvaluateScriptResult = null;
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: The Load/Unload methods of this class can, in theory, be
+        //       called any number of times for any number of TclTk
+        //       interpreters.  This collection of "Tcl modules" keeps
+        //       track of the module handles we get back from the system
+        //       and their associated reference counts.  We need to
+        //       maintain these reference counts instead of simply
+        //       relying on the operating system LoadLibrary/FreeLibrary
+        //       functions to do so because the Tcl_Finalize function
+        //       must be called to prior to the final FreeLibrary
+        //       function call and we do not want one TclTk interpreter
+        //       to be able to yank the entire Tcl library files out
+        //       from under the other TclTk interpreters (i.e. the
+        //       Tcl_Finalize function has no internal reference counting
+        //       mechanism, it unconditionally tears down everything when
+        //       called).
+        //
+        /// <summary>
+        /// The collection of loaded Tcl modules, keyed by file name, along
+        /// with their associated reference counts.  These reference counts are
+        /// maintained internally so that the Tcl_Finalize function can be
+        /// called prior to the final FreeLibrary call without one TclTk
+        /// interpreter tearing down the Tcl library files out from under the
+        /// other TclTk interpreters.
+        /// </summary>
+        private static PathDictionary<TclModule> tclModules;
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: This list is an unsupported third-party "hook" into the file
+        //       name matching logic.  The only capture in these regular
+        //       expressions SHOULD be of the entire file name.  This list MAY
+        //       contain null elements.  If this entire list is null, it will
+        //       simply be ignored.
+        //
+        /// <summary>
+        /// An unsupported third-party "hook" into the file name matching logic.
+        /// The only capture in these regular expressions should be of the
+        /// entire file name.  This list may contain null elements, and if the
+        /// entire list is null, it is simply ignored.
+        /// </summary>
+        private static RegExList extraNameRegExList = null;
+
+        //
+        // NOTE: This dictionary is an unsupported third-party "hook" into the
+        //       file name matching and version extraction logic.  The regular
+        //       expression patterns MUST have at least one capture containing
+        //       the version number (e.g. 84 or 8.4, etc).  They MAY also have
+        //       a second and third capture that indicate the build is
+        //       threading and/or debugging enabled, respectively.  Since this
+        //       is a dictionary of Regex object keys associated with
+        //       OperatingSystemId enumerated values, the contained data MAY
+        //       NOT be null (i.e. dictionaries do not support null keys and
+        //       value types cannot normally be null); however, if this entire
+        //       dictionary is null, it will simply be ignored.
+        //
+        /// <summary>
+        /// An unsupported third-party "hook" into the file name matching and
+        /// version extraction logic.  The regular expression patterns must
+        /// have at least one capture containing the version number, and may
+        /// also have a second and third capture indicating whether the build
+        /// is threading and/or debugging enabled, respectively.  If the entire
+        /// dictionary is null, it is simply ignored.
+        /// </summary>
+        private static RegExEnumDictionary extraVersionRegExDictionary = null;
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region Static Constructor
+        /// <summary>
+        /// This static constructor initializes the per-platform file name
+        /// pattern strings and regular expressions used to locate native
+        /// Tcl/Tk libraries.
+        /// </summary>
+        static TclWrapper()
+        {
+            Initialize(false, false);
+        }
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region Private Module Initialization Methods
+        /// <summary>
+        /// This method initializes the per-platform file name pattern strings
+        /// and regular expressions used to locate native Tcl/Tk libraries.
+        /// </summary>
+        /// <param name="refresh">
+        /// Non-zero to force the pattern strings and regular expressions to be
+        /// recreated even if they have already been initialized.
+        /// </param>
+        /// <param name="forceWindows">
+        /// Non-zero to assume the Windows operating system when constructing
+        /// the pattern strings, regardless of the actual platform.
+        /// </param>
+        public static void Initialize(
+            bool refresh,     /* in */
+            bool forceWindows /* in */
+            )
+        {
+            InitializePatternStrings(refresh, forceWindows);
+            InitializeRegularExpressions(refresh);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method initializes the per-platform shared library file
+        /// extension pattern fragments used when building the file name
+        /// matching regular expressions.
+        /// </summary>
+        /// <param name="refresh">
+        /// Non-zero to force the pattern strings to be recreated even if they
+        /// have already been initialized.
+        /// </param>
+        /// <param name="forceWindows">
+        /// Non-zero to assume the Windows operating system when constructing
+        /// the pattern strings, regardless of the actual platform.
+        /// </param>
+        private static void InitializePatternStrings(
+            bool refresh,     /* in */
+            bool forceWindows /* in */
+            )
+        {
+            string[] fileExtensions = { null, null, null };
+
+            ///////////////////////////////////////////////////////////////////
+
+            if (refresh || (windowsLibraryExtensionPattern == null))
+            {
+                fileExtensions[0] = FileExtension.Library;
+
+                if (!String.IsNullOrEmpty(fileExtensions[0]))
+                {
+                    //
+                    // EXAMPLE: ".dll"
+                    //
+                    windowsLibraryExtensionPattern = "\\." +
+                        fileExtensions[0].Substring(1);
+                }
+            }
+
+            ///////////////////////////////////////////////////////////////////
+
+            if (refresh || (unixLibraryExtensionPattern == null))
+            {
+                if (forceWindows || PlatformOps.IsWindowsOperatingSystem())
+                {
+                    fileExtensions[0] = FileExtension.Library;
+                    fileExtensions[1] = FileExtension.SharedLibrary;
+                    fileExtensions[2] = FileExtension.SharedObject;
+
+                    if (!String.IsNullOrEmpty(fileExtensions[0]) &&
+                        !String.IsNullOrEmpty(fileExtensions[1]) &&
+                        !String.IsNullOrEmpty(fileExtensions[2]))
+                    {
+                        //
+                        // EXAMPLE: ".dll", ".sl", or ".so"
+                        //
+                        unixLibraryExtensionPattern = "\\.(?:" +
+                            fileExtensions[0].Substring(1) + "|" +
+                            fileExtensions[1].Substring(1) + "|" +
+                            fileExtensions[2].Substring(1) + ")";
+                    }
+                }
+                else
+                {
+                    fileExtensions[0] = FileExtension.SharedLibrary;
+                    fileExtensions[1] = FileExtension.SharedObject;
+
+                    if (!String.IsNullOrEmpty(fileExtensions[0]) &&
+                        !String.IsNullOrEmpty(fileExtensions[1]))
+                    {
+                        //
+                        // EXAMPLE: ".sl" or ".so"
+                        //
+                        unixLibraryExtensionPattern = "\\.(?:" +
+                            fileExtensions[0].Substring(1) + "|" +
+                            fileExtensions[1].Substring(1) + ")";
+                    }
+                }
+            }
+
+            ///////////////////////////////////////////////////////////////////
+
+            if (refresh || (macintoshLibraryExtensionPattern == null))
+            {
+                fileExtensions[0] = FileExtension.DynamicLibrary;
+
+                if (!String.IsNullOrEmpty(fileExtensions[0]))
+                {
+                    //
+                    // EXAMPLE: ".dylib"
+                    //
+                    macintoshLibraryExtensionPattern = "\\." +
+                        fileExtensions[0].Substring(1);
+                }
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method initializes the per-platform regular expressions and
+        /// pattern lists used to match candidate Tcl/Tk library file names and
+        /// to extract their version information.
+        /// </summary>
+        /// <param name="refresh">
+        /// Non-zero to force the regular expressions to be recreated even if
+        /// they have already been initialized.
+        /// </param>
+        private static void InitializeRegularExpressions(
+            bool refresh /* in */
+            )
+        {
+            #region Regular Expression Options
+            RegexOptions unixRegExOptions = RegexOptions.CultureInvariant |
+                RegexOptions.Compiled;
+
+            RegexOptions nonUnixRegExOptions = RegexOptions.IgnoreCase |
+                unixRegExOptions;
+            #endregion
+
+            ///////////////////////////////////////////////////////////////////
+
+            //
+            // NOTE: The file name pattern(s) for finding candidate Tcl and/or
+            //       Tk dynamic link library file names that we might want to
+            //       load.
+            //
+            #region Per-Platform Library File Name Patterns
+            #region Windows
+            //
+            // EXAMPLE: "tcl86tg.dll" (Tcl for Windows)
+            //
+            if (windowsLibraryExtensionPattern != null)
+            {
+                if (refresh || (windowsLibraryRegEx == null))
+                {
+                    windowsLibraryRegEx = RegExOps.Create(
+                        "^(tcl\\d+[t]?[s]?[g]?[x]?" +
+                        windowsLibraryExtensionPattern + ")$",
+                        nonUnixRegExOptions);
+                }
+
+                ///////////////////////////////////////////////////////////////
+
+                if (refresh || (windowsBaseKitRegEx == null))
+                {
+                    windowsBaseKitRegEx = RegExOps.Create(
+                        "^(base-(?:tcl|tk)\\d+\\.\\d+-thread-win32-\\w+" +
+                        windowsLibraryExtensionPattern + ")$",
+                        nonUnixRegExOptions);
+                }
+
+                ///////////////////////////////////////////////////////////////
+
+                if (refresh || (windowsTclKitRegEx == null))
+                {
+                    windowsTclKitRegEx = RegExOps.Create(
+                        "^(libtclkit\\d\\.?\\d(?:\\.?\\d{1,2})?(?:(?:a|b)(?:\\d+)?)?" +
+                        windowsLibraryExtensionPattern + ")$",
+                        nonUnixRegExOptions);
+                }
+            }
+            #endregion
+
+            ///////////////////////////////////////////////////////////////////
+
+            #region Unix (FreeBSD, OpenBSD, Linux, etc)
+            //
+            // EXAMPLE: "libtcl8.6.so" (Tcl for FreeBSD/Linux)
+            //          "libtcl8.6.so.1.0" (Tcl for OpenBSD)
+            //
+            if (unixLibraryExtensionPattern != null)
+            {
+                if (refresh || (unixLibraryRegEx == null))
+                {
+                    unixLibraryRegEx = RegExOps.Create(
+                        "^(libtcl\\d+\\.?\\d+" + unixLibraryExtensionPattern +
+                        "(?:\\.\\d+\\.\\d+)?)$",
+                        unixRegExOptions);
+                }
+
+                ///////////////////////////////////////////////////////////////
+
+                if (refresh || (unixBaseKitRegEx == null))
+                {
+                    unixBaseKitRegEx = RegExOps.Create(
+                        "^(base-(?:tcl|tk)\\d+\\.\\d+-thread-\\w+-\\w+" +
+                        unixLibraryExtensionPattern + "(?:\\.\\d+\\.\\d+)?)$",
+                        unixRegExOptions);
+                }
+
+                ///////////////////////////////////////////////////////////////
+
+                if (refresh || (unixTclKitRegEx == null))
+                {
+                    unixTclKitRegEx = RegExOps.Create(
+                        "^(libtclkit\\d\\.?\\d(?:\\.?\\d{1,2})?(?:(?:a|b)(?:\\d+)?)?" +
+                        unixLibraryExtensionPattern + "(?:\\.\\d+\\.\\d+)?)$",
+                        unixRegExOptions);
+                }
+            }
+            #endregion
+
+            ///////////////////////////////////////////////////////////////////
+
+            #region Mac OS X
+            //
+            // EXAMPLE: "libtcl8.6.dylib" (Tcl for Mac OS X)
+            //
+            if (macintoshLibraryExtensionPattern != null)
+            {
+                if (refresh || (macintoshLibraryRegEx == null))
+                {
+                    macintoshLibraryRegEx = RegExOps.Create(
+                        "^(libtcl\\d+\\.?\\d+" +
+                        macintoshLibraryExtensionPattern + ")$",
+                        nonUnixRegExOptions);
+                }
+
+                ///////////////////////////////////////////////////////////////
+
+                if (refresh || (macintoshBaseKitRegEx == null))
+                {
+                    macintoshBaseKitRegEx = RegExOps.Create(
+                        "^(base-(?:tcl|tk)\\d+\\.\\d+-thread-macosx-\\w+" +
+                        macintoshLibraryExtensionPattern + ")$",
+                        nonUnixRegExOptions);
+                }
+
+                ///////////////////////////////////////////////////////////////
+
+                if (refresh || (macintoshTclKitRegEx == null))
+                {
+                    macintoshTclKitRegEx = RegExOps.Create(
+                        "^(libtclkit\\d\\.?\\d(?:\\.?\\d{1,2})?(?:(?:a|b)(?:\\d+)?)?" +
+                        macintoshLibraryExtensionPattern + ")$",
+                        nonUnixRegExOptions);
+                }
+            }
+            #endregion
+            #endregion
+
+            ///////////////////////////////////////////////////////////////////
+
+            #region Global File Name Pattern Lists
+            #region Primary
+            //
+            // NOTE: Create the list of primary regular expression patterns
+            //       to check candidate file names against.
+            //
+            if (refresh || (primaryNameRegExList == null))
+            {
+                primaryNameRegExList = new RegExList(new Regex[] {
+                    windowsLibraryRegEx,
+                    unixLibraryRegEx,
+                    macintoshLibraryRegEx
+                });
+            }
+            #endregion
+
+            ///////////////////////////////////////////////////////////////////
+
+            #region Secondary
+            //
+            // NOTE: Create the list of secondary regular expression patterns
+            //       to check candidate file names against.
+            //
+            if (refresh || (secondaryNameRegExList == null))
+            {
+                secondaryNameRegExList = new RegExList(new Regex[] {
+                    windowsTclKitRegEx,
+                    unixTclKitRegEx,
+                    macintoshTclKitRegEx
+                });
+            }
+            #endregion
+
+            ///////////////////////////////////////////////////////////////////
+
+            #region Other
+            //
+            // NOTE: Create the list of "other" regular expression patterns
+            //       to check candidate file names against.
+            //
+            if (refresh || (otherNameRegExList == null))
+            {
+                otherNameRegExList = new RegExList(new Regex[] {
+                    windowsBaseKitRegEx,
+                    unixBaseKitRegEx,
+                    macintoshBaseKitRegEx
+                });
+            }
+            #endregion
+            #endregion
+
+            ///////////////////////////////////////////////////////////////////
+
+            //
+            // NOTE: The file name pattern(s) for extracting the Tcl version
+            //       number (and possibly the threaded flag) from the file
+            //       name.
+            //
+            #region Per-Platform Library File Name Patterns (Capture)
+            #region Windows
+            //
+            // EXAMPLE: "86" OR "86tg" (Tcl for Windows)
+            //
+            if (windowsLibraryExtensionPattern != null)
+            {
+                if (refresh || (windowsLibraryVersionRegEx == null))
+                {
+                    windowsLibraryVersionRegEx = RegExOps.Create(
+                        "^tcl(\\d+)([t])?[s]?([g])?[x]?" +
+                        windowsLibraryExtensionPattern + "$",
+                        nonUnixRegExOptions);
+                }
+
+                ///////////////////////////////////////////////////////////////
+
+                if (refresh || (windowsBaseKitVersionRegEx == null))
+                {
+                    windowsBaseKitVersionRegEx = RegExOps.Create(
+                        "^base-(?:tcl|tk)(\\d+\\.\\d+)(-thread)?-win32-\\w+" +
+                        windowsLibraryExtensionPattern + "$",
+                        nonUnixRegExOptions);
+                }
+
+                ///////////////////////////////////////////////////////////////
+
+                if (refresh || (windowsTclKitVersionRegEx == null))
+                {
+                    windowsTclKitVersionRegEx = RegExOps.Create(
+                        "^libtclkit(\\d\\.?\\d(?:\\.?\\d{1,2})?)(?:(?:a|b)(?:\\d+)?)?" +
+                        windowsLibraryExtensionPattern + "$",
+                        nonUnixRegExOptions);
+                }
+            }
+            #endregion
+
+            ///////////////////////////////////////////////////////////////////
+
+            #region Unix (FreeBSD, OpenBSD, Linux, etc)
+            //
+            // EXAMPLE: "8.6" (Tcl for Unix)
+            //
+            if (unixLibraryExtensionPattern != null)
+            {
+                if (refresh || (unixLibraryVersionRegEx == null))
+                {
+                    unixLibraryVersionRegEx = RegExOps.Create(
+                        "^libtcl(\\d+\\.?\\d+)" +
+                        unixLibraryExtensionPattern + "(?:\\.\\d+\\.\\d+)?$",
+                        unixRegExOptions);
+                }
+
+                ///////////////////////////////////////////////////////////////
+
+                if (refresh || (unixBaseKitVersionRegEx == null))
+                {
+                    unixBaseKitVersionRegEx = RegExOps.Create(
+                        "^base-(?:tcl|tk)(\\d+\\.\\d+)(-thread)?-\\w+-\\w+" +
+                        unixLibraryExtensionPattern + "(?:\\.\\d+\\.\\d+)?$",
+                        unixRegExOptions);
+                }
+
+                ///////////////////////////////////////////////////////////////
+
+                if (refresh || (unixTclKitVersionRegEx == null))
+                {
+                    unixTclKitVersionRegEx = RegExOps.Create(
+                        "^libtclkit(\\d\\.?\\d(?:\\.?\\d{1,2})?)(?:(?:a|b)(?:\\d+)?)?" +
+                        unixLibraryExtensionPattern + "(?:\\.\\d+\\.\\d+)?$",
+                        unixRegExOptions);
+                }
+            }
+            #endregion
+
+            ///////////////////////////////////////////////////////////////////
+
+            #region Mac OS X
+            //
+            // EXAMPLE: "8.6" (Tcl for Mac OS X)
+            //
+            if (macintoshLibraryExtensionPattern != null)
+            {
+                if (refresh || (macintoshLibraryVersionRegEx == null))
+                {
+                    macintoshLibraryVersionRegEx = RegExOps.Create(
+                        "^libtcl(\\d+\\.?\\d+)" +
+                        macintoshLibraryExtensionPattern + "$",
+                        nonUnixRegExOptions);
+                }
+
+                ///////////////////////////////////////////////////////////////
+
+                if (refresh || (macintoshBaseKitVersionRegEx == null))
+                {
+                    macintoshBaseKitVersionRegEx = RegExOps.Create(
+                        "^base-(?:tcl|tk)(\\d+\\.\\d+)(-thread)?-macosx-\\w+" +
+                        macintoshLibraryExtensionPattern + "$",
+                        nonUnixRegExOptions);
+                }
+
+                ///////////////////////////////////////////////////////////////
+
+                if (refresh || (macintoshTclKitVersionRegEx == null))
+                {
+                    macintoshTclKitVersionRegEx = RegExOps.Create(
+                        "^libtclkit(\\d\\.?\\d(?:\\.?\\d{1,2})?)(?:(?:a|b)(?:\\d+)?)?" +
+                        macintoshLibraryExtensionPattern + "$",
+                        nonUnixRegExOptions);
+                }
+            }
+            #endregion
+            #endregion
+
+            ///////////////////////////////////////////////////////////////////
+
+            #region Global File Name Pattern Dictionary (OperatingSystemId)
+            #region Primary
+            //
+            // NOTE: Create a dictionary that maps regular expression patterns
+            //       to a particular operating system we support.
+            //
+            if (refresh || (primaryVersionRegExDictionary == null))
+            {
+                primaryVersionRegExDictionary =
+                    new RegExEnumDictionary(
+                    new Regex[] {
+                    windowsLibraryVersionRegEx,
+                    windowsBaseKitVersionRegEx,
+                    windowsTclKitVersionRegEx,
+                    unixLibraryVersionRegEx,
+                    unixBaseKitVersionRegEx,
+                    unixTclKitVersionRegEx,
+                    macintoshLibraryVersionRegEx,
+                    macintoshBaseKitVersionRegEx,
+                    macintoshTclKitVersionRegEx
+                }, typeof(OperatingSystemId),
+                    new /* OperatingSystemId */ Enum[] {
+                    OperatingSystemId.WindowsNT,
+                    OperatingSystemId.WindowsNT,
+                    OperatingSystemId.WindowsNT,
+                    OperatingSystemId.Unix,
+                    OperatingSystemId.Unix,
+                    OperatingSystemId.Unix,
+                    OperatingSystemId.Darwin,
+                    OperatingSystemId.Darwin,
+                    OperatingSystemId.Darwin
+                });
+            }
+            #endregion
+            #endregion
+        }
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether the specified error list contains
+        /// any errors.
+        /// </summary>
+        /// <param name="errors">
+        /// The list of errors to check.  This parameter may be null.
+        /// </param>
+        /// <returns>
+        /// True if the error list is non-null and contains at least one error;
+        /// otherwise, false.
+        /// </returns>
+        private static bool HaveAnError(
+            ResultList errors /* in */
+            )
+        {
+            return ((errors != null) && (errors.Count > 0));
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method adds an error to the specified error list, creating the
+        /// list if necessary.  If the specified error is null, no action is
+        /// taken.
+        /// </summary>
+        /// <param name="errors">
+        /// The list of errors to add to.  Upon return, this may refer to a
+        /// newly created list if it was null and an error was added.
+        /// </param>
+        /// <param name="error">
+        /// The error to add.  If this parameter is null, no action is taken.
+        /// </param>
+        private static void MaybeAddAnError(
+            ref ResultList errors, /* in, out */
+            Result error           /* in */
+            )
+        {
+            if (error == null)
+                return;
+
+            if (errors == null)
+                errors = new ResultList();
+
+            errors.Add(error);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method ensures that the collection of loaded Tcl modules has
+        /// been created.  The lock must be held prior to calling this method.
+        /// </summary>
+        //
+        // WARNING: This method assumes the lock is held.
+        //
+        private static void CheckModules()
+        {
+            if (tclModules == null)
+                tclModules = new PathDictionary<TclModule>();
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method attempts to make a copy of the cached Tcl module object
+        /// associated with the specified native Tcl library file name.  This
+        /// method is thread-safe.
+        /// </summary>
+        /// <param name="fileName">
+        /// The file name of the native Tcl library whose module is copied.
+        /// </param>
+        /// <param name="module">
+        /// Upon success, receives a copy of the cached Tcl module object
+        /// associated with the specified file name.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// True if the module was found and copied; otherwise, false.
+        /// </returns>
+#if TCL_WRAPPER
+        internal
+#else
+        public
+#endif
+        static bool TryCopyModule(
+            string fileName,      /* in */
+            ref TclModule module, /* out */
+            ref Result error      /* out */
+            ) /* THREAD-SAFE */
+        {
+            if (!CheckTclLibraryPath(fileName))
+            {
+                error = "cannot copy module: invalid file name";
+                return false;
+            }
+
+            lock (syncRoot) /* TRANSACTIONAL */
+            {
+                TclModule tclModule;
+
+                if (!tclModules.TryGetValue(fileName, out tclModule))
+                {
+                    error = String.Format(
+                        "cannot copy module: file {0} not found",
+                        FormatOps.DisplayName(fileName));
+
+                    return false;
+                }
+
+                if (tclModule == null)
+                {
+                    error = String.Format(
+                        "cannot copy module: file {0} not available",
+                        FormatOps.DisplayName(fileName));
+
+                    return false;
+                }
+
+                module = new TclModule(
+                    tclModule.FileName, tclModule.Module,
+                    tclModule.ReferenceCount, tclModule.LockCount);
+
+                return true;
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method adds a reference to the cached Tcl module object
+        /// associated with the specified native Tcl library file name, without
+        /// loading the module.  This method is thread-safe.
+        /// </summary>
+        /// <param name="fileName">
+        /// The file name of the native Tcl library whose module reference count
+        /// is incremented.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// True if a valid module reference was added; otherwise, false.
+        /// </returns>
+        private static bool AddModuleReference(
+            string fileName, /* in */
+            ref Result error /* out */
+            ) /* THREAD-SAFE */
+        {
+            return NativeOps.IsValidHandle(
+                AddModuleReference(fileName, false, false, ref error));
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method adds a reference to the cached Tcl module object
+        /// associated with the specified native Tcl library file name, without
+        /// loading the module, and returns the associated module object.  This
+        /// method is thread-safe.
+        /// </summary>
+        /// <param name="fileName">
+        /// The file name of the native Tcl library whose module reference count
+        /// is incremented.
+        /// </param>
+        /// <param name="module">
+        /// Upon success, receives the Tcl module object associated with the
+        /// specified file name.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// True if a valid module reference was added; otherwise, false.
+        /// </returns>
+        private static bool AddModuleReference(
+            string fileName,      /* in */
+            ref TclModule module, /* out */
+            ref Result error      /* out */
+            ) /* THREAD-SAFE */
+        {
+            return NativeOps.IsValidHandle(
+                AddModuleReference(fileName, false, false, ref module, ref error));
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method adds a reference to the Tcl module object associated
+        /// with the specified native Tcl library file name, optionally loading
+        /// the module into the current process.  This method is thread-safe.
+        /// </summary>
+        /// <param name="fileName">
+        /// The file name of the native Tcl library whose module reference count
+        /// is incremented.
+        /// </param>
+        /// <param name="load">
+        /// Non-zero to load the native module into the current process when it
+        /// is not already loaded, and to return the actual native module
+        /// handle.
+        /// </param>
+        /// <param name="setDirectory">
+        /// Non-zero to set the native library search directory to that of the
+        /// specified file prior to loading it.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// The native module handle, or <see cref="IntPtr.Zero" /> if the
+        /// module reference could not be added.
+        /// </returns>
+#if TCL_WRAPPER
+        internal
+#else
+        public
+#endif
+        static IntPtr AddModuleReference(
+            string fileName,   /* in */
+            bool load,         /* in */
+            bool setDirectory, /* in */
+            ref Result error   /* out */
+            ) /* THREAD-SAFE */
+        {
+            TclModule module = null;
+
+            return AddModuleReference(
+                fileName, load, setDirectory, ref module, ref error);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method adds a reference to the Tcl module object associated
+        /// with the specified native Tcl library file name, optionally loading
+        /// the module into the current process, and returns the associated
+        /// module object.  This method is thread-safe.
+        /// </summary>
+        /// <param name="fileName">
+        /// The file name of the native Tcl library whose module reference count
+        /// is incremented.
+        /// </param>
+        /// <param name="load">
+        /// Non-zero to load the native module into the current process when it
+        /// is not already loaded, and to return the actual native module
+        /// handle.
+        /// </param>
+        /// <param name="setDirectory">
+        /// Non-zero to set the native library search directory to that of the
+        /// specified file prior to loading it.
+        /// </param>
+        /// <param name="module">
+        /// Upon success, receives the Tcl module object associated with the
+        /// specified file name.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// The native module handle, or <see cref="IntPtr.Zero" /> if the
+        /// module reference could not be added.
+        /// </returns>
+        private static IntPtr AddModuleReference(
+            string fileName,      /* in */
+            bool load,            /* in */
+            bool setDirectory,    /* in */
+            ref TclModule module, /* out */
+            ref Result error      /* out */
+            ) /* THREAD-SAFE */
+        {
+            IntPtr result = IntPtr.Zero;
+
+            if (CheckTclLibraryPath(fileName))
+            {
+                lock (syncRoot) /* TRANSACTIONAL */
+                {
+                    //
+                    // NOTE: Make sure the modules collection is initialized.
+                    //
+                    CheckModules();
+
+                    //
+                    // NOTE: Check if the module should [already] be loaded.
+                    //
+                    TclModule tclModule;
+
+                    if (tclModules.TryGetValue(fileName, out tclModule))
+                    {
+                        if (tclModule != null)
+                        {
+                            //
+                            // NOTE: Add one reference to the module.
+                            //
+                            tclModule.AddReference();
+
+                            //
+                            // NOTE: If the 'load' flag has been set by the
+                            //       caller, return the actual module handle
+                            //       as the result; otherwise, just return a
+                            //       fake module handle that appears to be
+                            //       valid if the actual module handle is
+                            //       valid.  If the actual module handle is
+                            //       invalid, an invalid module handle (zero)
+                            //       will always be returned.
+                            //
+                            result = tclModule.GetModule(load);
+
+                            //
+                            // NOTE: Give a reference to the pre-existing Tcl
+                            //       module object to the caller.
+                            //
+                            module = tclModule;
+                        }
+                        else
+                        {
+                            //
+                            // NOTE: The module is not valid.  Therefore, we
+                            //       will forbid making any changes to it.
+                            //
+                            error = String.Format(
+                                "cannot add module reference: file {0} not available",
+                                FormatOps.DisplayName(fileName));
+                        }
+                    }
+                    else if (load)
+                    {
+                        //
+                        // NOTE: We have never seen this module before (or it
+                        //       was previously unloaded); therefore, attempt
+                        //       to have the operating system load it now.
+                        //       This can throw an exception or return an
+                        //       invalid module handle.  No state has been
+                        //       changed at this point.  If an exception is
+                        //       thrown it should simply be caught by the
+                        //       caller (the Load method).  If an invalid
+                        //       module handle is returned, the operating
+                        //       system could not load the module for some
+                        //       reason and we will return an error message
+                        //       built from the underlying error information.
+                        //
+                        bool success = false;
+                        IntPtr nativeModule = IntPtr.Zero;
+
+                        try
+                        {
+                            int lastError;
+                            string directory = Path.GetDirectoryName(fileName);
+
+                            if (!setDirectory || NativeOps.SetDllDirectory(
+                                    directory, out lastError)) /* throw */
+                            {
+                                nativeModule = NativeOps.LoadLibrary(
+                                    fileName, out lastError); /* throw */
+
+                                if (NativeOps.IsValidHandle(nativeModule))
+                                {
+                                    //
+                                    // NOTE: Create a new Tcl module object to wrap
+                                    //       the native module file name and handle
+                                    //       in.
+                                    //
+                                    tclModule = new TclModule(fileName,
+                                        nativeModule, 1);
+
+                                    //
+                                    // NOTE: Add the new Tcl module object to the
+                                    //       private dictionary of loaded modules.
+                                    //
+                                    tclModules.Add(fileName, tclModule);
+
+                                    //
+                                    // NOTE: If the 'load' flag has been set by the
+                                    //       caller, return the actual module
+                                    //       handle as the result; otherwise, just
+                                    //       return a fake module handle that
+                                    //       appears to be valid if the actual
+                                    //       module handle is valid.  If the actual
+                                    //       module handle is invalid, an invalid
+                                    //       module handle (zero) will always be
+                                    //       returned.
+                                    //
+                                    result = tclModule.GetModule(load);
+
+                                    //
+                                    // NOTE: Give a reference to the newly created
+                                    //       Tcl module object to the caller.
+                                    //
+                                    module = tclModule;
+
+                                    //
+                                    // NOTE: Set the flag indicating to the finally
+                                    //       block that this code has succeeded.
+                                    //
+                                    success = true;
+                                }
+                                else
+                                {
+                                    error = String.Format(
+                                        "LoadLibrary({1}) failed with error {0}: {2}",
+                                        lastError, FormatOps.WrapOrNull(fileName),
+                                        NativeOps.GetDynamicLoadingError(lastError));
+                                }
+                            }
+                            else
+                            {
+                                error = String.Format(
+                                    "SetDllDirectory({1}) failed with error {0}: {2}",
+                                    lastError, FormatOps.WrapOrNull(directory),
+                                    NativeOps.GetDynamicLoadingError(lastError));
+                            }
+                        }
+                        finally
+                        {
+                            if (!success && (nativeModule != IntPtr.Zero))
+                            {
+                                int lastError;
+
+                                if (NativeOps.FreeLibrary(
+                                        nativeModule, out lastError)) /* throw */
+                                {
+                                    TraceOps.DebugTrace(String.Format(
+                                        "FreeLibrary (AddModuleReference): " +
+                                        "success, module = {0}", nativeModule),
+                                        typeof(TclWrapper).Name,
+                                        TracePriority.NativeDebug);
+
+                                    nativeModule = IntPtr.Zero;
+                                }
+                                else
+                                {
+                                    throw new ScriptException(String.Format(
+                                        "FreeLibrary(0x{1:X}) failed with error {0}: {2}",
+                                        lastError, nativeModule,
+                                        NativeOps.GetDynamicLoadingError(lastError)));
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        //
+                        // NOTE: The module handle does not exist in our
+                        //       collection and we have been told NOT to
+                        //       load it; therefore, we will simply return
+                        //       an error.
+                        //
+                        error = String.Format(
+                            "cannot add module reference: file {0} not found",
+                            FormatOps.DisplayName(fileName));
+                    }
+                }
+            }
+            else
+            {
+                error = "cannot add module reference: invalid file name";
+            }
+
+#if false
+            TraceOps.DebugTrace(String.Format(
+                "AddModuleReference: fileName = {0}, load = {1}, " +
+                "module = {2}, result = {3}, error = {4}",
+                FormatOps.WrapOrNull(fileName), load, module, result,
+                FormatOps.WrapOrNull(error)), typeof(TclWrapper).Name,
+                TracePriority.NativeDebug);
+#endif
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method releases a reference to the cached Tcl module object
+        /// associated with the specified native Tcl library file name,
+        /// optionally adjusting its pending lock and removing it when no
+        /// references remain.  This method is thread-safe.
+        /// </summary>
+        /// <param name="fileName">
+        /// The file name of the native Tcl library whose module reference count
+        /// is decremented.
+        /// </param>
+        /// <param name="unload">
+        /// Non-zero to indicate that the module is being unloaded, allowing it
+        /// to be removed when no references and no pending locks remain.
+        /// </param>
+        /// <param name="unlock">
+        /// Non-zero to release a pending lock previously taken on the module.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// The remaining reference count for the module, or
+        /// <c>Count.Invalid</c> if the reference could not be released.
+        /// </returns>
+        private static int ReleaseModuleReference(
+            string fileName, /* in */
+            bool unload,     /* in */
+            bool unlock,     /* in */
+            ref Result error /* out */
+            ) /* THREAD-SAFE */
+        {
+            int result = Count.Invalid;
+
+            if (CheckTclLibraryPath(fileName))
+            {
+                lock (syncRoot) /* TRANSACTIONAL */
+                {
+                    //
+                    // NOTE: Make sure the modules collection is initialized.
+                    //
+                    CheckModules();
+
+                    //
+                    // NOTE: Check if the module is known (and loaded).
+                    //
+                    TclModule tclModule;
+
+                    if (tclModules.TryGetValue(fileName, out tclModule))
+                    {
+                        if (tclModule != null)
+                        {
+                            //
+                            // NOTE: At this point, the lock count may need to
+                            //       be adjusted.  If the 'unload' flag is not
+                            //       set, that means the Unload method is
+                            //       taking a lock on it, which prevents any
+                            //       further changes to the reference count.
+                            //       If the 'unload' and 'unlock' flags are
+                            //       both set, the lock on the module will be
+                            //       released.  If only the 'unload' flag is
+                            //       set, the exiting lock count will be
+                            //       returned unchanged.  This code relies upon
+                            //       the caller knowing exactly the correct
+                            //       flags to set for a given call.  Currently,
+                            //       there are exactly two callers of this
+                            //       method:
+                            //
+                            //       1. The Unload method in this class.
+                            //          First, it calls this method to acquire
+                            //          a pending lock on the module (i.e. with
+                            //          the 'unload' and 'unlock' flags not
+                            //          set).  After completing the unloading
+                            //          process, it calls this method again to
+                            //          release its pending lock and remove its
+                            //          reference to the module, possibly
+                            //          causing it to be completely removed.
+                            //
+                            //       2. The DoOneEvent method in this class.
+                            //          In this case, The 'unload' flag will be
+                            //          set and the 'unlock' flag will not be
+                            //          set.  If there is a pending lock on the
+                            //          module when this call is executed, the
+                            //          module will not be removed, even if the
+                            //          reference count reaches zero.  This
+                            //          prevents a very subtle race condition
+                            //          between a thread calling the Unload
+                            //          method and one calling the DoOneEvent
+                            //          method.
+                            //
+                            int lockCount = tclModule.AdjustLockCount(unload,
+                                unlock);
+
+                            //
+                            // NOTE: Release one reference from the module.
+                            //
+                            int referenceCount = tclModule.ReleaseReference();
+
+                            //
+                            // NOTE: Normalize negative reference counts to
+                            //       zero.
+                            //
+                            if (referenceCount < 0)
+                                referenceCount = 0;
+
+                            //
+                            // NOTE If the 'unload' flag is set, the result of
+                            //      this method will take into account the
+                            //      pending lock count; otherwise, it will not.
+                            //      Also, if the unload flag is not set, the
+                            //      module will never be removed, even if the
+                            //      reference count reaches zero.
+                            //
+                            if (unload)
+                            {
+                                result = referenceCount + lockCount;
+
+                                if (result == 0)
+                                    tclModules.Remove(fileName);
+                            }
+                            else
+                            {
+                                //
+                                // NOTE: Return the "real" reference count
+                                //       without taking into account any
+                                //       pending locks.  This is critically
+                                //       important when this method is being
+                                //       called by the Unload method to obtain
+                                //       the pending lock (i.e. where we want
+                                //       the reference count to reach zero
+                                //       without removing the module.
+                                //
+                                result = referenceCount;
+                            }
+                        }
+                        else
+                        {
+                            //
+                            // NOTE: The module is not valid.  Therefore, we
+                            //       will forbid making any changes to it.
+                            //
+                            error = String.Format(
+                                "cannot release module reference: file {0} not available",
+                                FormatOps.DisplayName(fileName));
+                        }
+                    }
+                    else
+                    {
+                        //
+                        // NOTE: The module handle does not exist in our
+                        //       collection; therefore, we will simply return
+                        //       an error.
+                        //
+                        error = String.Format(
+                            "cannot release module reference: file {0} not found",
+                            FormatOps.DisplayName(fileName));
+                    }
+                }
+            }
+            else
+            {
+                error = "cannot release module reference: invalid file name";
+            }
+
+#if false
+            TraceOps.DebugTrace(String.Format(
+                "ReleaseModuleReference: fileName = {0}, unload = {1}, " +
+                "unlock = {2}, result = {3}, error = {4}",
+                FormatOps.WrapOrNull(fileName), unload, unlock, result,
+                FormatOps.WrapOrNull(error)), typeof(TclWrapper).Name,
+                TracePriority.NativeDebug);
+#endif
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether the specified path is a valid,
+        /// non-empty native Tcl library path.
+        /// </summary>
+        /// <param name="path">
+        /// The path to check.  This parameter may be null.
+        /// </param>
+        /// <returns>
+        /// True if the path is a valid native Tcl library path; otherwise,
+        /// false.
+        /// </returns>
+        private static bool CheckTclLibraryPath(
+            string path /* in */
+            )
+        {
+            if (String.IsNullOrEmpty(path))
+                return false;
+
+            if (!PathOps.CheckForValid(
+                    null, path, false, false, true,
+                    PlatformOps.IsWindowsOperatingSystem()))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether the specified directory is a valid
+        /// native Tcl library directory that exists on the local file system.
+        /// </summary>
+        /// <param name="directory">
+        /// The directory to check.  This parameter may be null.
+        /// </param>
+        /// <returns>
+        /// True if the directory is a valid, existing native Tcl library
+        /// directory; otherwise, false.
+        /// </returns>
+        private static bool CheckTclLibraryDirectory(
+            string directory /* in */
+            )
+        {
+            if (!CheckTclLibraryPath(directory))
+                return false;
+
+            if (!PlatformOps.IsMacintoshOperatingSystem() &&
+                !Directory.Exists(directory))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether candidate native Tcl library files
+        /// should be verified by attempting to load them, instead of merely
+        /// checking for their existence.
+        /// </summary>
+        /// <returns>
+        /// True if candidate native Tcl library files should be verified by
+        /// attempting to load them; otherwise, false.
+        /// </returns>
+        private static bool ShouldTestLoadTclLibraryFile()
+        {
+            if (forceTestLoadTclLibraryFile != null)
+                return (bool)forceTestLoadTclLibraryFile;
+
+            return PlatformOps.IsMacintoshOperatingSystem();
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether the specified file is a valid native
+        /// Tcl library file, optionally verifying that it is trusted and can be
+        /// loaded.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context used when checking whether the file is
+        /// trusted.  This parameter may be null.
+        /// </param>
+        /// <param name="fileName">
+        /// The file name to check.  This parameter may be null.
+        /// </param>
+        /// <returns>
+        /// True if the file is a valid native Tcl library file; otherwise,
+        /// false.
+        /// </returns>
+        private static bool CheckTclLibraryFile(
+            Interpreter interpreter, /* in */
+            string fileName          /* in */
+            )
+        {
+            if (!CheckTclLibraryPath(fileName))
+                return false;
+
+            if (ShouldTestLoadTclLibraryFile())
+            {
+                if (!RuntimeOps.IsFileTrusted(
+                        interpreter, null, fileName,
+                        IntPtr.Zero))
+                {
+                    return false;
+                }
+
+                if (NativeOps.TestLoadLibrary(
+                        fileName) != ReturnCode.Ok)
+                {
+                    return false;
+                }
+            }
+            else if (!File.Exists(fileName))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether the specified Tcl API object and Tcl
+        /// interpreter are valid and ready for use.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object to check.  This parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The native Tcl interpreter handle to check.
+        /// </param>
+        /// <param name="deleted">
+        /// Non-zero to also fail when the Tcl interpreter has been deleted.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// True if the Tcl API object and Tcl interpreter are valid and ready
+        /// for use; otherwise, false.
+        /// </returns>
+        public static bool IsReady(
+            ITclApi tclApi,  /* in */
+            IntPtr interp,   /* in */
+            bool deleted,    /* in */
+            ref Result error /* out */
+            )
+        {
+            if (!TclApi.CheckModule(tclApi, ref error))
+                return false;
+
+            if (!tclApi.CheckInterp(interp, ref error))
+                return false;
+
+            if (deleted && GetInterpDeleted(tclApi, interp))
+            {
+                error = "cannot use Tcl interpreter, it is deleted";
+                return false;
+            }
+
+            return true;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method marshals a native string buffer into a managed string,
+        /// using the string encoding selected at compile time.
+        /// </summary>
+        /// <param name="bufferPtr">
+        /// The pointer to the native string buffer.
+        /// </param>
+        /// <param name="length">
+        /// The length, in characters or bytes, of the native string buffer.
+        /// </param>
+        /// <returns>
+        /// The marshaled managed string, or null if marshaling failed.
+        /// </returns>
+        private static string MarshalString( /* NOT USED */
+            IntPtr bufferPtr, /* in */
+            int length        /* in */
+            )
+        {
+#if TCL_UNICODE
+            return MarshalUnicodeString(bufferPtr, length);
+#else
+            return MarshalUtf8String(bufferPtr, length);
+#endif
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method marshals a native Unicode (UTF-16) string buffer into a
+        /// managed string.
+        /// </summary>
+        /// <param name="bufferPtr">
+        /// The pointer to the native Unicode string buffer.
+        /// </param>
+        /// <param name="length">
+        /// The length, in characters, of the native Unicode string buffer.
+        /// </param>
+        /// <returns>
+        /// The marshaled managed string, or null if marshaling failed.
+        /// </returns>
+        private static string MarshalUnicodeString(
+            IntPtr bufferPtr, /* in */
+            int length        /* in */
+            )
+        {
+            string result = null;
+
+            try
+            {
+                if (bufferPtr != IntPtr.Zero)
+                {
+                    if (length > 0)
+                    {
+                        char[] characters = new char[length];
+                        Marshal.Copy(bufferPtr, characters, 0, length);
+                        result = new string(characters);
+                    }
+                    else
+                    {
+                        result = String.Empty;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(TclWrapper).Name,
+                    TracePriority.MarshalError);
+            }
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method marshals a native UTF-8 string buffer into a managed
+        /// string.
+        /// </summary>
+        /// <param name="bufferPtr">
+        /// The pointer to the native UTF-8 string buffer.
+        /// </param>
+        /// <param name="length">
+        /// The length, in bytes, of the native UTF-8 string buffer.
+        /// </param>
+        /// <returns>
+        /// The marshaled managed string, or null if marshaling failed.
+        /// </returns>
+        private static string MarshalUtf8String(
+            IntPtr bufferPtr, /* in */
+            int length        /* in */
+            )
+        {
+            string result = null;
+
+            try
+            {
+                if (bufferPtr != IntPtr.Zero)
+                {
+                    if (length > 0)
+                    {
+                        Encoding encoding = TclApi.FromEncoding;
+
+                        if (encoding != null)
+                        {
+                            byte[] bytes = new byte[length];
+                            Marshal.Copy(bufferPtr, bytes, 0, length);
+                            result = encoding.GetString(bytes); // UTF-8
+                        }
+                    }
+                    else
+                    {
+                        result = String.Empty;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(TclWrapper).Name,
+                    TracePriority.MarshalError);
+            }
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the string representation of the specified native
+        /// Tcl object, using the string encoding selected by the current build
+        /// configuration.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl object.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="objPtr">
+        /// The pointer to the native Tcl object whose string representation is
+        /// returned.
+        /// </param>
+        /// <returns>
+        /// The string representation of the native Tcl object, or null if it
+        /// could not be obtained.
+        /// </returns>
+#if TCL_WRAPPER
+        internal
+#else
+        public
+#endif
+        static string GetString(
+            ITclApi tclApi, /* in */
+            IntPtr objPtr   /* in */
+            )
+        {
+#if TCL_UNICODE
+            return GetUnicodeString(tclApi, objPtr);
+#else
+            return GetUtf8String(tclApi, objPtr);
+#endif
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the Unicode (UTF-16) string representation of the
+        /// specified native Tcl object.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl object.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="objPtr">
+        /// The pointer to the native Tcl object whose string representation is
+        /// returned.
+        /// </param>
+        /// <returns>
+        /// The Unicode string representation of the native Tcl object, or null
+        /// if it could not be obtained.
+        /// </returns>
+        private static string GetUnicodeString(
+            ITclApi tclApi, /* in */
+            IntPtr objPtr   /* in */ /* DANGER: Which Tcl interpreter/thread owns this object? */
+            )
+        {
+            string result = null;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi))
+                {
+                    Tcl_GetUnicodeFromObj getUnicodeFromObj;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        getUnicodeFromObj = tclApi.GetUnicodeFromObj;
+                    }
+
+                    if (tclApi.CheckObjPtr(objPtr))
+                    {
+                        if (getUnicodeFromObj != null)
+                        {
+                            int length = 0;
+
+                            IntPtr bufferPtr = getUnicodeFromObj(
+                                objPtr, ref length);
+
+                            result = MarshalUnicodeString(bufferPtr, length);
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(Tcl_GetUnicodeFromObj).Name,
+                    TracePriority.NativeError);
+            }
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the UTF-8 string representation of the specified
+        /// native Tcl object.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl object.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="objPtr">
+        /// The pointer to the native Tcl object whose string representation is
+        /// returned.
+        /// </param>
+        /// <returns>
+        /// The UTF-8 string representation of the native Tcl object, or null if
+        /// it could not be obtained.
+        /// </returns>
+        private static string GetUtf8String(
+            ITclApi tclApi, /* in */
+            IntPtr objPtr   /* in */ /* DANGER: Which Tcl interpreter/thread owns this object? */
+            )
+        {
+            string result = null;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi))
+                {
+                    Tcl_GetStringFromObj getStringFromObj;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        getStringFromObj = tclApi.GetStringFromObj;
+                    }
+
+                    if (tclApi.CheckObjPtr(objPtr))
+                    {
+                        if (getStringFromObj != null)
+                        {
+                            int length = 0;
+
+                            IntPtr bufferPtr = getStringFromObj(
+                                    objPtr, ref length);
+
+                            result = MarshalUtf8String(bufferPtr, length);
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(Tcl_GetStringFromObj).Name,
+                    TracePriority.NativeError);
+            }
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method creates a new, empty native Tcl object and increments
+        /// its reference count.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to create the native Tcl object.  This
+        /// parameter may be null.
+        /// </param>
+        /// <returns>
+        /// The pointer to the newly created native Tcl object, or
+        /// <see cref="IntPtr.Zero" /> if it could not be created.
+        /// </returns>
+        public static IntPtr NewObject(
+            ITclApi tclApi /* in */
+            )
+        {
+            IntPtr result = IntPtr.Zero;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi))
+                {
+                    Tcl_NewObj newObj;
+                    Tcl_DbIncrRefCount dbIncrRefCount;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        newObj = tclApi.NewObj;
+                        dbIncrRefCount = tclApi.DbIncrRefCount;
+                    }
+
+                    if (newObj != null)
+                    {
+                        result = newObj();
+
+                        if (result != IntPtr.Zero)
+                        {
+                            if (dbIncrRefCount != null)
+                                /* NO RESULT */
+                                dbIncrRefCount(result, String.Empty, 0);
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(Tcl_NewObj).Name,
+                    TracePriority.NativeError);
+            }
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method creates a new native Tcl object wrapping the specified
+        /// string, using the string encoding selected by the current build
+        /// configuration.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to create the native Tcl object.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="text">
+        /// The string to wrap.  This parameter may be null.
+        /// </param>
+        /// <returns>
+        /// The pointer to the newly created native Tcl object, or
+        /// <see cref="IntPtr.Zero" /> if it could not be created.
+        /// </returns>
+        public static IntPtr NewString(
+            ITclApi tclApi, /* in */
+            string text     /* in */
+            )
+        {
+#if TCL_UNICODE
+            return NewUnicodeString(tclApi, text);
+#else
+            return NewUtf8String(tclApi, text);
+#endif
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+#if TCL_UNICODE
+        /// <summary>
+        /// This method creates a new native Tcl object wrapping the specified
+        /// string using the Unicode (UTF-16) encoding.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to create the native Tcl object.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="text">
+        /// The string to wrap.  This parameter may be null.
+        /// </param>
+        /// <returns>
+        /// The pointer to the newly created native Tcl object, or
+        /// <see cref="IntPtr.Zero" /> if it could not be created.
+        /// </returns>
+        public static IntPtr NewUnicodeString(
+            ITclApi tclApi, /* in */
+            string text     /* in */
+            )
+        {
+            IntPtr result = IntPtr.Zero;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi) && (text != null))
+                {
+                    Tcl_NewUnicodeObj newUnicodeObj;
+                    Tcl_DbIncrRefCount dbIncrRefCount;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        newUnicodeObj = tclApi.NewUnicodeObj;
+                        dbIncrRefCount = tclApi.DbIncrRefCount;
+                    }
+
+                    if (newUnicodeObj != null)
+                    {
+                        result = newUnicodeObj(text, text.Length);
+
+                        if (result != IntPtr.Zero)
+                        {
+                            if (dbIncrRefCount != null)
+                                /* NO RESULT */
+                                dbIncrRefCount(result, String.Empty, 0);
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(Tcl_NewUnicodeObj).Name,
+                    TracePriority.NativeError);
+            }
+
+            return result;
+        }
+#endif
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+#if !TCL_UNICODE
+        /// <summary>
+        /// This method creates a new native Tcl object wrapping the specified
+        /// string using the UTF-8 encoding.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to create the native Tcl object.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="text">
+        /// The string to wrap.  This parameter may be null.
+        /// </param>
+        /// <returns>
+        /// The pointer to the newly created native Tcl object, or
+        /// <see cref="IntPtr.Zero" /> if it could not be created.
+        /// </returns>
+        public static IntPtr NewUtf8String(
+            ITclApi tclApi, /* in */
+            string text     /* in */
+            )
+        {
+            IntPtr result = IntPtr.Zero;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi) && (text != null))
+                {
+                    Tcl_NewStringObj newStringObj;
+                    Tcl_DbIncrRefCount dbIncrRefCount;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        newStringObj = tclApi.NewStringObj;
+                        dbIncrRefCount = tclApi.DbIncrRefCount;
+                    }
+
+                    if (newStringObj != null)
+                    {
+                        Encoding encoding = TclApi.ToEncoding;
+
+                        if (encoding != null)
+                        {
+                            byte[] bytes = encoding.GetBytes(
+                                !String.IsNullOrEmpty(text) ?
+                                    text : String.Empty); // UTF-8
+
+                            result = newStringObj(bytes, bytes.Length);
+
+                            if (result != IntPtr.Zero)
+                            {
+                                if (dbIncrRefCount != null)
+                                    /* NO RESULT */
+                                    dbIncrRefCount(result, String.Empty, 0);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(Tcl_NewStringObj).Name,
+                    TracePriority.NativeError);
+            }
+
+            return result;
+        }
+#endif
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region Dead Code
+#if DEAD_CODE
+        /// <summary>
+        /// This method creates a new native Tcl object wrapping the specified
+        /// array of bytes.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to create the native Tcl object.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="bytes">
+        /// The array of bytes to wrap.  This parameter may be null.
+        /// </param>
+        /// <returns>
+        /// The pointer to the newly created native Tcl object, or
+        /// <see cref="IntPtr.Zero" /> if it could not be created.
+        /// </returns>
+        private static IntPtr NewByteArray( /* NOT USED */
+            ITclApi tclApi, /* in */
+            byte[] bytes    /* in */
+            )
+        {
+            IntPtr result = IntPtr.Zero;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi) && (bytes != null))
+                {
+                    Tcl_NewByteArrayObj newByteArrayObj;
+                    Tcl_DbIncrRefCount dbIncrRefCount;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        newByteArrayObj = tclApi.NewByteArrayObj;
+                        dbIncrRefCount = tclApi.DbIncrRefCount;
+                    }
+
+                    if (newByteArrayObj != null)
+                    {
+                        result = newByteArrayObj(bytes, bytes.Length);
+
+                        if (result != IntPtr.Zero)
+                        {
+                            if (dbIncrRefCount != null)
+                                /* NO RESULT */
+                                dbIncrRefCount(result, String.Empty, 0);
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(Tcl_NewByteArrayObj).Name,
+                    TracePriority.NativeError);
+            }
+
+            return result;
+        }
+#endif
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the string representation of the result of the
+        /// specified native Tcl interpreter, using the string encoding selected
+        /// by the current build configuration.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl interpreter.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The pointer to the native Tcl interpreter whose result is returned.
+        /// </param>
+        /// <returns>
+        /// The string representation of the interpreter result, or null if it
+        /// could not be obtained.
+        /// </returns>
+        public static string GetResultAsString(
+            ITclApi tclApi, /* in */
+            IntPtr interp   /* in */
+            )
+        {
+            return GetResultAsString(tclApi, interp, false);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the string representation of the result of the
+        /// specified native Tcl interpreter, using the string encoding selected
+        /// by the current build configuration.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl interpreter.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The pointer to the native Tcl interpreter whose result is returned.
+        /// </param>
+        /// <param name="noThread">
+        /// Non-zero to skip verifying that the current thread owns the
+        /// specified native Tcl interpreter.
+        /// </param>
+        /// <returns>
+        /// The string representation of the interpreter result, or null if it
+        /// could not be obtained.
+        /// </returns>
+        private static string GetResultAsString(
+            ITclApi tclApi, /* in */
+            IntPtr interp,  /* in */
+            bool noThread   /* in */
+            )
+        {
+#if TCL_UNICODE
+            return GetResultAsUnicodeString(tclApi, interp, noThread);
+#else
+            return GetResultAsUtf8String(tclApi, interp, noThread);
+#endif
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the Unicode (UTF-16) string representation of the
+        /// result of the specified native Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl interpreter.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The pointer to the native Tcl interpreter whose result is returned.
+        /// </param>
+        /// <returns>
+        /// The Unicode string representation of the interpreter result, or null
+        /// if it could not be obtained.
+        /// </returns>
+        public static string GetResultAsUnicodeString(
+            ITclApi tclApi, /* in */
+            IntPtr interp   /* in */
+            )
+        {
+            return GetResultAsUnicodeString(tclApi, interp, false);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the Unicode (UTF-16) string representation of the
+        /// result of the specified native Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl interpreter.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The pointer to the native Tcl interpreter whose result is returned.
+        /// </param>
+        /// <param name="noThread">
+        /// Non-zero to skip verifying that the current thread owns the
+        /// specified native Tcl interpreter.
+        /// </param>
+        /// <returns>
+        /// The Unicode string representation of the interpreter result, or null
+        /// if it could not be obtained.
+        /// </returns>
+        private static string GetResultAsUnicodeString(
+            ITclApi tclApi, /* in */
+            IntPtr interp,  /* in */
+            bool noThread   /* in */
+            )
+        {
+            string result = null;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi) &&
+                    (noThread || tclApi.CheckInterp(interp)))
+                {
+                    result = GetUnicodeString(
+                        tclApi, GetResult(tclApi, interp, noThread));
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(TclWrapper).Name,
+                    TracePriority.NativeError);
+            }
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the UTF-8 string representation of the result of
+        /// the specified native Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl interpreter.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The pointer to the native Tcl interpreter whose result is returned.
+        /// </param>
+        /// <returns>
+        /// The UTF-8 string representation of the interpreter result, or null
+        /// if it could not be obtained.
+        /// </returns>
+        public static string GetResultAsUtf8String(
+            ITclApi tclApi, /* in */
+            IntPtr interp   /* in */
+            )
+        {
+            return GetResultAsUtf8String(tclApi, interp, false);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the UTF-8 string representation of the result of
+        /// the specified native Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl interpreter.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The pointer to the native Tcl interpreter whose result is returned.
+        /// </param>
+        /// <param name="noThread">
+        /// Non-zero to skip verifying that the current thread owns the
+        /// specified native Tcl interpreter.
+        /// </param>
+        /// <returns>
+        /// The UTF-8 string representation of the interpreter result, or null
+        /// if it could not be obtained.
+        /// </returns>
+        private static string GetResultAsUtf8String(
+            ITclApi tclApi, /* in */
+            IntPtr interp,  /* in */
+            bool noThread   /* in */
+            )
+        {
+            string result = null;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi) &&
+                    (noThread || tclApi.CheckInterp(interp)))
+                {
+                    result = GetUtf8String(
+                        tclApi, GetResult(tclApi, interp, noThread));
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(TclWrapper).Name,
+                    TracePriority.NativeError);
+            }
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the result object of the specified native Tcl
+        /// interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl interpreter.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The pointer to the native Tcl interpreter whose result object is
+        /// returned.
+        /// </param>
+        /// <returns>
+        /// The pointer to the native Tcl object representing the interpreter
+        /// result, or <see cref="IntPtr.Zero" /> if it could not be obtained.
+        /// </returns>
+        public static IntPtr GetResult(
+            ITclApi tclApi, /* in */
+            IntPtr interp   /* in */
+            )
+        {
+            return GetResult(tclApi, interp, false);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the result object of the specified native Tcl
+        /// interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl interpreter.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The pointer to the native Tcl interpreter whose result object is
+        /// returned.
+        /// </param>
+        /// <param name="noThread">
+        /// Non-zero to skip verifying that the current thread owns the
+        /// specified native Tcl interpreter.
+        /// </param>
+        /// <returns>
+        /// The pointer to the native Tcl object representing the interpreter
+        /// result, or <see cref="IntPtr.Zero" /> if it could not be obtained.
+        /// </returns>
+        private static IntPtr GetResult(
+            ITclApi tclApi, /* in */
+            IntPtr interp,  /* in */
+            bool noThread   /* in */
+            )
+        {
+            IntPtr result = IntPtr.Zero;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi))
+                {
+                    Tcl_GetObjResult getObjResult;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        getObjResult = tclApi.GetObjResult;
+                    }
+
+                    if (noThread || tclApi.CheckInterp(interp))
+                    {
+                        if (getObjResult != null)
+                            result = getObjResult(interp);
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(Tcl_GetObjResult).Name,
+                    TracePriority.NativeError);
+            }
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method sets the result of the specified native Tcl interpreter
+        /// to the specified native Tcl object.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl interpreter.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The pointer to the native Tcl interpreter whose result is set.
+        /// </param>
+        /// <param name="objPtr">
+        /// The pointer to the native Tcl object to use as the interpreter
+        /// result.
+        /// </param>
+        /// <returns>
+        /// True if the result was set; otherwise, false.
+        /// </returns>
+        public static bool SetResult(
+            ITclApi tclApi, /* in */
+            IntPtr interp,  /* in */
+            IntPtr objPtr   /* in */
+            )
+        {
+            bool result = false;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi))
+                {
+                    Tcl_SetObjResult setObjResult;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        setObjResult = tclApi.SetObjResult;
+                    }
+
+                    if (tclApi.CheckInterp(interp))
+                    {
+                        if (setObjResult != null)
+                        {
+                            /* NO RESULT */
+                            setObjResult(interp, objPtr);
+
+                            result = true;
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(Tcl_SetObjResult).Name,
+                    TracePriority.NativeError);
+            }
+
+            //
+            // HACK: This is a very bad situation.  We have a result [that may
+            //       have come from an TclTk command or script] and we cannot
+            //       send it to Tcl (probably a threading issue).  To assist
+            //       others in debugging this situation, we issue a debug
+            //       diagnostic.
+            //
+            if (!result)
+            {
+                TraceOps.DebugTrace(String.Format(
+                    "Tcl result cannot be set: {0}",
+                    GetString(tclApi, objPtr)),
+                    typeof(Tcl_SetObjResult).Name,
+                    TracePriority.NativeError);
+            }
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method resets the result of the specified native Tcl
+        /// interpreter to its empty, well-known state.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl interpreter.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The pointer to the native Tcl interpreter whose result is reset.
+        /// </param>
+        /// <returns>
+        /// True if the result was reset; otherwise, false.
+        /// </returns>
+        public static bool ResetResult(
+            ITclApi tclApi, /* in */
+            IntPtr interp   /* in */
+            )
+        {
+            bool result = false;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi))
+                {
+                    Tcl_ResetResult resetResult;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        resetResult = tclApi.ResetResult;
+                    }
+
+                    if (tclApi.CheckInterp(interp))
+                    {
+                        if (resetResult != null)
+                        {
+                            /* NO RESULT */
+                            resetResult(interp);
+
+                            result = true;
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(Tcl_ResetResult).Name,
+                    TracePriority.NativeError);
+            }
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether the specified native Tcl interpreter
+        /// has been deleted.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl interpreter.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The pointer to the native Tcl interpreter to examine.
+        /// </param>
+        /// <returns>
+        /// True if the specified native Tcl interpreter has been deleted;
+        /// otherwise, false.
+        /// </returns>
+        public static bool GetInterpDeleted(
+            ITclApi tclApi, /* in */
+            IntPtr interp   /* in */
+            )
+        {
+            bool result = false;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi))
+                {
+                    Tcl_InterpDeleted interpDeleted;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        interpDeleted = tclApi.InterpDeleted;
+                    }
+
+                    if (tclApi.CheckInterp(interp))
+                    {
+                        if (interpDeleted != null)
+                        {
+                            result = (interpDeleted(interp) != 0);
+                        }
+                        else
+                        {
+                            //
+                            // NOTE: Nothing we can do here except log the failure.
+                            //
+                            TraceOps.DebugTrace(
+                                "Tcl interpreter introspection is not available",
+                                typeof(Tcl_InterpDeleted).Name,
+                                TracePriority.NativeError);
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(Tcl_InterpDeleted).Name,
+                    TracePriority.NativeError);
+            }
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether the specified native Tcl interpreter
+        /// is currently active (i.e. evaluating a script).
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl interpreter.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The pointer to the native Tcl interpreter to examine.
+        /// </param>
+        /// <returns>
+        /// True if the specified native Tcl interpreter is active; otherwise,
+        /// false.
+        /// </returns>
+        public static bool GetInterpActive(
+            ITclApi tclApi, /* in */
+            IntPtr interp   /* in */
+            )
+        {
+            bool result = false;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi))
+                {
+                    Tcl_InterpActive interpActive;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        interpActive = tclApi.InterpActive;
+                    }
+
+                    if (interpActive != null)
+                    {
+                        if (tclApi.CheckInterp(interp))
+                            result = (interpActive(interp) != 0);
+                    }
+                    else
+                    {
+                        //
+                        // HACK: Pre-TIP #335.  This is required for Tcl 8.4
+                        //       and 8.5.
+                        //
+                        result = (TclApi.GetNumLevels(tclApi, interp) > 0);
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(Tcl_InterpActive).Name,
+                    TracePriority.NativeError);
+            }
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the script line number associated with the most
+        /// recent error in the specified native Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl interpreter.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The pointer to the native Tcl interpreter to examine.
+        /// </param>
+        /// <returns>
+        /// The script line number associated with the most recent error, or
+        /// zero if none.
+        /// </returns>
+        public static int GetErrorLine(
+            ITclApi tclApi, /* in */
+            IntPtr interp   /* in */
+            )
+        {
+            int result = 0;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi))
+                {
+                    Tcl_GetErrorLine getErrorLine;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        getErrorLine = tclApi.GetErrorLine;
+                    }
+
+                    if (getErrorLine != null)
+                    {
+                        if (tclApi.CheckInterp(interp))
+                            result = getErrorLine(interp);
+                    }
+                    else
+                    {
+                        //
+                        // HACK: Pre-TIP #336.  This is required for Tcl 8.4
+                        //       and 8.5.
+                        //
+                        result = TclApi._GetErrorLine(tclApi, interp);
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(Tcl_GetErrorLine).Name,
+                    TracePriority.NativeError);
+            }
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method sets the script line number associated with the most
+        /// recent error in the specified native Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl interpreter.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The pointer to the native Tcl interpreter whose error line is set.
+        /// </param>
+        /// <param name="line">
+        /// The script line number to associate with the most recent error.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise, a non-Ok value
+        /// with details placed in <paramref name="error" />.
+        /// </returns>
+        public static ReturnCode SetErrorLine(
+            ITclApi tclApi,  /* in */
+            IntPtr interp,   /* in */
+            int line,        /* in */
+            ref Result error /* out */
+            )
+        {
+            ReturnCode code;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    Tcl_SetErrorLine setErrorLine;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        setErrorLine = tclApi.SetErrorLine;
+                    }
+
+                    if (setErrorLine != null)
+                    {
+                        if (tclApi.CheckInterp(interp, ref error))
+                        {
+                            /* NO RESULT */
+                            setErrorLine(interp, line);
+
+                            code = ReturnCode.Ok;
+                        }
+                        else
+                        {
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        //
+                        // HACK: Pre-TIP #336.  This is required for Tcl 8.4
+                        //       and 8.5.
+                        //
+                        code = TclApi._SetErrorLine(
+                            tclApi, interp, line, ref error);
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+                code = ReturnCode.Error;
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the version of the native Tcl library associated
+        /// with the specified Tcl API object.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to query the native Tcl library version.
+        /// This parameter may be null.
+        /// </param>
+        /// <returns>
+        /// The version of the native Tcl library, or null if it could not be
+        /// obtained.
+        /// </returns>
+        private static Version GetVersion(
+            ITclApi tclApi /* in */
+            )
+        {
+            Version result = null;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi))
+                {
+                    Tcl_GetVersion getVersion;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        getVersion = tclApi.GetVersion;
+                    }
+
+                    if (getVersion != null)
+                    {
+                        int major, minor, patchLevel;
+                        Tcl_ReleaseLevel releaseLevel;
+
+                        /* NO RESULT */
+                        getVersion(
+                            out major, out minor,
+                            out patchLevel, out releaseLevel);
+
+                        result = GlobalState.GetFourPartVersion(
+                            major, minor, (int)releaseLevel,
+                            patchLevel);
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                //
+                // NOTE: Nothing we can do here except log the failure.
+                //
+                TraceOps.DebugTrace(
+                    e, typeof(Tcl_GetVersion).Name,
+                    TracePriority.NativeError);
+            }
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the file version of the native Tcl library with the
+        /// specified file name.
+        /// </summary>
+        /// <param name="fileName">
+        /// The file name of the native Tcl library whose file version is
+        /// returned.
+        /// </param>
+        /// <returns>
+        /// The file version of the native Tcl library, or null if it could not
+        /// be obtained.
+        /// </returns>
+        public static Version GetFileVersion(
+            string fileName /* in */
+            )
+        {
+            Result error = null;
+
+            return GetFileVersion(fileName, ref error);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the file version of the native Tcl library with the
+        /// specified file name.
+        /// </summary>
+        /// <param name="fileName">
+        /// The file name of the native Tcl library whose file version is
+        /// returned.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// The file version of the native Tcl library, or null if it could not
+        /// be obtained.
+        /// </returns>
+        private static Version GetFileVersion(
+            string fileName, /* in */
+            ref Result error /* in */
+            )
+        {
+            Version version = null;
+
+            if (FileOps.GetFileVersion(
+                    fileName, true, ref version,
+                    ref error) == ReturnCode.Ok)
+            {
+                return GlobalState.GetFourPartVersion(
+                    version.Major, version.Minor,
+                    version.Build, version.Revision);
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method converts the specified string to a native Tcl object of
+        /// the named object type within the specified native Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl interpreter.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The pointer to the native Tcl interpreter used to perform the
+        /// conversion.
+        /// </param>
+        /// <param name="text">
+        /// The string to convert.  This parameter may be null, in which case
+        /// the conversion fails.
+        /// </param>
+        /// <param name="name">
+        /// The name of the native Tcl object type to convert to.  This
+        /// parameter may be null, in which case the conversion fails.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise, a non-Ok value
+        /// with details placed in <paramref name="error" />.
+        /// </returns>
+        public static ReturnCode ConvertToType(
+            ITclApi tclApi,  /* in */
+            IntPtr interp,   /* in */
+            string text,     /* in */
+            string name,     /* in */
+            ref Result error /* out */
+            )
+        {
+            ReturnCode code;
+            IntPtr objPtr = IntPtr.Zero;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    Tcl_GetObjType getObjType;
+                    Tcl_ConvertToType convertToType;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        getObjType = tclApi.GetObjType;
+                        convertToType = tclApi.ConvertToType;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref error))
+                    {
+                        if (text != null)
+                        {
+                            if (name != null)
+                            {
+                                if (getObjType != null)
+                                {
+                                    IntPtr typePtr = getObjType(name);
+
+                                    if (typePtr != IntPtr.Zero)
+                                    {
+                                        objPtr = NewString(tclApi, text);
+
+                                        if (objPtr != IntPtr.Zero)
+                                        {
+                                            if (convertToType != null)
+                                            {
+                                                code = convertToType(interp, objPtr, typePtr);
+
+                                                if (code != ReturnCode.Ok)
+                                                    error = GetResultAsString(tclApi, interp);
+                                            }
+                                            else
+                                            {
+                                                error = "Tcl object type conversion is not available";
+                                                code = ReturnCode.Error;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            error = "could not allocate Tcl object";
+                                            code = ReturnCode.Error;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        error = String.Format(
+                                            "object type {0} is not registered",
+                                            FormatOps.DisplayName(name));
+
+                                        code = ReturnCode.Error;
+                                    }
+                                }
+                                else
+                                {
+                                    error = "Tcl object type introspection is not available";
+                                    code = ReturnCode.Error;
+                                }
+                            }
+                            else
+                            {
+                                error = "invalid object type name";
+                                code = ReturnCode.Error;
+                            }
+                        }
+                        else
+                        {
+                            error = "invalid string";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+                code = ReturnCode.Error;
+            }
+            finally
+            {
+                if (TclApi.CheckModule(tclApi) &&
+                    (objPtr != IntPtr.Zero))
+                {
+                    Tcl_DbDecrRefCount dbDecrRefCount;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        dbDecrRefCount = tclApi.DbDecrRefCount;
+                    }
+
+                    if (dbDecrRefCount != null)
+                        /* NO RESULT */
+                        dbDecrRefCount(objPtr, String.Empty, 0);
+
+                    objPtr = IntPtr.Zero;
+                }
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the names of all native Tcl object types registered
+        /// with the specified native Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The Tcl API object used to access the native Tcl interpreter.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="interp">
+        /// The pointer to the native Tcl interpreter to examine.
+        /// </param>
+        /// <param name="result">
+        /// Upon success, receives the names of all registered native Tcl object
+        /// types; upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise, a non-Ok value
+        /// with details placed in <paramref name="result" />.
+        /// </returns>
+        public static ReturnCode GetAllObjectTypes(
+            ITclApi tclApi,   /* in */
+            IntPtr interp,    /* in */
+            ref Result result /* out */
+            )
+        {
+            ReturnCode code;
+            IntPtr objPtr = IntPtr.Zero;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref result))
+                {
+                    Tcl_AppendAllObjTypes appendAllObjTypes;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        appendAllObjTypes = tclApi.AppendAllObjTypes;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref result))
+                    {
+                        objPtr = NewObject(tclApi);
+
+                        if (objPtr != IntPtr.Zero)
+                        {
+                            if (appendAllObjTypes != null)
+                            {
+                                code = appendAllObjTypes(interp, objPtr);
+
+                                if (code == ReturnCode.Ok)
+                                    result = GetString(tclApi, objPtr);
+                                else
+                                    result = GetResultAsString(tclApi, interp);
+                            }
+                            else
+                            {
+                                result = "Tcl object type introspection is not available";
+                                code = ReturnCode.Error;
+                            }
+                        }
+                        else
+                        {
+                            result = "could not allocate Tcl object";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                result = e;
+                code = ReturnCode.Error;
+            }
+            finally
+            {
+                if (TclApi.CheckModule(tclApi) &&
+                    (objPtr != IntPtr.Zero))
+                {
+                    Tcl_DbDecrRefCount dbDecrRefCount;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        dbDecrRefCount = tclApi.DbDecrRefCount;
+                    }
+
+                    if (dbDecrRefCount != null)
+                        /* NO RESULT */
+                        dbDecrRefCount(objPtr, String.Empty, 0);
+
+                    objPtr = IntPtr.Zero;
+                }
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method creates a new native Tcl interpreter, optionally
+        /// initializing it, enabling the memory debugging command(s), and/or
+        /// making it "safe".
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="initialize">
+        /// Non-zero to perform standard Tcl interpreter initialization.  This
+        /// parameter is ignored when the interpreter is being made "safe".
+        /// </param>
+        /// <param name="memory">
+        /// Non-zero to add the Tcl memory debugging command(s) to the newly
+        /// created interpreter.  This parameter is ignored when the interpreter
+        /// is being made "safe".
+        /// </param>
+        /// <param name="safe">
+        /// Non-zero to create a "safe" Tcl interpreter, one with potentially
+        /// dangerous commands removed or disabled.
+        /// </param>
+        /// <param name="interp">
+        /// Upon success, receives the native handle for the newly created Tcl
+        /// interpreter.  This parameter must be <see cref="IntPtr.Zero" /> upon
+        /// entry; otherwise, the call fails.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode CreateInterpreter(
+            ITclApi tclApi,    /* in */
+            bool initialize,   /* in */
+            bool memory,       /* in */
+            bool safe,         /* in */
+            ref IntPtr interp, /* out */
+            ref Result error   /* out */
+            )
+        {
+            ReturnCode code = ReturnCode.Ok;
+            IntPtr newInterp = IntPtr.Zero;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    Tcl_CreateInterp createInterp;
+                    Tcl_MakeSafe makeSafe;
+                    Tcl_Init init;
+                    Tcl_InitMemory initMemory;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        createInterp = tclApi.CreateInterp;
+                        makeSafe = tclApi.MakeSafe;
+                        init = tclApi.Init;
+                        initMemory = tclApi.InitMemory;
+                    }
+
+                    if (interp == IntPtr.Zero)
+                    {
+                        if (createInterp != null)
+                        {
+                            newInterp = createInterp();
+
+                            if (newInterp != IntPtr.Zero)
+                            {
+                                //
+                                // BUGFIX: For "safe" Tcl interpreters, we do not
+                                //         initialize them here.
+                                //
+                                if (safe)
+                                {
+                                    if (makeSafe != null)
+                                    {
+                                        code = makeSafe(newInterp);
+
+                                        if (code != ReturnCode.Ok)
+                                            error = GetResultAsString(tclApi, newInterp);
+                                    }
+                                    else
+                                    {
+                                        error = "Tcl interpreter safety is not available";
+                                        code = ReturnCode.Error;
+                                    }
+                                }
+                                else if (initialize)
+                                {
+                                    if (init != null)
+                                    {
+                                        code = init(newInterp);
+
+                                        if (code != ReturnCode.Ok)
+                                            error = GetResultAsString(tclApi, newInterp);
+                                    }
+                                    else
+                                    {
+                                        error = "Tcl interpreter initialization is not available";
+                                        code = ReturnCode.Error;
+                                    }
+                                }
+
+                                if (code == ReturnCode.Ok)
+                                {
+                                    //
+                                    // NOTE: Add the memory command(s), if requested
+                                    //       and the Tcl interpreter is not "safe".
+                                    //
+                                    if (memory && !safe)
+                                    {
+                                        if (initMemory != null)
+                                        {
+                                            /* NO RESULT */
+                                            initMemory(newInterp);
+                                        }
+                                        else
+                                        {
+                                            error = "Tcl memory debugging is not available";
+                                            code = ReturnCode.Error;
+                                        }
+                                    }
+
+                                    if (code == ReturnCode.Ok)
+                                        interp = newInterp;
+                                }
+                            }
+                            else
+                            {
+                                error = "could not create Tcl interpreter";
+                                code = ReturnCode.Error;
+                            }
+                        }
+                        else
+                        {
+                            error = "Tcl interpreter creation is not available";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        error = "cannot overwrite valid Tcl interpreter";
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+                code = ReturnCode.Error;
+            }
+            finally
+            {
+                if ((code != ReturnCode.Ok) &&
+                    TclApi.CheckModule(tclApi) &&
+                    (newInterp != IntPtr.Zero))
+                {
+                    Tcl_DeleteInterp deleteInterp;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        deleteInterp = tclApi.DeleteInterp;
+                    }
+
+                    if (deleteInterp != null)
+                        /* NO RESULT */
+                        deleteInterp(newInterp);
+
+                    newInterp = IntPtr.Zero;
+                }
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method deletes an existing native Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="force">
+        /// Non-zero to delete the interpreter even when evaluations are active
+        /// within it.  A non-zero value here is for INTERNAL USE ONLY.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter to delete.  Upon success,
+        /// it is reset to <see cref="IntPtr.Zero" />.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode DeleteInterpreter(
+            ITclApi tclApi,    /* in */
+            bool force,        /* in: Non-zero here is for INTERNAL USE ONLY. */
+            ref IntPtr interp, /* in, out */
+            ref Result error   /* out */
+            )
+        {
+            ReturnCode code;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    Tcl_DeleteInterp deleteInterp;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        deleteInterp = tclApi.DeleteInterp;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref error))
+                    {
+                        //
+                        // HACK: Prevent deleting the Tcl interpreter while it is in use. Also
+                        //       note that we cannot simply rely upon the protection provided by
+                        //       Tcl_Preserve because if somebody tries to unload the whole
+                        //       library while one of the interps is in use, the Tcl API object
+                        //       could be pulled out from underneath us.
+                        //
+                        if (!GetInterpDeleted(tclApi, interp))
+                        {
+                            if (force || !GetInterpActive(tclApi, interp))
+                            {
+                                if (deleteInterp != null)
+                                {
+                                    /* NO RESULT */
+                                    deleteInterp(interp);
+                                    interp = IntPtr.Zero;
+
+                                    code = ReturnCode.Ok;
+                                }
+                                else
+                                {
+                                    error = "Tcl interpreter deletion is not available";
+                                    code = ReturnCode.Error;
+                                }
+                            }
+                            else
+                            {
+                                error = "cannot delete Tcl interpreter, evals are active";
+                                code = ReturnCode.Error;
+                            }
+                        }
+                        else
+                        {
+                            error = "cannot delete Tcl interpreter, it was already deleted";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+                code = ReturnCode.Error;
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method increments the reference count protecting the specified
+        /// native Tcl interpreter from being deleted while it is still in use.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter to preserve.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode Preserve(
+            ITclApi tclApi,  /* in */
+            IntPtr interp,   /* in */
+            ref Result error /* out */
+            )
+        {
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    Tcl_Preserve preserve;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        preserve = tclApi.Preserve;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref error))
+                    {
+                        if (preserve != null)
+                        {
+                            /* NO RESULT */
+                            preserve(interp);
+
+                            return ReturnCode.Ok;
+                        }
+                        else
+                        {
+                            error = "Tcl reference counting is not available";
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+            }
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method decrements the reference count protecting the specified
+        /// native Tcl interpreter, allowing it to be deleted once it is no
+        /// longer in use.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter to release.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode Release(
+            ITclApi tclApi,  /* in */
+            IntPtr interp,   /* in */
+            ref Result error /* out */
+            )
+        {
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    Tcl_Release release;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        release = tclApi.Release;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref error))
+                    {
+                        if (release != null)
+                        {
+                            /* NO RESULT */
+                            release(interp);
+
+                            return ReturnCode.Ok;
+                        }
+                        else
+                        {
+                            error = "Tcl reference counting is not available";
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+            }
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method creates a new command within the specified native Tcl
+        /// interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter that will contain the new
+        /// command.
+        /// </param>
+        /// <param name="name">
+        /// The name of the command to create.  An empty string is permitted;
+        /// however, a null value is not.
+        /// </param>
+        /// <param name="proc">
+        /// The delegate to be invoked when the command is executed.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra data to associate with the command.  This parameter may be
+        /// <see cref="IntPtr.Zero" />.
+        /// </param>
+        /// <param name="deleteProc">
+        /// The delegate to be invoked when the command is deleted.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="token">
+        /// Upon success, receives the native token identifying the newly created
+        /// command.  This parameter must be <see cref="IntPtr.Zero" /> upon
+        /// entry; otherwise, the call fails.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode CreateCommand(
+            ITclApi tclApi,               /* in */
+            IntPtr interp,                /* in */
+            string name,                  /* in */
+            Tcl_ObjCmdProc proc,          /* in */
+            IntPtr clientData,            /* in: may be NULL. */
+            Tcl_CmdDeleteProc deleteProc, /* in: may be NULL. */
+            ref IntPtr token,             /* out */
+            ref Result error              /* out */
+            )
+        {
+            ReturnCode code;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    Tcl_CreateObjCommand createObjCommand;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        createObjCommand = tclApi.CreateObjCommand;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref error))
+                    {
+                        if (token == IntPtr.Zero)
+                        {
+                            //
+                            // NOTE: *WARNING* Empty Tcl command/procedure names are allowed,
+                            //       please do not change this to "!String.IsNullOrEmpty".
+                            //
+                            if (name != null)
+                            {
+                                if (proc != null)
+                                {
+                                    if (createObjCommand != null)
+                                    {
+                                        token = createObjCommand(
+                                            interp, name, proc, clientData, deleteProc);
+
+                                        if (token != IntPtr.Zero)
+                                        {
+                                            code = ReturnCode.Ok;
+                                        }
+                                        else
+                                        {
+                                            error = "could not create command";
+                                            code = ReturnCode.Error;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        error = "Tcl command creation is not available";
+                                        code = ReturnCode.Error;
+                                    }
+                                }
+                                else
+                                {
+                                    error = "invalid command proc";
+                                    code = ReturnCode.Error;
+                                }
+                            }
+                            else
+                            {
+                                error = "invalid command name";
+                                code = ReturnCode.Error;
+                            }
+                        }
+                        else
+                        {
+                            error = "cannot overwrite valid Tcl command token";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+                code = ReturnCode.Error;
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method deletes a command from the specified native Tcl
+        /// interpreter using its token.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter that contains the command.
+        /// </param>
+        /// <param name="force">
+        /// Non-zero to delete the command even when evaluations are active within
+        /// the interpreter.
+        /// </param>
+        /// <param name="token">
+        /// The native token identifying the command to delete.  Upon success, it
+        /// is reset to <see cref="IntPtr.Zero" />.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode DeleteCommandFromToken(
+            ITclApi tclApi,   /* in */
+            IntPtr interp,    /* in */
+            bool force,       /* in */
+            ref IntPtr token, /* in, out */
+            ref Result error  /* out */
+            )
+        {
+            ReturnCode code;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    Tcl_DeleteCommandFromToken deleteCommandFromToken;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        deleteCommandFromToken = tclApi.DeleteCommandFromToken;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref error))
+                    {
+                        if (token != IntPtr.Zero)
+                        {
+                            //
+                            // HACK: Prevent deleting command while it may be in use. Also note that
+                            //       we cannot simply rely upon the protection provided by Tcl_Preserve
+                            //       because if somebody tries to unload the whole library while one
+                            //       of the interps is in use, the Tcl API object could be pulled out
+                            //       from underneath us.
+                            //
+                            if (!GetInterpDeleted(tclApi, interp))
+                            {
+                                //
+                                // NOTE: If the Tcl interpreter was already deleted, so was the command.
+                                //
+                                if (force || !GetInterpActive(tclApi, interp))
+                                {
+                                    if (deleteCommandFromToken != null)
+                                    {
+                                        //
+                                        // NOTE: Attempt to delete the command and check the result to see
+                                        //       if it was actually deleted.  Normally, we would pass the
+                                        //       result of this call back to the caller as well; however,
+                                        //       in this case the result is almost useless by itself, either
+                                        //       the command was deleted or it was not.  If the command was
+                                        //       successfully deleted we return Ok.  If the command was not
+                                        //       deleted for any reason (including the failure of
+                                        //       Tcl_DeleteCommandFromToken), we return Error.
+                                        //
+                                        if (deleteCommandFromToken(interp, token) == 0)
+                                        {
+                                            token = IntPtr.Zero;
+                                            code = ReturnCode.Ok;
+                                        }
+                                        else
+                                        {
+                                            error = "could not delete command";
+                                            code = ReturnCode.Error;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        error = "Tcl command deletion is not available";
+                                        code = ReturnCode.Error;
+                                    }
+                                }
+                                else
+                                {
+                                    error = "cannot delete Tcl command, evals are active";
+                                    code = ReturnCode.Error;
+                                }
+                            }
+                            else
+                            {
+                                error = "cannot delete Tcl command, it was already deleted";
+                                code = ReturnCode.Error;
+                            }
+                        }
+                        else
+                        {
+                            error = "invalid command token";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+                code = ReturnCode.Error;
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method gets the value of a variable from the specified native
+        /// Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter that contains the variable.
+        /// </param>
+        /// <param name="flags">
+        /// The flags used to control how the variable is read.
+        /// </param>
+        /// <param name="name">
+        /// The name of the variable to read.
+        /// </param>
+        /// <param name="value">
+        /// Upon success, receives the value of the variable.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode GetVariable(
+            ITclApi tclApi,     /* in */
+            IntPtr interp,      /* in */
+            Tcl_VarFlags flags, /* in */
+            string name,        /* in */
+            ref Result value,   /* out */
+            ref Result error    /* out */
+            )
+        {
+            ReturnCode code;
+            IntPtr part1Ptr = IntPtr.Zero;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    Tcl_Preserve preserve;
+                    Tcl_ObjGetVar2 objGetVar2;
+                    Tcl_Release release;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        preserve = tclApi.Preserve;
+                        objGetVar2 = tclApi.ObjGetVar2;
+                        release = tclApi.Release;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref error))
+                    {
+                        if (name != null)
+                        {
+                            part1Ptr = NewString(tclApi, name);
+
+                            if (part1Ptr != IntPtr.Zero)
+                            {
+                                //
+                                // NOTE: Variable traces may be triggered that can execute
+                                //       arbitrary code; therefore, preserve the interpreter
+                                //       now.
+                                //
+                                if (preserve != null)
+                                    /* NO RESULT */
+                                    preserve(interp);
+
+                                try
+                                {
+                                    if (objGetVar2 != null)
+                                    {
+                                        IntPtr bufferPtr = objGetVar2(
+                                            interp, part1Ptr, IntPtr.Zero, flags);
+
+                                        if (bufferPtr != IntPtr.Zero)
+                                        {
+                                            value = GetString(tclApi, bufferPtr);
+                                            code = ReturnCode.Ok;
+                                        }
+                                        else
+                                        {
+                                            if (FlagOps.HasFlags(flags, Tcl_VarFlags.TCL_LEAVE_ERR_MSG, true))
+                                                error = GetResultAsString(tclApi, interp);
+                                            else
+                                                error = "attempt to get variable failed";
+
+                                            code = ReturnCode.Error;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        error = "Tcl variable reading is not available";
+                                        code = ReturnCode.Error;
+                                    }
+                                }
+                                finally
+                                {
+                                    if (release != null)
+                                        /* NO RESULT */
+                                        release(interp);
+                                }
+                            }
+                            else
+                            {
+                                error = "could not allocate Tcl object";
+                                code = ReturnCode.Error;
+                            }
+                        }
+                        else
+                        {
+                            error = "invalid variable name";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+                code = ReturnCode.Error;
+            }
+            finally
+            {
+                if (TclApi.CheckModule(tclApi) &&
+                    (part1Ptr != IntPtr.Zero))
+                {
+                    Tcl_DbDecrRefCount dbDecrRefCount;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        dbDecrRefCount = tclApi.DbDecrRefCount;
+                    }
+
+                    if (dbDecrRefCount != null)
+                        /* NO RESULT */
+                        dbDecrRefCount(part1Ptr, String.Empty, 0);
+
+                    part1Ptr = IntPtr.Zero;
+                }
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method sets the value of a variable within the specified native
+        /// Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter that contains the variable.
+        /// </param>
+        /// <param name="flags">
+        /// The flags used to control how the variable is written.
+        /// </param>
+        /// <param name="name">
+        /// The name of the variable to write.
+        /// </param>
+        /// <param name="value">
+        /// The value to assign to the variable.  Upon success, receives the
+        /// resulting value of the variable, which may have been modified by any
+        /// variable traces that were triggered.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode SetVariable(
+            ITclApi tclApi,     /* in */
+            IntPtr interp,      /* in */
+            Tcl_VarFlags flags, /* in */
+            string name,        /* in */
+            ref Result value,   /* in, out: Do not change to ByVal, traces can modify the value. */
+            ref Result error    /* out */
+            )
+        {
+            ReturnCode code;
+            IntPtr part1Ptr = IntPtr.Zero;
+            IntPtr newValuePtr = IntPtr.Zero;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    Tcl_Preserve preserve;
+                    Tcl_ObjSetVar2 objSetVar2;
+                    Tcl_Release release;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        preserve = tclApi.Preserve;
+                        objSetVar2 = tclApi.ObjSetVar2;
+                        release = tclApi.Release;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref error))
+                    {
+                        if (name != null)
+                        {
+                            if (value != null)
+                            {
+                                part1Ptr = NewString(tclApi, name);
+
+                                if (part1Ptr != IntPtr.Zero)
+                                {
+                                    newValuePtr = NewString(tclApi, value);
+
+                                    if (newValuePtr != IntPtr.Zero)
+                                    {
+                                        //
+                                        // NOTE: Variable traces may be triggered that can execute
+                                        //       arbitrary code; therefore, preserve the interpreter
+                                        //       now.
+                                        //
+                                        if (preserve != null)
+                                            /* NO RESULT */
+                                            preserve(interp);
+
+                                        try
+                                        {
+                                            if (objSetVar2 != null)
+                                            {
+                                                IntPtr bufferPtr = objSetVar2(
+                                                    interp, part1Ptr, IntPtr.Zero, newValuePtr, flags);
+
+                                                if (bufferPtr != IntPtr.Zero)
+                                                {
+                                                    value = GetString(tclApi, bufferPtr);
+                                                    code = ReturnCode.Ok;
+                                                }
+                                                else
+                                                {
+                                                    if (FlagOps.HasFlags(flags, Tcl_VarFlags.TCL_LEAVE_ERR_MSG, true))
+                                                        error = GetResultAsString(tclApi, interp);
+                                                    else
+                                                        error = "attempt to set variable failed";
+
+                                                    code = ReturnCode.Error;
+                                                }
+                                            }
+                                            else
+                                            {
+                                                error = "Tcl variable writing is not available";
+                                                code = ReturnCode.Error;
+                                            }
+                                        }
+                                        finally
+                                        {
+                                            if (release != null)
+                                                /* NO RESULT */
+                                                release(interp);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        error = "could not allocate Tcl object";
+                                        code = ReturnCode.Error;
+                                    }
+                                }
+                                else
+                                {
+                                    error = "could not allocate Tcl object";
+                                    code = ReturnCode.Error;
+                                }
+                            }
+                            else
+                            {
+                                error = "invalid variable value";
+                                code = ReturnCode.Error;
+                            }
+                        }
+                        else
+                        {
+                            error = "invalid variable name";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+                code = ReturnCode.Error;
+            }
+            finally
+            {
+                if (TclApi.CheckModule(tclApi))
+                {
+                    Tcl_DbDecrRefCount dbDecrRefCount;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        dbDecrRefCount = tclApi.DbDecrRefCount;
+                    }
+
+                    if (newValuePtr != IntPtr.Zero)
+                    {
+                        if (dbDecrRefCount != null)
+                            /* NO RESULT */
+                            dbDecrRefCount(newValuePtr, String.Empty, 0);
+
+                        newValuePtr = IntPtr.Zero;
+                    }
+
+                    if (part1Ptr != IntPtr.Zero)
+                    {
+                        if (dbDecrRefCount != null)
+                            /* NO RESULT */
+                            dbDecrRefCount(part1Ptr, String.Empty, 0);
+
+                        part1Ptr = IntPtr.Zero;
+                    }
+                }
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method unsets a variable within the specified native Tcl
+        /// interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter that contains the variable.
+        /// </param>
+        /// <param name="flags">
+        /// The flags used to control how the variable is unset.
+        /// </param>
+        /// <param name="name">
+        /// The name of the variable to unset.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode UnsetVariable(
+            ITclApi tclApi,     /* in */
+            IntPtr interp,      /* in */
+            Tcl_VarFlags flags, /* in */
+            string name,        /* in */
+            ref Result error    /* out */
+            )
+        {
+            ReturnCode code;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    Tcl_Preserve preserve;
+                    Tcl_UnsetVar2 unsetVar2;
+                    Tcl_Release release;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        preserve = tclApi.Preserve;
+                        unsetVar2 = tclApi.UnsetVar2;
+                        release = tclApi.Release;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref error))
+                    {
+                        if (name != null)
+                        {
+                            //
+                            // NOTE: Variable traces may be triggered that can execute
+                            //       arbitrary code; therefore, preserve the interpreter
+                            //       now.
+                            //
+                            if (preserve != null)
+                                /* NO RESULT */
+                                preserve(interp);
+
+                            try
+                            {
+                                if (unsetVar2 != null)
+                                {
+                                    code = unsetVar2(interp, name, null, flags);
+
+                                    if (code != ReturnCode.Ok)
+                                    {
+                                        if (FlagOps.HasFlags(flags, Tcl_VarFlags.TCL_LEAVE_ERR_MSG, true))
+                                            error = GetResultAsString(tclApi, interp);
+                                        else
+                                            error = "attempt to unset variable failed";
+
+                                        code = ReturnCode.Error;
+                                    }
+                                }
+                                else
+                                {
+                                    error = "Tcl variable unsetting is not available";
+                                    code = ReturnCode.Error;
+                                }
+                            }
+                            finally
+                            {
+                                if (release != null)
+                                    /* NO RESULT */
+                                    release(interp);
+                            }
+                        }
+                        else
+                        {
+                            error = "invalid variable name";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+                code = ReturnCode.Error;
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether the specified string contains one or
+        /// more complete Tcl commands.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="text">
+        /// The string of Tcl script to check for completeness.
+        /// </param>
+        /// <param name="complete">
+        /// Upon success, set to true if the string contains one or more complete
+        /// commands; otherwise, false.
+        /// </param>
+        /// <param name="result">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode IsCommandComplete(
+            ITclApi tclApi,    /* in */
+            string text,       /* in */
+            ref bool complete, /* out */
+            ref Result result  /* out */
+            )
+        {
+            ReturnCode code;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref result))
+                {
+                    Tcl_CommandComplete commandComplete;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        commandComplete = tclApi.CommandComplete;
+                    }
+
+                    if (text != null)
+                    {
+                        if (commandComplete != null)
+                        {
+                            complete = (commandComplete(text) != 0);
+                            code = ReturnCode.Ok;
+                        }
+                        else
+                        {
+                            result = "Tcl command completeness checking is not available";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        result = "invalid string";
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                result = e;
+                code = ReturnCode.Error;
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method evaluates a string of Tcl script within the specified
+        /// native Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter used to evaluate the script.
+        /// </param>
+        /// <param name="text">
+        /// The string of Tcl script to evaluate.
+        /// </param>
+        /// <param name="flags">
+        /// The flags used to control how the script is evaluated.
+        /// </param>
+        /// <param name="exceptions">
+        /// Non-zero to allow exceptional return codes from the evaluated script.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra data associated with this evaluation.  When this is a
+        /// <see cref="PerformanceClientData" /> instance, it is used to measure
+        /// the time taken by the evaluation.
+        /// </param>
+        /// <param name="result">
+        /// Upon return, receives the result of the script evaluation or
+        /// information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode EvaluateScript(
+            ITclApi tclApi,             /* in */
+            IntPtr interp,              /* in */
+            string text,                /* in */
+            Tcl_EvalFlags flags,        /* in */
+            bool exceptions,            /* in */
+            ref IClientData clientData, /* in, out */
+            ref Result result           /* out */
+            )
+        {
+            ReturnCode code;
+            IntPtr objPtr = IntPtr.Zero;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref result))
+                {
+                    Tcl_Preserve preserve;
+                    Tcl_AllowExceptions allowExceptions;
+                    Tcl_EvalObjEx evalObjEx;
+                    Tcl_Release release;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        preserve = tclApi.Preserve;
+                        allowExceptions = tclApi.AllowExceptions;
+                        evalObjEx = tclApi.EvalObjEx;
+                        release = tclApi.Release;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref result))
+                    {
+                        if (text != null)
+                        {
+                            objPtr = NewString(tclApi, text);
+
+                            if (objPtr != IntPtr.Zero)
+                            {
+                                if (preserve != null)
+                                    /* NO RESULT */
+                                    preserve(interp);
+
+                                try
+                                {
+                                    if (evalObjEx != null)
+                                    {
+                                        if (exceptions && (allowExceptions != null))
+                                            allowExceptions(interp);
+
+                                        PerformanceClientData performanceClientData =
+                                            clientData as PerformanceClientData;
+
+                                        if (performanceClientData != null)
+                                            performanceClientData.Start();
+
+                                        code = evalObjEx(interp, objPtr, flags);
+
+                                        if (performanceClientData != null)
+                                            performanceClientData.Stop();
+
+                                        result = GetResultAsString(tclApi, interp);
+                                    }
+                                    else
+                                    {
+                                        result = "Tcl script evaluation is not available";
+                                        code = ReturnCode.Error;
+                                    }
+                                }
+                                finally
+                                {
+                                    if (release != null)
+                                        /* NO RESULT */
+                                        release(interp);
+                                }
+                            }
+                            else
+                            {
+                                result = "could not allocate Tcl object";
+                                code = ReturnCode.Error;
+                            }
+                        }
+                        else
+                        {
+                            result = "invalid string";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                result = e;
+                code = ReturnCode.Error;
+            }
+            finally
+            {
+                if (TclApi.CheckModule(tclApi) &&
+                    (objPtr != IntPtr.Zero))
+                {
+                    Tcl_DbDecrRefCount dbDecrRefCount;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        dbDecrRefCount = tclApi.DbDecrRefCount;
+                    }
+
+                    if (dbDecrRefCount != null)
+                        /* NO RESULT */
+                        dbDecrRefCount(objPtr, String.Empty, 0);
+
+                    objPtr = IntPtr.Zero;
+                }
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method evaluates the Tcl script contained in a file within the
+        /// specified native Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter used to evaluate the script.
+        /// </param>
+        /// <param name="fileName">
+        /// The name of the file containing the Tcl script to evaluate.
+        /// </param>
+        /// <param name="exceptions">
+        /// Non-zero to allow exceptional return codes from the evaluated script.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra data associated with this evaluation.  When this is a
+        /// <see cref="PerformanceClientData" /> instance, it is used to measure
+        /// the time taken by the evaluation.
+        /// </param>
+        /// <param name="result">
+        /// Upon return, receives the result of the script evaluation or
+        /// information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode EvaluateFile(
+            ITclApi tclApi,             /* in */
+            IntPtr interp,              /* in */
+            string fileName,            /* in */
+            bool exceptions,            /* in */
+            ref IClientData clientData, /* in, out */
+            ref Result result           /* out */
+            )
+        {
+            ReturnCode code;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref result))
+                {
+                    Tcl_Preserve preserve;
+                    Tcl_AllowExceptions allowExceptions;
+                    Tcl_EvalFile evalFile;
+                    Tcl_Release release;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        preserve = tclApi.Preserve;
+                        allowExceptions = tclApi.AllowExceptions;
+                        evalFile = tclApi.EvalFile;
+                        release = tclApi.Release;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref result))
+                    {
+                        if (fileName != null)
+                        {
+                            if (preserve != null)
+                                /* NO RESULT */
+                                preserve(interp);
+
+                            try
+                            {
+                                if (evalFile != null)
+                                {
+                                    if (exceptions && (allowExceptions != null))
+                                        allowExceptions(interp);
+
+                                    PerformanceClientData performanceClientData =
+                                        clientData as PerformanceClientData;
+
+                                    if (performanceClientData != null)
+                                        performanceClientData.Start();
+
+                                    code = evalFile(interp, fileName);
+
+                                    if (performanceClientData != null)
+                                        performanceClientData.Stop();
+
+                                    result = GetResultAsString(tclApi, interp);
+                                }
+                                else
+                                {
+                                    result = "Tcl script evaluation is not available";
+                                    code = ReturnCode.Error;
+                                }
+                            }
+                            finally
+                            {
+                                if (release != null)
+                                    /* NO RESULT */
+                                    release(interp);
+                            }
+                        }
+                        else
+                        {
+                            result = "invalid file name";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                result = e;
+                code = ReturnCode.Error;
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method records a Tcl script in the interpreter command history
+        /// and then evaluates it within the specified native Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter used to evaluate the script.
+        /// </param>
+        /// <param name="text">
+        /// The text of the Tcl script to record and evaluate.
+        /// </param>
+        /// <param name="flags">
+        /// The evaluation flags that control how the script is evaluated.
+        /// </param>
+        /// <param name="exceptions">
+        /// Non-zero to allow exceptional return codes from the evaluated script.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra data associated with this evaluation.  When this is a
+        /// <see cref="PerformanceClientData" /> instance, it is used to measure
+        /// the time taken by the evaluation.
+        /// </param>
+        /// <param name="result">
+        /// Upon return, receives the result of the script evaluation or
+        /// information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode RecordAndEvaluateScript(
+            ITclApi tclApi,             /* in */
+            IntPtr interp,              /* in */
+            string text,                /* in */
+            Tcl_EvalFlags flags,        /* in */
+            bool exceptions,            /* in */
+            ref IClientData clientData, /* in, out */
+            ref Result result           /* out */
+            )
+        {
+            ReturnCode code;
+            IntPtr objPtr = IntPtr.Zero;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref result))
+                {
+                    Tcl_Preserve preserve;
+                    Tcl_AllowExceptions allowExceptions;
+                    Tcl_RecordAndEvalObj recordAndEvalObj;
+                    Tcl_Release release;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        preserve = tclApi.Preserve;
+                        allowExceptions = tclApi.AllowExceptions;
+                        recordAndEvalObj = tclApi.RecordAndEvalObj;
+                        release = tclApi.Release;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref result))
+                    {
+                        if (text != null)
+                        {
+                            objPtr = NewString(tclApi, text);
+
+                            if (objPtr != IntPtr.Zero)
+                            {
+                                if (preserve != null)
+                                    /* NO RESULT */
+                                    preserve(interp);
+
+                                try
+                                {
+                                    if (recordAndEvalObj != null)
+                                    {
+                                        if (exceptions && (allowExceptions != null))
+                                            allowExceptions(interp);
+
+                                        PerformanceClientData performanceClientData =
+                                            clientData as PerformanceClientData;
+
+                                        if (performanceClientData != null)
+                                            performanceClientData.Start();
+
+                                        code = recordAndEvalObj(interp, objPtr, flags);
+
+                                        if (performanceClientData != null)
+                                            performanceClientData.Stop();
+
+                                        result = GetResultAsString(tclApi, interp);
+                                    }
+                                    else
+                                    {
+                                        result = "Tcl script evaluation with history is not available";
+                                        code = ReturnCode.Error;
+                                    }
+                                }
+                                finally
+                                {
+                                    if (release != null)
+                                        /* NO RESULT */
+                                        release(interp);
+                                }
+                            }
+                            else
+                            {
+                                result = "could not allocate Tcl object";
+                                code = ReturnCode.Error;
+                            }
+                        }
+                        else
+                        {
+                            result = "invalid string";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                result = e;
+                code = ReturnCode.Error;
+            }
+            finally
+            {
+                if (TclApi.CheckModule(tclApi) &&
+                    (objPtr != IntPtr.Zero))
+                {
+                    Tcl_DbDecrRefCount dbDecrRefCount;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        dbDecrRefCount = tclApi.DbDecrRefCount;
+                    }
+
+                    if (dbDecrRefCount != null)
+                        /* NO RESULT */
+                        dbDecrRefCount(objPtr, String.Empty, 0);
+
+                    objPtr = IntPtr.Zero;
+                }
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method evaluates a Tcl expression within the specified native
+        /// Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter used to evaluate the
+        /// expression.
+        /// </param>
+        /// <param name="text">
+        /// The text of the Tcl expression to evaluate.
+        /// </param>
+        /// <param name="exceptions">
+        /// Non-zero to allow exceptional return codes from the evaluated
+        /// expression.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra data associated with this evaluation.  When this is a
+        /// <see cref="PerformanceClientData" /> instance, it is used to measure
+        /// the time taken by the evaluation.
+        /// </param>
+        /// <param name="result">
+        /// Upon return, receives the result of the expression evaluation or
+        /// information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode EvaluateExpression(
+            ITclApi tclApi,             /* in */
+            IntPtr interp,              /* in */
+            string text,                /* in */
+            bool exceptions,            /* in */
+            ref IClientData clientData, /* in, out */
+            ref Result result           /* out */
+            )
+        {
+            ReturnCode code;
+            IntPtr objPtr = IntPtr.Zero;
+            IntPtr resultPtr = IntPtr.Zero;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref result))
+                {
+                    Tcl_Preserve preserve;
+                    Tcl_AllowExceptions allowExceptions;
+                    Tcl_ExprObj exprObj;
+                    Tcl_Release release;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        preserve = tclApi.Preserve;
+                        allowExceptions = tclApi.AllowExceptions;
+                        exprObj = tclApi.ExprObj;
+                        release = tclApi.Release;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref result))
+                    {
+                        if (text != null)
+                        {
+                            objPtr = NewString(tclApi, text);
+
+                            if (objPtr != IntPtr.Zero)
+                            {
+                                if (preserve != null)
+                                    /* NO RESULT */
+                                    preserve(interp);
+
+                                try
+                                {
+                                    if (exprObj != null)
+                                    {
+                                        if (exceptions && (allowExceptions != null))
+                                            allowExceptions(interp);
+
+                                        PerformanceClientData performanceClientData =
+                                            clientData as PerformanceClientData;
+
+                                        if (performanceClientData != null)
+                                            performanceClientData.Start();
+
+                                        code = exprObj(interp, objPtr, ref resultPtr);
+
+                                        if (performanceClientData != null)
+                                            performanceClientData.Stop();
+
+                                        if (code == ReturnCode.Ok)
+                                            result = GetString(tclApi, resultPtr);
+                                        else
+                                            result = GetResultAsString(tclApi, interp);
+                                    }
+                                    else
+                                    {
+                                        result = "Tcl expression evaluation is not available";
+                                        code = ReturnCode.Error;
+                                    }
+                                }
+                                finally
+                                {
+                                    if (release != null)
+                                        /* NO RESULT */
+                                        release(interp);
+                                }
+                            }
+                            else
+                            {
+                                result = "could not allocate Tcl object";
+                                code = ReturnCode.Error;
+                            }
+                        }
+                        else
+                        {
+                            result = "invalid string";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                result = e;
+                code = ReturnCode.Error;
+            }
+            finally
+            {
+                if (TclApi.CheckModule(tclApi))
+                {
+                    Tcl_DbDecrRefCount dbDecrRefCount;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        dbDecrRefCount = tclApi.DbDecrRefCount;
+                    }
+
+                    if (resultPtr != IntPtr.Zero)
+                    {
+                        if (dbDecrRefCount != null)
+                            /* NO RESULT */
+                            dbDecrRefCount(resultPtr, String.Empty, 0);
+
+                        resultPtr = IntPtr.Zero;
+                    }
+
+                    if (objPtr != IntPtr.Zero)
+                    {
+                        if (dbDecrRefCount != null)
+                            /* NO RESULT */
+                            dbDecrRefCount(objPtr, String.Empty, 0);
+
+                        objPtr = IntPtr.Zero;
+                    }
+                }
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method performs Tcl substitutions on a string within the
+        /// specified native Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter used to perform the
+        /// substitutions.
+        /// </param>
+        /// <param name="text">
+        /// The text on which to perform Tcl substitutions.
+        /// </param>
+        /// <param name="flags">
+        /// The substitution flags that control which substitutions are
+        /// performed.
+        /// </param>
+        /// <param name="exceptions">
+        /// Non-zero to allow exceptional return codes from the substitution.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra data associated with this operation.  When this is a
+        /// <see cref="PerformanceClientData" /> instance, it is used to measure
+        /// the time taken by the substitution.
+        /// </param>
+        /// <param name="result">
+        /// Upon return, receives the substituted string or information about
+        /// the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode SubstituteString(
+            ITclApi tclApi,             /* in */
+            IntPtr interp,              /* in */
+            string text,                /* in */
+            Tcl_SubstFlags flags,       /* in */
+            bool exceptions,            /* in */
+            ref IClientData clientData, /* in, out */
+            ref Result result           /* out */
+            )
+        {
+            ReturnCode code;
+            IntPtr objPtr = IntPtr.Zero;
+            IntPtr resultPtr = IntPtr.Zero;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref result))
+                {
+                    Tcl_Preserve preserve;
+                    Tcl_AllowExceptions allowExceptions;
+                    Tcl_SubstObj substObj;
+                    Tcl_DbIncrRefCount dbIncrRefCount;
+                    Tcl_Release release;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        preserve = tclApi.Preserve;
+                        allowExceptions = tclApi.AllowExceptions;
+                        substObj = tclApi.SubstObj;
+                        dbIncrRefCount = tclApi.DbIncrRefCount;
+                        release = tclApi.Release;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref result))
+                    {
+                        if (text != null)
+                        {
+                            objPtr = NewString(tclApi, text);
+
+                            if (objPtr != IntPtr.Zero)
+                            {
+                                if (preserve != null)
+                                    /* NO RESULT */
+                                    preserve(interp);
+
+                                try
+                                {
+                                    if (substObj != null)
+                                    {
+                                        if (exceptions && (allowExceptions != null))
+                                            allowExceptions(interp);
+
+                                        PerformanceClientData performanceClientData =
+                                            clientData as PerformanceClientData;
+
+                                        if (performanceClientData != null)
+                                            performanceClientData.Start();
+
+                                        resultPtr = substObj(interp, objPtr, flags);
+
+                                        if (performanceClientData != null)
+                                            performanceClientData.Stop();
+
+                                        if (resultPtr != IntPtr.Zero)
+                                        {
+                                            if (dbIncrRefCount != null)
+                                                /* NO RESULT */
+                                                dbIncrRefCount(resultPtr, String.Empty, 0);
+
+                                            result = GetString(tclApi, resultPtr);
+                                            code = ReturnCode.Ok;
+                                        }
+                                        else
+                                        {
+                                            result = GetResultAsString(tclApi, interp);
+                                            code = ReturnCode.Error;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        result = "Tcl string substitution is not available";
+                                        code = ReturnCode.Error;
+                                    }
+                                }
+                                finally
+                                {
+                                    if (release != null)
+                                        /* NO RESULT */
+                                        release(interp);
+                                }
+                            }
+                            else
+                            {
+                                result = "could not allocate Tcl object";
+                                code = ReturnCode.Error;
+                            }
+                        }
+                        else
+                        {
+                            result = "invalid string";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                result = e;
+                code = ReturnCode.Error;
+            }
+            finally
+            {
+                if (TclApi.CheckModule(tclApi))
+                {
+                    Tcl_DbDecrRefCount dbDecrRefCount;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        dbDecrRefCount = tclApi.DbDecrRefCount;
+                    }
+
+                    if (resultPtr != IntPtr.Zero)
+                    {
+                        if (dbDecrRefCount != null)
+                            /* NO RESULT */
+                            dbDecrRefCount(resultPtr, String.Empty, 0);
+
+                        resultPtr = IntPtr.Zero;
+                    }
+
+                    if (objPtr != IntPtr.Zero)
+                    {
+                        if (dbDecrRefCount != null)
+                            /* NO RESULT */
+                            dbDecrRefCount(objPtr, String.Empty, 0);
+
+                        objPtr = IntPtr.Zero;
+                    }
+                }
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method requests cancellation of the script currently being
+        /// evaluated within the specified native Tcl interpreter.  It is safe
+        /// to call from any thread.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter whose script evaluation is
+        /// to be cancelled.
+        /// </param>
+        /// <param name="result">
+        /// The result to associate with the cancellation, or null for none.
+        /// </param>
+        /// <param name="flags">
+        /// The evaluation flags that control how the cancellation is performed.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra data associated with this operation.  When this is a
+        /// <see cref="PerformanceClientData" /> instance, it is used to measure
+        /// the time taken by the cancellation.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode CancelEvaluate(
+            ITclApi tclApi,             /* in */
+            IntPtr interp,              /* in */
+            Result result,              /* in */
+            Tcl_EvalFlags flags,        /* in */
+            ref IClientData clientData, /* in, out */
+            ref Result error            /* out */
+            ) /* THREAD-SAFE */
+        {
+            ReturnCode code = ReturnCode.Ok;
+            IntPtr objPtr = IntPtr.Zero;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    Tcl_CancelEval cancelEval;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        cancelEval = tclApi.CancelEval;
+                    }
+
+                    if (cancelEval != null)
+                    {
+                        //
+                        // BUGFIX: Do not use tclApi.CheckInterp here because this function
+                        //         is allowed to be called from any thread (per TIP #285).
+                        //
+                        if (interp != IntPtr.Zero)
+                        {
+                            //
+                            // NOTE: If a specific cancellation result was requested,
+                            //       allocate an object and set it up now.
+                            //
+                            if (result != null)
+                                objPtr = NewString(tclApi, result);
+
+                            //
+                            // NOTE: If we tried to allocate a result object make sure
+                            //       it succeeded.
+                            //
+                            if ((result == null) || (objPtr != IntPtr.Zero))
+                            {
+                                PerformanceClientData performanceClientData =
+                                    clientData as PerformanceClientData;
+
+                                if (performanceClientData != null)
+                                    performanceClientData.Start();
+
+                                code = cancelEval(interp, objPtr, IntPtr.Zero, flags);
+
+                                if (performanceClientData != null)
+                                    performanceClientData.Stop();
+
+                                if (code != ReturnCode.Ok)
+                                    error = "attempt to cancel eval failed";
+                            }
+                            else
+                            {
+                                result = "could not allocate Tcl object";
+                                code = ReturnCode.Error;
+                            }
+                        }
+                        else
+                        {
+                            error = "invalid Tcl interpreter";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        error = "Tcl script cancellation is not available";
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+                code = ReturnCode.Error;
+            }
+            finally
+            {
+                //
+                // NOTE: Do *NOT* try to free this object if the call to Tcl_CancelEval
+                //       succeeded (i.e. do not call DbDecrRefCount on it) because
+                //       success indicates that ownership of the result object has been
+                //       transferred; however, if CancelEval fails, we need to free the
+                //       object because we still own it in that case.
+                //
+                if ((code != ReturnCode.Ok) &&
+                    TclApi.CheckModule(tclApi) &&
+                    (objPtr != IntPtr.Zero))
+                {
+                    Tcl_DbDecrRefCount dbDecrRefCount;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        dbDecrRefCount = tclApi.DbDecrRefCount;
+                    }
+
+                    if (dbDecrRefCount != null)
+                        /* NO RESULT */
+                        dbDecrRefCount(objPtr, String.Empty, 0);
+
+                    objPtr = IntPtr.Zero;
+                }
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method checks whether script cancellation has been requested
+        /// for the specified native Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter to check for pending
+        /// cancellation.
+        /// </param>
+        /// <param name="flags">
+        /// The cancellation flags that control how the check is performed.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> if cancellation has not been requested;
+        /// otherwise, <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode Canceled(
+            ITclApi tclApi,          /* in */
+            IntPtr interp,           /* in */
+            Tcl_CanceledFlags flags, /* in */
+            ref Result error         /* out */
+            )
+        {
+            ReturnCode code;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    Tcl_Canceled canceled;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        canceled = tclApi.Canceled;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref error))
+                    {
+                        if (canceled != null)
+                        {
+                            code = canceled(interp, flags);
+
+                            if (code != ReturnCode.Ok)
+                                error = GetResultAsString(tclApi, interp);
+                        }
+                        else
+                        {
+                            error = "Tcl script cancellation is not available";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+                code = ReturnCode.Error;
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method resets the script cancellation state for the specified
+        /// native Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter whose cancellation state
+        /// is to be reset.
+        /// </param>
+        /// <param name="force">
+        /// Non-zero to force the cancellation state to be reset.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode ResetCancellation(
+            ITclApi tclApi,  /* in */
+            IntPtr interp,   /* in */
+            bool force,      /* in */
+            ref Result error /* out */
+            )
+        {
+            ReturnCode code;
+
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    TclResetCancellation resetCancellation;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        resetCancellation = tclApi.ResetCancellation;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref error))
+                    {
+                        if (resetCancellation != null)
+                        {
+                            code = resetCancellation(interp, ConversionOps.ToInt(force));
+
+                            if (code != ReturnCode.Ok)
+                                error = "attempt to reset cancellation failed";
+                        }
+                        else
+                        {
+                            error = "Tcl script cancellation is not available";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+                code = ReturnCode.Error;
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method sets the script cancellation flags for the specified
+        /// native Tcl interpreter.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="interp">
+        /// The native handle for the Tcl interpreter whose cancellation flags
+        /// are to be set.
+        /// </param>
+        /// <param name="flags">
+        /// The evaluation flags to set for cancellation.
+        /// </param>
+        /// <param name="force">
+        /// Non-zero to forcibly set the cancellation flags.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode SetInterpCancelFlags(
+            ITclApi tclApi,      /* in */
+            IntPtr interp,       /* in */
+            Tcl_EvalFlags flags, /* in */
+            bool force,          /* in */
+            ref Result error     /* out */
+            )
+        {
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    TclSetInterpCancelFlags setInterpCancelFlags;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        setInterpCancelFlags = tclApi.SetInterpCancelFlags;
+                    }
+
+                    if (tclApi.CheckInterp(interp, ref error))
+                    {
+                        if (setInterpCancelFlags != null)
+                        {
+                            /* NO RESULT */
+                            setInterpCancelFlags(interp, flags, ConversionOps.ToInt(force));
+
+                            return ReturnCode.Ok;
+                        }
+                        else
+                        {
+                            error = "Tcl script cancellation is not available";
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+            }
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: This method overload is for use by the TclThread class only.
+        //
+        /// <summary>
+        /// This method processes one or more pending events for the specified
+        /// interpreter using the native Tcl event loop.  This overload is for
+        /// use by the <c>TclThread</c> class only.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter that owns the native Tcl event loop.
+        /// </param>
+        /// <param name="timeout">
+        /// The maximum number of milliseconds to wait for an event, when
+        /// waiting is enabled.
+        /// </param>
+        /// <param name="wait">
+        /// Non-zero to wait for an event when none is immediately available.
+        /// </param>
+        /// <param name="all">
+        /// Non-zero to process all pending events instead of just one.
+        /// </param>
+        /// <param name="noComplain">
+        /// Non-zero to suppress error reporting when event processing fails.
+        /// </param>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+#if TCL_WRAPPER
+        internal
+#else
+        public
+#endif
+        static ReturnCode DoOneEvent(
+            Interpreter interpreter, /* in */
+            int timeout,             /* in */
+            bool wait,               /* in */
+            bool all,                /* in */
+            bool noComplain,         /* in */
+            ref ITclApi tclApi,      /* in, out */
+            ref Result error         /* out */
+            )
+        {
+            int eventCount = 0;
+            int sleepCount = 0;
+
+            return DoOneEvent(
+                interpreter, timeout, wait, all, noComplain,
+                ref eventCount, ref sleepCount, ref tclApi,
+                ref error);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method processes one or more pending events for the specified
+        /// interpreter using the native Tcl event loop.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter that owns the native Tcl event loop.
+        /// </param>
+        /// <param name="timeout">
+        /// The maximum number of milliseconds to wait for an event, when
+        /// waiting is enabled.
+        /// </param>
+        /// <param name="wait">
+        /// Non-zero to wait for an event when none is immediately available.
+        /// </param>
+        /// <param name="all">
+        /// Non-zero to process all pending events instead of just one.
+        /// </param>
+        /// <param name="noComplain">
+        /// Non-zero to suppress error reporting when event processing fails.
+        /// </param>
+        /// <param name="eventCount">
+        /// Upon return, has been incremented by the number of events that were
+        /// processed.
+        /// </param>
+        /// <param name="sleepCount">
+        /// Upon return, has been incremented by the number of times the calling
+        /// thread slept while waiting for an event.
+        /// </param>
+        /// <param name="tclApi">
+        /// The object representing the loaded native Tcl library to use.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives information about the error.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode DoOneEvent(
+            Interpreter interpreter, /* in */
+            int timeout,             /* in */
+            bool wait,               /* in */
+            bool all,                /* in */
+            bool noComplain,         /* in */
+            ref int eventCount,      /* in, out */
+            ref int sleepCount,      /* in, out */
+            ref ITclApi tclApi,      /* in, out */
+            ref Result error         /* out */
+            )
+        {
+            ReturnCode code;
+
+            try
+            {
+                if (interpreter != null)
+                {
+                    if (TclApi.CheckModule(tclApi, ref error))
+                    {
+                        string fileName;
+                        Tcl_DoOneEvent doOneEvent;
+
+                        lock (tclApi.SyncRoot)
+                        {
+                            fileName = tclApi.FileName;
+                            doOneEvent = tclApi.DoOneEvent;
+                        }
+
+                        //
+                        // NOTE: Does this Tcl API object want to handle events?
+                        //
+                        if (doOneEvent != null)
+                        {
+                            //
+                            // NOTE: Since Tcl_DoOneEvent can execute arbitrary code we
+                            //       need to protect against unloading the Tcl library
+                            //       out from under ourselves (primarily via the exit
+                            //       handler).
+                            //
+                            TclModule module = null;
+
+                            if (
+#if NATIVE_PACKAGE
+                                NativePackage.IsTclInterpreterActive() ||
+#endif
+                                AddModuleReference(fileName, ref module, ref error))
+                            {
+                                try
+                                {
+                                    Tcl_EventFlags flags = Tcl_EventFlags.TCL_ALL_EVENTS;
+
+                                    if (!wait)
+                                        flags |= Tcl_EventFlags.TCL_DONT_WAIT;
+
+                                    if (all)
+                                    {
+                                        //
+                                        // NOTE: Keep going while we have not been canceled and we have Tcl
+                                        //       events to process.
+                                        //
+                                        int newEventCount = 0;
+
+                                        //
+                                        // NOTE: The Tcl_DoOneEvent call here may never return (e.g. if
+                                        //       something calls Tcl_Exit, etc).
+                                        //
+                                        bool sleepTrace = false;
+
+                                        while (((code = Interpreter.TclReady(
+                                                interpreter, timeout, ref error)) == ReturnCode.Ok) &&
+                                            ((module == null) || ((code = module.VerifyModule(
+                                                ref error)) == ReturnCode.Ok)) &&
+                                            ((newEventCount = doOneEvent(flags)) != 0))
+                                        {
+                                            //
+                                            // NOTE: We processed some more events.
+                                            //
+                                            eventCount += newEventCount;
+
+                                            //
+                                            // NOTE: Yield to other running threads.  This (also)
+                                            //       gives them a small opportunity to cancel the
+                                            //       script in progress on this thread.
+                                            //
+                                            Result sleepError = null;
+
+                                            if (EventOps.Sleep(
+                                                    interpreter, SleepType.TclWrapper, false,
+                                                    ref sleepError)) /* throw */
+                                            {
+                                                sleepCount++;
+                                            }
+                                            else if (!sleepTrace)
+                                            {
+                                                sleepTrace = true;
+
+                                                TraceOps.DebugTrace(String.Format(
+                                                    "DoOneEvent: sleepError = {0}",
+                                                    FormatOps.WrapOrNull(sleepError)),
+                                                    typeof(TclWrapper).Name,
+                                                    TracePriority.ThreadError);
+                                            }
+                                        }
+                                    }
+                                    else
+                                    {
+                                        code = (module != null) ?
+                                            module.VerifyModule(ref error) : ReturnCode.Ok;
+
+                                        if (code == ReturnCode.Ok)
+                                        {
+                                            //
+                                            // NOTE: The Tcl_DoOneEvent call here may never return
+                                            //       (e.g. if something calls Tcl_Exit, etc).
+                                            //
+                                            eventCount += doOneEvent(flags);
+                                        }
+                                    }
+                                }
+                                finally
+                                {
+                                    //
+                                    // NOTE: Reduce the Tcl library module reference count.
+                                    //       If the count reaches zero, cleanup and unload
+                                    //       the Tcl library.
+                                    //
+                                    Result releaseError = null;
+
+                                    if (
+#if NATIVE_PACKAGE
+                                        !NativePackage.IsTclInterpreterActive() &&
+#endif
+                                        (ReleaseModuleReference(fileName, true, false, ref releaseError) == 0))
+                                    {
+                                        ReturnCode unloadCode;
+                                        Result unloadError = null;
+
+                                        unloadCode = Unload(interpreter, UnloadFlags.FromDoOneEvent,
+                                            ref tclApi, ref unloadError);
+
+                                        if (unloadCode != ReturnCode.Ok)
+                                            DebugOps.Complain(interpreter, unloadCode, unloadError);
+                                    }
+                                    else if (!noComplain && (releaseError != null))
+                                    {
+                                        DebugOps.Complain(interpreter, ReturnCode.Error, releaseError);
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                code = ReturnCode.Error;
+                            }
+                        }
+                        else
+                        {
+                            error = "Tcl event processing is not available";
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    error = "invalid interpreter";
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+                code = ReturnCode.Error;
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether the specified Tcl build was found via
+        /// the externals path.
+        /// </summary>
+        /// <param name="build">
+        /// The Tcl build to check.
+        /// </param>
+        /// <returns>
+        /// True if the build was found via the externals path; otherwise,
+        /// false.
+        /// </returns>
+        private static bool IsBuildViaExternals(
+            TclBuild build /* in */
+            )
+        {
+            return ((build != null) &&
+                FlagOps.HasFlags(build.FindFlags, FindFlags.ExternalsPath, true));
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether the specified Tcl build appears to be
+        /// officially installed.
+        /// </summary>
+        /// <param name="build">
+        /// The Tcl build to check.
+        /// </param>
+        /// <returns>
+        /// True if the build appears to be installed; otherwise, false.
+        /// </returns>
+        private static bool IsBuildInstalled(
+            TclBuild build /* in */
+            )
+        {
+            //
+            // HACK: Assume that the build is installed if it was found via
+            //       the registry.
+            //
+            return ((build != null) &&
+                FlagOps.HasFlags(build.FindFlags, FindFlags.Registry, true));
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether the specified Tcl build appears to be
+        /// an ActiveTcl distribution.
+        /// </summary>
+        /// <param name="build">
+        /// The Tcl build to check.
+        /// </param>
+        /// <returns>
+        /// True if the build appears to be an ActiveTcl distribution;
+        /// otherwise, false.
+        /// </returns>
+        private static bool IsBuildActiveTcl(
+            TclBuild build /* in */
+            )
+        {
+            //
+            // HACK: Assume that the build is ActiveTcl if the path contains
+            //       the name fragment "ActiveState" or "ActiveTcl".
+            //
+            if (build == null)
+                return false;
+
+            string fileName = build.FileName;
+
+            if (!CheckTclLibraryPath(fileName))
+                return false;
+
+            //
+            // NOTE: This is always done on a case-insensitive basis.
+            //
+            if (Parser.StringMatch(
+                    null, fileName, 0, ActiveStatePattern, 0, true) ||
+                Parser.StringMatch(
+                    null, fileName, 0, ActiveTclPattern, 0, true))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether the specified Tcl build appears to be
+        /// an IronTcl distribution.
+        /// </summary>
+        /// <param name="build">
+        /// The Tcl build to check.
+        /// </param>
+        /// <returns>
+        /// True if the build appears to be an IronTcl distribution; otherwise,
+        /// false.
+        /// </returns>
+        private static bool IsBuildIronTcl(
+            TclBuild build /* in */
+            )
+        {
+            //
+            // HACK: Assume that the build is IronTcl if the path contains
+            //       the name fragment "Eyrie" or "IronTcl".
+            //
+            if (build == null)
+                return false;
+
+            string fileName = build.FileName;
+
+            if (!CheckTclLibraryPath(fileName))
+                return false;
+
+            //
+            // NOTE: This is always done on a case-insensitive basis.
+            //
+            if (Parser.StringMatch(
+                    null, fileName, 0, EyriePattern, 0, true) ||
+                Parser.StringMatch(
+                    null, fileName, 0, IronTclPattern, 0, true))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether the specified Tcl build is, by
+        /// default, assumed to be a threaded build.
+        /// </summary>
+        /// <param name="build">
+        /// The Tcl build to check.
+        /// </param>
+        /// <returns>
+        /// True if the build is assumed to be threaded; otherwise, false.
+        /// </returns>
+#if TCL_WRAPPER
+        internal
+#else
+        public
+#endif
+        static bool IsBuildDefaultThreaded(
+            TclBuild build /* in */
+            )
+        {
+            //
+            // HACK: Assume that the build is threaded if it is officially
+            //       installed and has a high enough version.  We need to
+            //       do this because the official binary builds of Tcl/Tk
+            //       [on Windows] are always threaded after the given
+            //       version even though their file names do not indicate
+            //       this.
+            //
+            // HACK: Assume that the build is threaded if it was found via
+            //       the externals path because they are included with the
+            //       express purpose of supporting this subsystem.
+            //
+            if (build == null)
+                return false;
+
+            if ((PackageOps.VersionCompare(
+                    build.PatchLevel, GetDefaultThreadedMinimumVersion(
+                    build.FindFlags)) >= 0) &&
+                (IsBuildViaExternals(build) || IsBuildInstalled(build) ||
+                    IsBuildActiveTcl(build) || IsBuildIronTcl(build)))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method returns the default minimum supported version of Tcl.
+        /// </summary>
+        /// <param name="flags">
+        /// The flags used to find the Tcl build.
+        /// </param>
+        /// <returns>
+        /// The default minimum supported version of Tcl, or null if it is not
+        /// available.
+        /// </returns>
+#if TCL_WRAPPER
+        internal
+#else
+        public
+#endif
+        static Version GetDefaultMinimumVersion(
+            FindFlags flags /* in */
+            )
+        {
+            if (!FlagOps.HasFlags(flags, FindFlags.ZeroComponents, true))
+                return DefaultMinimumVersion;
+
+            if (DefaultMinimumVersion == null)
+                return null;
+
+            return GlobalState.GetFourPartVersion(
+                DefaultMinimumVersion.Major, DefaultMinimumVersion.Minor,
+                DefaultMinimumVersion.Build, DefaultMinimumVersion.Revision);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method returns the default maximum supported version of Tcl.
+        /// </summary>
+        /// <param name="flags">
+        /// The flags used to find the Tcl build.
+        /// </param>
+        /// <returns>
+        /// The default maximum supported version of Tcl, or null if it is not
+        /// available.
+        /// </returns>
+#if TCL_WRAPPER
+        internal
+#else
+        public
+#endif
+        static Version GetDefaultMaximumVersion(
+            FindFlags flags /* in */
+            )
+        {
+            if (!FlagOps.HasFlags(flags, FindFlags.ZeroComponents, true))
+                return DefaultMaximumVersion;
+
+            if (DefaultMaximumVersion == null)
+                return null;
+
+            return GlobalState.GetFourPartVersion(
+                DefaultMaximumVersion.Major, DefaultMaximumVersion.Minor,
+                DefaultMaximumVersion.Build, DefaultMaximumVersion.Revision);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method returns the default version used when the version of a
+        /// Tcl build is unknown.
+        /// </summary>
+        /// <param name="flags">
+        /// The flags used to find the Tcl build.
+        /// </param>
+        /// <returns>
+        /// The default unknown version of Tcl, or null if it is not available.
+        /// </returns>
+#if TCL_WRAPPER
+        internal
+#else
+        public
+#endif
+        static Version GetDefaultUnknownVersion(
+            FindFlags flags /* in */
+            )
+        {
+            if (!FlagOps.HasFlags(flags, FindFlags.ZeroComponents, true))
+                return DefaultUnknownVersion;
+
+            if (DefaultUnknownVersion == null)
+                return null;
+
+            return GlobalState.GetFourPartVersion(
+                DefaultUnknownVersion.Major, DefaultUnknownVersion.Minor,
+                DefaultUnknownVersion.Build, DefaultUnknownVersion.Revision);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method returns the default minimum version of Tcl that is
+        /// assumed to be threaded, for the current operating system.
+        /// </summary>
+        /// <param name="flags">
+        /// The flags used to find the Tcl build.
+        /// </param>
+        /// <returns>
+        /// The default minimum threaded version of Tcl, or null if it is not
+        /// available.
+        /// </returns>
+        private static Version GetDefaultThreadedMinimumVersion(
+            FindFlags flags /* in */
+            )
+        {
+            if (PlatformOps.IsWindowsOperatingSystem() ||
+                PlatformOps.IsMacintoshOperatingSystem())
+            {
+                if (!FlagOps.HasFlags(flags, FindFlags.ZeroComponents, true))
+                    return DefaultThreadedNonUnixMinimumVersion;
+
+                if (DefaultThreadedNonUnixMinimumVersion == null)
+                    return null;
+
+                return GlobalState.GetFourPartVersion(
+                    DefaultThreadedNonUnixMinimumVersion.Major,
+                    DefaultThreadedNonUnixMinimumVersion.Minor,
+                    DefaultThreadedNonUnixMinimumVersion.Build,
+                    DefaultThreadedNonUnixMinimumVersion.Revision);
+            }
+
+            if (PlatformOps.IsUnixOperatingSystem())
+            {
+                if (!FlagOps.HasFlags(flags, FindFlags.ZeroComponents, true))
+                    return DefaultThreadedUnixMinimumVersion;
+
+                if (DefaultThreadedUnixMinimumVersion == null)
+                    return null;
+
+                return GlobalState.GetFourPartVersion(
+                    DefaultThreadedUnixMinimumVersion.Major,
+                    DefaultThreadedUnixMinimumVersion.Minor,
+                    DefaultThreadedUnixMinimumVersion.Build,
+                    DefaultThreadedUnixMinimumVersion.Revision);
+            }
+
+            return null;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method returns the default amount by which the major version
+        /// component is incremented when searching for a Tcl build.
+        /// </summary>
+        /// <param name="flags">
+        /// The flags used to find the Tcl build.  This parameter is not used.
+        /// </param>
+        /// <returns>
+        /// The default major version increment.
+        /// </returns>
+#if TCL_WRAPPER
+        internal
+#else
+        public
+#endif
+        static int GetDefaultMajorIncrement(
+            FindFlags flags /* in: NOT USED. */
+            )
+        {
+            return DefaultMajorIncrement;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method returns the default amount by which the minor version
+        /// component is incremented when searching for a Tcl build.
+        /// </summary>
+        /// <param name="flags">
+        /// The flags used to find the Tcl build.  This parameter is not used.
+        /// </param>
+        /// <returns>
+        /// The default minor version increment.
+        /// </returns>
+#if TCL_WRAPPER
+        internal
+#else
+        public
+#endif
+        static int GetDefaultMinorIncrement(
+            FindFlags flags /* in: NOT USED. */
+            )
+        {
+            return DefaultMinorIncrement;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method returns the default minimum value for an intermediate
+        /// version component when searching for a Tcl build.
+        /// </summary>
+        /// <param name="flags">
+        /// The flags used to find the Tcl build.  This parameter is not used.
+        /// </param>
+        /// <returns>
+        /// The default intermediate minimum value.
+        /// </returns>
+#if TCL_WRAPPER
+        internal
+#else
+        public
+#endif
+        static int GetDefaultIntermediateMinimum(
+            FindFlags flags /* in: NOT USED. */
+            )
+        {
+            return DefaultIntermediateMinimum;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method returns the default maximum value for an intermediate
+        /// version component when searching for a Tcl build.
+        /// </summary>
+        /// <param name="flags">
+        /// The flags used to find the Tcl build.  This parameter is not used.
+        /// </param>
+        /// <returns>
+        /// The default intermediate maximum value.
+        /// </returns>
+#if TCL_WRAPPER
+        internal
+#else
+        public
+#endif
+        static int GetDefaultIntermediateMaximum(
+            FindFlags flags /* in: NOT USED. */
+            )
+        {
+            return DefaultIntermediateMaximum;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method builds the evaluation flags used when cancelling script
+        /// evaluation.
+        /// </summary>
+        /// <param name="unwind">
+        /// Non-zero to unwind the call stack as part of the cancellation.
+        /// </param>
+        /// <returns>
+        /// The evaluation flags that correspond to the specified options.
+        /// </returns>
+#if TCL_WRAPPER
+        internal
+#else
+        public
+#endif
+        static Tcl_EvalFlags GetCancelEvaluateFlags(
+            bool unwind /* in */
+            )
+        {
+            Tcl_EvalFlags flags = Tcl_EvalFlags.TCL_EVAL_NONE;
+
+            if (unwind)
+                flags |= Tcl_EvalFlags.TCL_CANCEL_UNWIND;
+
+            return flags;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method builds the flags used when checking for script
+        /// cancellation.
+        /// </summary>
+        /// <param name="unwind">
+        /// Non-zero to indicate that cancellation should unwind the call stack.
+        /// </param>
+        /// <param name="needResult">
+        /// Non-zero to leave an error message in the interpreter result.
+        /// </param>
+        /// <returns>
+        /// The cancellation flags that correspond to the specified options.
+        /// </returns>
+#if TCL_WRAPPER
+        internal
+#else
+        public
+#endif
+        static Tcl_CanceledFlags GetCanceledFlags(
+            bool unwind,    /* in */
+            bool needResult /* in */
+            )
+        {
+            Tcl_CanceledFlags flags = Tcl_CanceledFlags.TCL_CANCEL_NONE;
+
+            if (unwind)
+                flags |= Tcl_CanceledFlags.TCL_CANCEL_UNWIND;
+
+            if (needResult)
+                flags |= Tcl_CanceledFlags.TCL_LEAVE_ERR_MSG;
+
+            return flags;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method extracts the Tcl release level encoded in the build
+        /// portion of a file version and rebuilds the file version to exclude
+        /// it.
+        /// </summary>
+        /// <param name="fileVersion">
+        /// The file version to inspect.  Upon return, this is rebuilt to
+        /// exclude the build portion that was interpreted as the release
+        /// level, or left unchanged when it is null.
+        /// </param>
+        /// <param name="releaseLevel">
+        /// Upon return, this receives the extracted release level, or
+        /// <see cref="Tcl_ReleaseLevel.TCL_UNKNOWN_RELEASE" /> when the file
+        /// version is null.
+        /// </param>
+        private static void ExtractReleaseLevel(
+            ref Version fileVersion,          /* in, out */
+            out Tcl_ReleaseLevel releaseLevel /* out */
+            )
+        {
+            if (fileVersion != null)
+            {
+                //
+                // HACK: Since we know that (at least on Windows) the
+                //       build portion of the version is actually the
+                //       release level, extract it now and rebuild the
+                //       file version to exclude it.
+                //
+                releaseLevel = (Tcl_ReleaseLevel)fileVersion.Build;
+
+                fileVersion = new Version(fileVersion.Major,
+                    fileVersion.Minor, fileVersion.Revision);
+            }
+            else
+            {
+                releaseLevel = Tcl_ReleaseLevel.TCL_UNKNOWN_RELEASE;
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method attempts to extract Tcl build information (e.g.
+        /// version, architecture, and other attributes) from a candidate Tcl
+        /// library file located at the specified path.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context used to evaluate trust of the candidate
+        /// file, if any.
+        /// </param>
+        /// <param name="findFlags">
+        /// The flags associated with the find operation that produced the
+        /// candidate file.
+        /// </param>
+        /// <param name="allFindFlags">
+        /// The combined flags that control the find operation, including
+        /// those that adjust extraction and matching behavior.
+        /// </param>
+        /// <param name="loadFlags">
+        /// The flags to associate with the resulting build, for use when the
+        /// Tcl library is subsequently loaded.
+        /// </param>
+        /// <param name="findData">
+        /// The opaque data identifying the source of the candidate file (e.g.
+        /// the assembly, environment variable, or registry key).
+        /// </param>
+        /// <param name="path">
+        /// The path to the candidate Tcl library file.
+        /// </param>
+        /// <param name="unknown">
+        /// The version to use when the version cannot be extracted from the
+        /// file name, or null to disallow a default build.
+        /// </param>
+        /// <param name="priority">
+        /// The priority to associate with the resulting build.
+        /// </param>
+        /// <param name="sequence">
+        /// The sequence number to associate with the resulting build.
+        /// </param>
+        /// <param name="build">
+        /// Upon success, this receives the extracted build information.
+        /// </param>
+        /// <param name="errors">
+        /// Upon failure, this receives any error messages generated during
+        /// the extraction.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        private static ReturnCode ExtractBuild(
+            Interpreter interpreter, /* in */
+            FindFlags findFlags,     /* in */
+            FindFlags allFindFlags,  /* in */
+            LoadFlags loadFlags,     /* in */
+            object findData,         /* in */
+            string path,             /* in */
+            Version unknown,         /* in */
+            Priority priority,       /* in */
+            Sequence sequence,       /* in */
+            ref TclBuild build,      /* out */
+            ref ResultList errors    /* out */
+            )
+        {
+            bool verbose = FlagOps.HasFlags(
+                allFindFlags, FindFlags.VerboseExtractBuild, true);
+
+            if (CheckTclLibraryPath(path))
+            {
+                try
+                {
+                    string fileName = Path.GetFileName(path);
+
+                    if (CheckTclLibraryPath(fileName))
+                    {
+                        ushort magic = FileOps.IMAGE_NT_OPTIONAL_BAD_MAGIC;
+
+#if WINDOWS
+                        Result error = null;
+
+                        //
+                        // NOTE: Architecture extraction and matching support
+                        //       (for PE files) really only works on Windows
+                        //       for now.
+                        //
+                        if (!FlagOps.HasFlags(
+                                allFindFlags, FindFlags.GetArchitecture, true) ||
+                            FileOps.CheckPeFileArchitecture(
+                                path, allFindFlags, ref magic, ref error))
+#endif
+                        {
+                            Version fileVersion = GetFileVersion(path);
+                            Tcl_ReleaseLevel releaseLevel;
+
+                            ExtractReleaseLevel(ref fileVersion, out releaseLevel);
+
+                            Match match = null;
+                            OperatingSystemId operatingSystemId = OperatingSystemId.Unknown;
+
+                            bool extra = FlagOps.HasFlags(allFindFlags,
+                                FindFlags.ExtraVersionPatternList, true);
+
+                            bool primary = FlagOps.HasFlags(allFindFlags,
+                                FindFlags.PrimaryVersionPatternList, true);
+
+                            lock (syncRoot) /* TRANSACTIONAL */
+                            {
+                                foreach (RegExEnumDictionary dictionary in
+                                    new RegExEnumDictionary[] {
+                                        extra ? extraVersionRegExDictionary : null,
+                                        primary ? primaryVersionRegExDictionary : null
+                                    })
+                                {
+                                    if (dictionary == null)
+                                        continue;
+
+                                    foreach (KeyValuePair<Regex, Enum> pair in dictionary)
+                                    {
+                                        match = pair.Key.Match(fileName);
+
+                                        if ((match != null) && match.Success)
+                                        {
+                                            if (pair.Value is OperatingSystemId)
+                                                operatingSystemId = (OperatingSystemId)pair.Value;
+
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            //
+                            // NOTE: Make sure the operating systems match.
+                            //
+                            OperatingSystemId guessOperatingSystemId =
+                                PlatformOps.GuessOperatingSystemId();
+
+                            if (FlagOps.HasFlags(
+                                    allFindFlags, FindFlags.NoOperatingSystem, true) ||
+                                (operatingSystemId == guessOperatingSystemId))
+                            {
+                                if ((match != null) && match.Success)
+                                {
+                                    //
+                                    // NOTE: Extract the version match value.
+                                    //
+                                    string matchValue = RegExOps.GetMatchValue(match, 1);
+
+                                    //
+                                    // NOTE: Does it actually contain something?
+                                    //
+                                    if (!String.IsNullOrEmpty(matchValue))
+                                    {
+                                        //
+                                        // NOTE: Create a list of version components based on
+                                        //       the characters of the matched string.
+                                        //
+                                        StringList list = new StringList();
+
+                                        if (matchValue.IndexOf(VersionSeparator) != Index.Invalid)
+                                        {
+                                            //
+                                            // NOTE: Just split the version string using the
+                                            //       separator and use each component verbatim.
+                                            //
+                                            list.Add(matchValue.Split(VersionSeparator));
+                                        }
+                                        else
+                                        {
+                                            //
+                                            // HACK: Here, we assume version string conforms to
+                                            //       the format "X[Y[ZZ]]", where "X" is the
+                                            //       major version and "Y" is the minor version
+                                            //       (i.e. which are assumed to always be one
+                                            //       digit) and "ZZ" is the revision, which may
+                                            //       be any number of digits.
+                                            //
+                                            list.Add(matchValue[0].ToString());
+
+                                            if (matchValue.Length >= 2)
+                                                list.Add(matchValue[1].ToString());
+
+                                            if (matchValue.Length >= 3)
+                                                list.Add(matchValue.Substring(2));
+                                        }
+
+                                        //
+                                        // NOTE: If we are supposed to zero fill missing version
+                                        //       components, do so now.
+                                        //
+                                        if (FlagOps.HasFlags(
+                                                allFindFlags, FindFlags.ZeroComponents, true))
+                                        {
+                                            //
+                                            // NOTE: Keep going until there are four components
+                                            //       for this version.
+                                            //
+                                            while (list.Count < 4)
+                                                list.Add(Characters.Zero.ToString());
+                                        }
+
+                                        //
+                                        // NOTE: Join the characters with the version separator
+                                        //       character (e.g. '.') and create the Version
+                                        //       object to use.
+                                        //
+                                        Version patchLevel = new Version(list.ToString(
+                                            VersionSeparator.ToString(), null, false));
+
+                                        //
+                                        // NOTE: Figure out if this looks like a threaded build.
+                                        //
+                                        bool threaded = RegExOps.GetMatchSuccess(match, 2);
+
+                                        //
+                                        // NOTE: Figure out if this looks like a debug build.
+                                        //
+                                        bool debug = RegExOps.GetMatchSuccess(match, 3);
+
+                                        //
+                                        // NOTE: Give them their resulting "Build" object.
+                                        //
+                                        if (RuntimeOps.IsFileTrusted(
+                                                interpreter, null, path, IntPtr.Zero))
+                                        {
+                                            findFlags |= FindFlags.Trusted;
+                                        }
+
+                                        //
+                                        // HACK: Maybe we should be using the file version
+                                        //       information instead of the parsed one?
+                                        //
+                                        patchLevel = GlobalState.GetMoreSpecificVersion(
+                                            patchLevel, fileVersion, false, false, false,
+                                            false);
+
+                                        if (Object.ReferenceEquals(patchLevel, fileVersion))
+                                            findFlags |= FindFlags.FileVersion;
+
+                                        build = new TclBuild(
+                                            findFlags, loadFlags, findData, path, priority,
+                                            sequence, operatingSystemId, patchLevel,
+                                            releaseLevel, magic, threaded, debug);
+
+                                        //
+                                        // NOTE: Everything was parsed Ok.
+                                        //
+                                        return ReturnCode.Ok;
+                                    }
+                                    else if (verbose)
+                                    {
+                                        MaybeAddAnError(ref errors, String.Format(
+                                            "invalid Tcl version extracted from path {0}",
+                                            FormatOps.DisplayName(path)));
+                                    }
+                                }
+                                else if (unknown != null)
+                                {
+                                    //
+                                    // NOTE: Give them a default "Build" object.
+                                    //
+                                    if (RuntimeOps.IsFileTrusted(
+                                            interpreter, null, path, IntPtr.Zero))
+                                    {
+                                        findFlags |= FindFlags.Trusted;
+                                    }
+
+                                    build = new TclBuild(
+                                        findFlags, loadFlags, findData, path, priority,
+                                        sequence, operatingSystemId, unknown,
+                                        releaseLevel, magic, false, false);
+
+                                    return ReturnCode.Ok;
+                                }
+                                else if (verbose)
+                                {
+                                    MaybeAddAnError(ref errors, String.Format(
+                                        "could not extract Tcl version from path {0}",
+                                        FormatOps.DisplayName(path)));
+                                }
+                            }
+                            else
+                            {
+                                MaybeAddAnError(ref errors, String.Format(
+                                    "file {0} is not for this operating system " +
+                                    "(identifier mismatch, got {1}, wanted {2}).",
+                                    FormatOps.DisplayName(path),
+                                    FormatOps.WrapOrNull(operatingSystemId),
+                                    FormatOps.WrapOrNull(guessOperatingSystemId)));
+                            }
+                        }
+#if WINDOWS
+                        else if (verbose)
+                        {
+                            MaybeAddAnError(ref errors, error);
+                        }
+#endif
+                    }
+                    else if (verbose)
+                    {
+                        MaybeAddAnError(ref errors, String.Format(
+                            "no file name in path {0} to extract Tcl version from",
+                            FormatOps.DisplayName(path)));
+                    }
+                }
+                catch (Exception e)
+                {
+                    if (verbose)
+                        MaybeAddAnError(ref errors, e);
+                }
+            }
+            else if (verbose)
+            {
+                MaybeAddAnError(ref errors, "invalid or empty path");
+            }
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+#if UNIX
+        /// <summary>
+        /// This method appends the current processor name to the specified
+        /// path, forming a processor-specific sub-directory path.
+        /// </summary>
+        /// <param name="path">
+        /// The base path to which the processor name is appended.
+        /// </param>
+        /// <returns>
+        /// The processor-specific path, or the original path when it is null
+        /// or empty or when the processor name is unavailable.
+        /// </returns>
+        private static string GetProcessorPath(
+            string path /* in */
+            )
+        {
+            string result = path;
+
+            if (String.IsNullOrEmpty(result))
+                return result;
+
+            string processorName = PlatformOps.GetProcessorName();
+
+            if (processorName != null)
+                result = PathOps.CombinePath(null, result, processorName);
+
+            return result;
+        }
+#endif
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method appends the alternate name for the current processor
+        /// architecture to the specified path, forming a processor-specific
+        /// sub-directory path.
+        /// </summary>
+        /// <param name="path">
+        /// The base path to which the alternate processor name is appended.
+        /// </param>
+        /// <returns>
+        /// The processor-specific path, or the original path when it is null
+        /// or empty or when the alternate processor name is unavailable.
+        /// </returns>
+        private static string GetAlternateProcessorPath(
+            string path /* in */
+            )
+        {
+            string result = path;
+
+            if (String.IsNullOrEmpty(result))
+                return result;
+
+            string processorName = PlatformOps.GetAlternateProcessorName(
+                PlatformOps.QueryProcessorArchitecture(), IfNotFoundType.Null);
+
+            if (processorName != null)
+                result = PathOps.CombinePath(null, result, processorName);
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method builds the path to the Tcl library directory within
+        /// the configured "externals" location, optionally including the
+        /// processor-specific sub-directory.
+        /// </summary>
+        /// <param name="architecture">
+        /// Non-zero to include the processor-specific sub-directory in the
+        /// resulting path.
+        /// </param>
+        /// <returns>
+        /// The externals Tcl library path, or null or empty when the
+        /// externals location is unavailable.
+        /// </returns>
+        private static string GetExternalsPath(
+            bool architecture /* in */
+            )
+        {
+            string result = GlobalState.GetExternalsPath();
+
+            if (String.IsNullOrEmpty(result))
+                return result;
+
+            result = PathOps.CombinePath(
+                null, result, TclVars.Package.Name, TclVars.Path.Lib);
+
+            if (!architecture)
+                return result;
+
+            return GetAlternateProcessorPath(result);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method builds the path to the Tcl binaries directory that is
+        /// a peer of the TclTk base directory, optionally including the
+        /// processor-specific sub-directory.
+        /// </summary>
+        /// <param name="architecture">
+        /// Non-zero to include the processor-specific sub-directory in the
+        /// resulting path.
+        /// </param>
+        /// <returns>
+        /// The peer Tcl binaries path, or null or empty when the base
+        /// directory is unavailable.
+        /// </returns>
+        private static string GetPeerPath(
+            bool architecture /* in */
+            )
+        {
+            //
+            // NOTE: For the purposes of this class, the "peer path" is the
+            //       directory named "Tcl" that is a peer of the TclTk base
+            //       directory (normally named "TclTk").
+            //
+            string result = GlobalState.GetBasePath();
+
+            if (String.IsNullOrEmpty(result))
+                return result;
+
+            result = Path.GetDirectoryName(result);
+
+            if (String.IsNullOrEmpty(result))
+                return result;
+
+            result = PathOps.CombinePath(
+                null, result, TclVars.Package.Name, TclVars.Path.Bin);
+
+            if (!architecture)
+                return result;
+
+            return GetAlternateProcessorPath(result);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method returns the list of files to match against within the
+        /// specified directory, searching recursively or non-recursively
+        /// depending on the find flags.
+        /// </summary>
+        /// <param name="path">
+        /// The directory to search for candidate files.
+        /// </param>
+        /// <param name="flags">
+        /// The flags associated with the current find operation, used for
+        /// diagnostic messages.
+        /// </param>
+        /// <param name="allFlags">
+        /// The combined flags that control the find operation, including
+        /// whether the search is recursive and whether it is verbose.
+        /// </param>
+        /// <param name="errors">
+        /// Upon failure, this receives any error messages generated during
+        /// the search.
+        /// </param>
+        /// <returns>
+        /// The array of file names found, or null if the directory could not
+        /// be searched.
+        /// </returns>
+        private static string[] GetFileNames(
+            string path,          /* in */
+            FindFlags flags,      /* in */
+            FindFlags allFlags,   /* in */
+            ref ResultList errors /* out */
+            )
+        {
+            //
+            // NOTE: Figure out the list of files to match against, this
+            //       may include files from all the directories beneath
+            //       the specified one (including itself) or just the
+            //       specified one, depending on the FindFlags.
+            //
+            bool verbose = FlagOps.HasFlags(
+                allFlags, FindFlags.VerbosePath, true);
+
+            if (!FlagOps.HasFlags(allFlags, FindFlags.RecursivePaths, true))
+            {
+                if (verbose)
+                {
+                    MaybeAddAnError(ref errors, String.Format(
+                        "checking files for {0} in location {1} non-recursively...",
+                        FormatOps.WrapOrNull(flags), FormatOps.DisplayName(path)));
+                }
+
+                try
+                {
+                    return Directory.GetFiles(path);
+                }
+                catch (Exception e)
+                {
+                    MaybeAddAnError(ref errors, e);
+                }
+
+                return null;
+            }
+
+            if (verbose)
+            {
+                MaybeAddAnError(ref errors, String.Format(
+                    "checking files for {0} in location {1} recursively...",
+                    FormatOps.WrapOrNull(flags), FormatOps.DisplayName(path)));
+            }
+
+            string searchPattern = Characters.Asterisk.ToString();
+
+            try
+            {
+                return Directory.GetFiles(
+                    path, searchPattern, FileOps.GetSearchOption(true));
+            }
+            catch (Exception e)
+            {
+                MaybeAddAnError(ref errors, e);
+            }
+
+            return null;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method attempts to find candidate Tcl library files within
+        /// the directory containing the specified assembly.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context used when extracting build information.
+        /// </param>
+        /// <param name="flags">
+        /// The flags associated with the current find operation.
+        /// </param>
+        /// <param name="allFlags">
+        /// The combined flags that control the find operation.
+        /// </param>
+        /// <param name="assembly">
+        /// The assembly whose location is searched for Tcl library files.
+        /// </param>
+        /// <param name="unknown">
+        /// The version to use when the version cannot be extracted from a
+        /// candidate file name, or null to disallow a default build.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra data supplied by the caller, if any.
+        /// </param>
+        /// <param name="builds">
+        /// Upon success, this receives the Tcl builds that were found, added
+        /// to any existing entries.
+        /// </param>
+        /// <param name="errors">
+        /// Upon failure, this receives any error messages generated during
+        /// the search.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> if at least one Tcl build was found;
+        /// otherwise, <see cref="ReturnCode.Error" />.
+        /// </returns>
+        private static ReturnCode FindViaAssembly(
+            Interpreter interpreter,       /* in */
+            FindFlags flags,               /* in */
+            FindFlags allFlags,            /* in */
+            Assembly assembly,             /* in */
+            Version unknown,               /* in */
+            IClientData clientData,        /* in */
+            ref TclBuildDictionary builds, /* out */
+            ref ResultList errors          /* out */
+            )
+        {
+            try
+            {
+                if (assembly != null)
+                {
+                    int count = 0;
+
+                    //
+                    // NOTE: Use the location of the specified assembly.  The use of
+                    //       GetExecutingAssembly or GetEntryAssembly by the caller
+                    //       will be the most likely suspects.
+                    //
+                    string directory = assembly.Location;
+
+                    if (CheckTclLibraryDirectory(directory))
+                    {
+                        string[] fileNames = GetFileNames(
+                            directory, flags, allFlags, ref errors);
+
+                        if (fileNames != null)
+                        {
+                            foreach (string fileName in fileNames)
+                            {
+                                if (CheckTclLibraryFile(interpreter, fileName))
+                                {
+                                    Priority priority = Priority.None;
+
+                                    if (LooksLikeTclLibrary(
+                                            fileName, allFlags,
+                                            ref priority, ref errors))
+                                    {
+                                        TclBuild build = null;
+
+                                        if (ExtractBuild(interpreter,
+                                                flags, allFlags, LoadFlags.None,
+                                                assembly, fileName, unknown,
+                                                priority, GetSequence(builds),
+                                                ref build, ref errors) == ReturnCode.Ok)
+                                        {
+                                            if (builds == null)
+                                                builds = new TclBuildDictionary();
+
+                                            Result error = null;
+
+                                            if (builds.MaybeAddOrReplace(
+                                                    interpreter, allFlags, fileName,
+                                                    build, ref error))
+                                            {
+                                                count++;
+                                            }
+                                            else
+                                            {
+                                                MaybeAddAnError(ref errors, error);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    //
+                    // NOTE: Did we find any Tcl builds?
+                    //
+                    if (count > 0)
+                    {
+                        return ReturnCode.Ok;
+                    }
+                    else
+                    {
+                        MaybeAddAnError(ref errors, String.Format(
+                            "no Tcl library files found via assembly location {0}",
+                            FormatOps.DisplayName(directory)));
+                    }
+                }
+                else
+                {
+                    MaybeAddAnError(ref errors, "invalid assembly");
+                }
+            }
+            catch (Exception e)
+            {
+                MaybeAddAnError(ref errors, e);
+            }
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method attempts to find candidate Tcl library files using the
+        /// paths and files named by the relevant environment variables.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context used when extracting build information.
+        /// </param>
+        /// <param name="flags">
+        /// The flags associated with the current find operation.
+        /// </param>
+        /// <param name="allFlags">
+        /// The combined flags that control the find operation.
+        /// </param>
+        /// <param name="unknown">
+        /// The version to use when the version cannot be extracted from a
+        /// candidate file name, or null to disallow a default build.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra data supplied by the caller, if any.
+        /// </param>
+        /// <param name="builds">
+        /// Upon success, this receives the Tcl builds that were found, added
+        /// to any existing entries.
+        /// </param>
+        /// <param name="errors">
+        /// Upon failure, this receives any error messages generated during
+        /// the search.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> if at least one Tcl build was found;
+        /// otherwise, <see cref="ReturnCode.Error" />.
+        /// </returns>
+        private static ReturnCode FindViaEnvironment(
+            Interpreter interpreter,       /* in */
+            FindFlags flags,               /* in */
+            FindFlags allFlags,            /* in */
+            Version unknown,               /* in */
+            IClientData clientData,        /* in */
+            ref TclBuildDictionary builds, /* out */
+            ref ResultList errors          /* out */
+            )
+        {
+            try
+            {
+                StringList list = new StringList(
+                    EnvVars.TclTkTclDir, EnvVars.TclTkTclDll,
+                    EnvVars.TclTkTkDll, EnvVars.TclDir,
+                    EnvVars.TclDll, EnvVars.TkDll
+                );
+
+                int count = 0;
+
+                foreach (StringPair pair in PathOps.GetPathList(list))
+                {
+                    if (pair == null)
+                        continue;
+
+                    string path = pair.Y;
+
+                    if (CheckTclLibraryFile(interpreter, path))
+                    {
+                        Priority priority = Priority.None;
+
+                        if (LooksLikeTclLibrary(
+                                path, allFlags, ref priority,
+                                ref errors))
+                        {
+                            TclBuild build = null;
+
+                            if (ExtractBuild(interpreter,
+                                    flags, allFlags, LoadFlags.None,
+                                    pair.X, path, unknown, priority,
+                                    GetSequence(builds), ref build,
+                                    ref errors) == ReturnCode.Ok)
+                            {
+                                if (builds == null)
+                                    builds = new TclBuildDictionary();
+
+                                Result error = null;
+
+                                if (builds.MaybeAddOrReplace(
+                                        interpreter, allFlags, path,
+                                        build, ref error))
+                                {
+                                    count++;
+                                }
+                                else
+                                {
+                                    MaybeAddAnError(
+                                        ref errors, error);
+                                }
+                            }
+                        }
+                    }
+                    else if (CheckTclLibraryDirectory(path))
+                    {
+                        string[] fileNames = GetFileNames(
+                            path, flags, allFlags, ref errors);
+
+                        if (fileNames != null)
+                        {
+                            foreach (string fileName in fileNames)
+                            {
+                                Priority priority = Priority.None;
+
+                                if (LooksLikeTclLibrary(
+                                        fileName, allFlags, ref priority, ref errors))
+                                {
+                                    TclBuild build = null;
+
+                                    if (ExtractBuild(interpreter,
+                                            flags, allFlags, LoadFlags.None,
+                                            pair.X, fileName, unknown,
+                                            priority, GetSequence(builds),
+                                            ref build, ref errors) == ReturnCode.Ok)
+                                    {
+                                        if (builds == null)
+                                            builds = new TclBuildDictionary();
+
+                                        Result error = null;
+
+                                        if (builds.MaybeAddOrReplace(
+                                                interpreter, allFlags, fileName,
+                                                build, ref error))
+                                        {
+                                            count++;
+                                        }
+                                        else
+                                        {
+                                            MaybeAddAnError(ref errors, error);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (count > 0)
+                {
+                    return ReturnCode.Ok;
+                }
+                else
+                {
+                    MaybeAddAnError(ref errors, String.Format(
+                        "no Tcl library files found via environment variables {0}",
+                        GenericOps<string>.ListToEnglish(
+                            list, ", ", Characters.SpaceString,
+                            "or ", Characters.QuotationMark.ToString(),
+                            Characters.QuotationMark.ToString())));
+                }
+            }
+            catch (Exception e)
+            {
+                MaybeAddAnError(ref errors, e);
+            }
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method attempts to find candidate Tcl library files within
+        /// the directories named by the executable search path environment
+        /// variables.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context used when extracting build information.
+        /// </param>
+        /// <param name="flags">
+        /// The flags associated with the current find operation.
+        /// </param>
+        /// <param name="allFlags">
+        /// The combined flags that control the find operation.
+        /// </param>
+        /// <param name="unknown">
+        /// The version to use when the version cannot be extracted from a
+        /// candidate file name, or null to disallow a default build.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra data supplied by the caller, if any.
+        /// </param>
+        /// <param name="builds">
+        /// Upon success, this receives the Tcl builds that were found, added
+        /// to any existing entries.
+        /// </param>
+        /// <param name="errors">
+        /// Upon failure, this receives any error messages generated during
+        /// the search.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> if at least one Tcl build was found;
+        /// otherwise, <see cref="ReturnCode.Error" />.
+        /// </returns>
+        private static ReturnCode FindViaSearchPath(
+            Interpreter interpreter,       /* in */
+            FindFlags flags,               /* in */
+            FindFlags allFlags,            /* in */
+            Version unknown,               /* in */
+            IClientData clientData,        /* in */
+            ref TclBuildDictionary builds, /* out */
+            ref ResultList errors          /* out */
+            )
+        {
+            try
+            {
+                StringList list = new StringList(
+                    EnvVars.LdLibraryPath, EnvVars.Path
+                );
+
+                int count = 0;
+
+                foreach (StringPair pair in PathOps.GetPathList(list))
+                {
+                    if (pair == null)
+                        continue;
+
+                    string path = pair.Y;
+
+                    if (CheckTclLibraryDirectory(path))
+                    {
+                        //
+                        // NOTE: Get a list of files in the directory and match
+                        //       them against our regular expression to determine
+                        //       if they are candidate Tcl library files.
+                        //
+                        string[] fileNames = GetFileNames(
+                            path, flags, allFlags, ref errors);
+
+                        if (fileNames != null)
+                        {
+                            foreach (string fileName in fileNames)
+                            {
+                                Priority priority = Priority.None;
+
+                                if (LooksLikeTclLibrary(
+                                        fileName, allFlags, ref priority, ref errors))
+                                {
+                                    TclBuild build = null;
+
+                                    if (ExtractBuild(interpreter,
+                                            flags, allFlags, LoadFlags.None,
+                                            pair.X, fileName, unknown,
+                                            priority, GetSequence(builds),
+                                            ref build, ref errors) == ReturnCode.Ok)
+                                    {
+                                        if (builds == null)
+                                            builds = new TclBuildDictionary();
+
+                                        Result error = null;
+
+                                        if (builds.MaybeAddOrReplace(
+                                                interpreter, allFlags, fileName,
+                                                build, ref error))
+                                        {
+                                            count++;
+                                        }
+                                        else
+                                        {
+                                            MaybeAddAnError(ref errors, error);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (count > 0)
+                {
+                    return ReturnCode.Ok;
+                }
+                else
+                {
+                    MaybeAddAnError(ref errors, String.Format(
+                        "no Tcl library files found via search path using {0}",
+                        GenericOps<string>.ListToEnglish(
+                            list, ", ", Characters.SpaceString,
+                            "or ", Characters.QuotationMark.ToString(),
+                            Characters.QuotationMark.ToString())));
+                }
+            }
+            catch (Exception e)
+            {
+                MaybeAddAnError(ref errors, e);
+            }
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+#if !NET_STANDARD_20
+        /// <summary>
+        /// This method attempts to find candidate Tcl library files using
+        /// information stored in the Windows registry.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context used when extracting build information.
+        /// </param>
+        /// <param name="flags">
+        /// The flags associated with the current find operation.
+        /// </param>
+        /// <param name="allFlags">
+        /// The combined flags that control the find operation.
+        /// </param>
+        /// <param name="rootKey">
+        /// An additional registry root key to search, in addition to the
+        /// standard per-user and per-machine hives.
+        /// </param>
+        /// <param name="keyName">
+        /// An additional registry sub-key name to search, in addition to the
+        /// standard ActiveState Tcl installation key.
+        /// </param>
+        /// <param name="unknown">
+        /// The version to use when the version cannot be extracted from a
+        /// candidate file name, or null to disallow a default build.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra data supplied by the caller, if any.
+        /// </param>
+        /// <param name="builds">
+        /// Upon success, this receives the Tcl builds that were found, added
+        /// to any existing entries.
+        /// </param>
+        /// <param name="errors">
+        /// Upon failure, this receives any error messages generated during
+        /// the search.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> if at least one Tcl build was found;
+        /// otherwise, <see cref="ReturnCode.Error" />.
+        /// </returns>
+        private static ReturnCode FindViaRegistry(
+            Interpreter interpreter,       /* in */
+            FindFlags flags,               /* in */
+            FindFlags allFlags,            /* in */
+            RegistryKey rootKey,           /* in */
+            string keyName,                /* in */
+            Version unknown,               /* in */
+            IClientData clientData,        /* in */
+            ref TclBuildDictionary builds, /* out */
+            ref ResultList errors          /* out */
+            )
+        {
+            bool verbose = FlagOps.HasFlags(
+                allFlags, FindFlags.VerboseRegistry, true);
+
+            try
+            {
+                //
+                // NOTE: For now, primarily search within the per-user and
+                //       per-machine registry hives.
+                //
+                RegistryKey[] rootKeys = new RegistryKey[] {
+                    rootKey,
+                    Registry.CurrentUser,
+                    Registry.LocalMachine
+                };
+
+                //
+                // NOTE: For now, primarily search for all the ActiveState
+                //       Tcl installations.
+                //
+                StringList keyNames = new StringList(
+                    keyName,
+                    ActiveTclKeyPath
+                );
+
+                int count = 0;
+
+                foreach (RegistryKey thisRootKey in rootKeys)
+                {
+                    if (thisRootKey == null)
+                        continue;
+
+                    foreach (string thisKeyName in keyNames)
+                    {
+                        if (thisKeyName == null)
+                            continue;
+
+                        using (RegistryKey key = thisRootKey.OpenSubKey(
+                                thisKeyName))
+                        {
+                            if (key == null)
+                            {
+                                if (verbose)
+                                {
+                                    MaybeAddAnError(ref errors, String.Format(
+                                        "could not open registry key {0}",
+                                        FormatOps.RegistrySubKey(
+                                            thisRootKey, thisKeyName)));
+                                }
+
+                                continue;
+                            }
+
+                            foreach (string subKeyName in key.GetSubKeyNames())
+                            {
+                                using (RegistryKey subKey = key.OpenSubKey(
+                                        subKeyName))
+                                {
+                                    if (subKey == null)
+                                    {
+                                        if (verbose)
+                                        {
+                                            MaybeAddAnError(ref errors, String.Format(
+                                                "could not open sub-key {0} of registry key {1}",
+                                                FormatOps.DisplayName(subKeyName),
+                                                FormatOps.WrapOrNull(key)));
+                                        }
+
+                                        continue;
+                                    }
+
+                                    //
+                                    // NOTE: Grab the "default value" for this registry
+                                    //       sub-key.  This must be a string.
+                                    //
+                                    string directory = subKey.GetValue(null) as string;
+
+                                    //
+                                    // NOTE: If the value is not an existing directory,
+                                    //       skip it.
+                                    //
+                                    if (!CheckTclLibraryDirectory(directory))
+                                        continue;
+
+                                    //
+                                    // NOTE: If the "bin" sub-directory does not exist,
+                                    //       skip it.
+                                    //
+                                    string binDirectory = PathOps.CombinePath(null,
+                                        directory, TclVars.Path.Bin);
+
+                                    if (!CheckTclLibraryDirectory(binDirectory))
+                                        continue;
+
+                                    //
+                                    // NOTE: Get a list of files in the directory and
+                                    //       match them against our regular expression
+                                    //       to determine if they are candidate Tcl
+                                    //       library files.
+                                    //
+                                    string[] fileNames = GetFileNames(
+                                        binDirectory, flags, allFlags, ref errors);
+
+                                    if (fileNames != null)
+                                    {
+                                        foreach (string fileName in fileNames)
+                                        {
+                                            Priority priority = Priority.None;
+
+                                            if (LooksLikeTclLibrary(
+                                                    fileName, allFlags, ref priority,
+                                                    ref errors))
+                                            {
+                                                TclBuild build = null;
+
+                                                if (ExtractBuild(interpreter,
+                                                        flags, allFlags, LoadFlags.None,
+                                                        new object[] {
+                                                        thisRootKey, thisKeyName, subKeyName
+                                                    }, fileName, unknown, priority,
+                                                        GetSequence(builds), ref build,
+                                                        ref errors) == ReturnCode.Ok)
+                                                {
+                                                    if (builds == null)
+                                                        builds = new TclBuildDictionary();
+
+                                                    Result error = null;
+
+                                                    if (builds.MaybeAddOrReplace(
+                                                            interpreter, allFlags, fileName,
+                                                            build, ref error))
+                                                    {
+                                                        count++;
+                                                    }
+                                                    else
+                                                    {
+                                                        MaybeAddAnError(ref errors, error);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (count > 0)
+                {
+                    return ReturnCode.Ok;
+                }
+                else
+                {
+                    MaybeAddAnError(ref errors, String.Format(
+                        "no Tcl library files found via registry using {0} and {1}",
+                        GenericOps<RegistryKey>.ListToEnglish(
+                            rootKeys, ", ", Characters.SpaceString,
+                            "or ", Characters.QuotationMark.ToString(),
+                            Characters.QuotationMark.ToString()),
+                        GenericOps<string>.ListToEnglish(
+                            keyNames, ", ", Characters.SpaceString,
+                            "or ", Characters.QuotationMark.ToString(),
+                            Characters.QuotationMark.ToString())));
+                }
+            }
+            catch (Exception e)
+            {
+                MaybeAddAnError(ref errors, e);
+            }
+
+            return ReturnCode.Error;
+        }
+#endif
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method builds the combined list of regular expressions used
+        /// to extract Tcl version information from file names, based on the
+        /// specified flags.
+        /// </summary>
+        /// <param name="flags">
+        /// The flags that select which version pattern lists to include.
+        /// </param>
+        /// <returns>
+        /// The combined list of version regular expressions, or null when no
+        /// matching pattern lists are selected or available.
+        /// </returns>
+        private static RegExList GetVersionRegExList(
+            FindFlags flags /* in */
+            )
+        {
+            RegExList result = null;
+
+            bool extra = FlagOps.HasFlags(flags,
+                FindFlags.ExtraVersionPatternList, true);
+
+            bool primary = FlagOps.HasFlags(flags,
+                FindFlags.PrimaryVersionPatternList, true);
+
+            lock (syncRoot) /* TRANSACTIONAL */
+            {
+                if (extra && (extraVersionRegExDictionary != null))
+                {
+                    if (result == null)
+                        result = new RegExList();
+
+                    result.Add(extraVersionRegExDictionary);
+                }
+
+                if (primary && (primaryVersionRegExDictionary != null))
+                {
+                    if (result == null)
+                        result = new RegExList();
+
+                    result.Add(primaryVersionRegExDictionary);
+                }
+            }
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method attempts to find candidate Tcl library files by
+        /// interpreting the specified path as either a Tcl library file or a
+        /// directory containing candidate Tcl library files.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context used when extracting build information.
+        /// </param>
+        /// <param name="flags">
+        /// The flags associated with the current find operation.
+        /// </param>
+        /// <param name="allFlags">
+        /// The combined flags that control the find operation.
+        /// </param>
+        /// <param name="path">
+        /// The file or directory path to search for Tcl library files.
+        /// </param>
+        /// <param name="unknown">
+        /// The version to use when the version cannot be extracted from a
+        /// candidate file name, or null to disallow a default build.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra data supplied by the caller, if any.
+        /// </param>
+        /// <param name="builds">
+        /// Upon success, this receives the Tcl builds that were found, added
+        /// to any existing entries.
+        /// </param>
+        /// <param name="errors">
+        /// Upon failure, this receives any error messages generated during
+        /// the search.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> if at least one Tcl build was found;
+        /// otherwise, <see cref="ReturnCode.Error" />.
+        /// </returns>
+        private static ReturnCode FindViaPath(
+            Interpreter interpreter,       /* in */
+            FindFlags flags,               /* in */
+            FindFlags allFlags,            /* in */
+            string path,                   /* in */
+            Version unknown,               /* in */
+            IClientData clientData,        /* in */
+            ref TclBuildDictionary builds, /* out */
+            ref ResultList errors          /* out */
+            )
+        {
+            try
+            {
+                //
+                // NOTE: Attempt to interpret the path as a file name.  If it is a file
+                //       name use it verbatim and do not attempt to find any other Tcl
+                //       library files.
+                //
+                if (CheckTclLibraryFile(interpreter, path))
+                {
+                    TclBuild build = null;
+
+                    if (ExtractBuild(interpreter,
+                            flags, allFlags, LoadFlags.None,
+                            path, path, unknown, Priority.Highest,
+                            GetSequence(builds), ref build,
+                            ref errors) == ReturnCode.Ok)
+                    {
+                        if (builds == null)
+                            builds = new TclBuildDictionary();
+
+                        Result error = null;
+
+                        if (builds.MaybeAddOrReplace(
+                                interpreter, allFlags, path,
+                                build, ref error))
+                        {
+                            return ReturnCode.Ok;
+                        }
+                        else
+                        {
+                            MaybeAddAnError(ref errors, error);
+                        }
+                    }
+
+                    return ReturnCode.Error;
+                }
+                //
+                // NOTE: Next, attempt to interpret the path as a directory name.
+                //
+                else if (CheckTclLibraryDirectory(path))
+                {
+                    //
+                    // NOTE: Get a list of files in the directory and match
+                    //       them against our regular expression to determine
+                    //       if they are candidate Tcl library files.
+                    //
+                    int count = 0;
+
+                    string[] fileNames = GetFileNames(
+                        path, flags, allFlags, ref errors);
+
+                    if (fileNames != null)
+                    {
+                        foreach (string fileName in fileNames)
+                        {
+                            Priority priority = Priority.None;
+
+                            if (LooksLikeTclLibrary(
+                                    fileName, allFlags, ref priority, ref errors))
+                            {
+                                TclBuild build = null;
+
+                                if (ExtractBuild(interpreter,
+                                        flags, allFlags, LoadFlags.None,
+                                        path, fileName, unknown, priority,
+                                        GetSequence(builds), ref build,
+                                        ref errors) == ReturnCode.Ok)
+                                {
+                                    if (builds == null)
+                                        builds = new TclBuildDictionary();
+
+                                    Result error = null;
+
+                                    if (builds.MaybeAddOrReplace(
+                                            interpreter, allFlags, fileName,
+                                            build, ref error))
+                                    {
+                                        count++;
+                                    }
+                                    else
+                                    {
+                                        MaybeAddAnError(ref errors, error);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (count > 0)
+                    {
+                        return ReturnCode.Ok;
+                    }
+                    else
+                    {
+                        MaybeAddAnError(ref errors, String.Format(
+                            "no Tcl library files matching {0} found in directory {1}",
+                            FormatOps.DisplayString(GenericOps<Regex>.ListToEnglish(
+                                GetVersionRegExList(allFlags),
+                                ", ", Characters.SpaceString,
+                                "or ", Characters.QuotationMark.ToString(),
+                                Characters.QuotationMark.ToString())),
+                                FormatOps.DisplayName(path)));
+                    }
+                }
+                else
+                {
+                    MaybeAddAnError(ref errors, String.Format(
+                        "no such file or directory {0}",
+                        FormatOps.DisplayName(path)));
+                }
+            }
+            catch (Exception e)
+            {
+                MaybeAddAnError(ref errors, e);
+            }
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method attempts to find candidate Tcl library files by
+        /// evaluating a script that produces the path to a Tcl library,
+        /// optionally using a previously cached result.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context used to evaluate the script and extract
+        /// build information.
+        /// </param>
+        /// <param name="text">
+        /// The script to evaluate, or null to use the default script (or a
+        /// previously cached result, if available).
+        /// </param>
+        /// <param name="flags">
+        /// The flags associated with the current find operation.
+        /// </param>
+        /// <param name="allFlags">
+        /// The combined flags that control the find operation.
+        /// </param>
+        /// <param name="unknown">
+        /// The version to use when the version cannot be extracted from a
+        /// candidate file name, or null to disallow a default build.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra data supplied by the caller, if any.
+        /// </param>
+        /// <param name="refresh">
+        /// Non-zero to discard any previously cached result before searching.
+        /// </param>
+        /// <param name="builds">
+        /// Upon success, this receives the Tcl builds that were found, added
+        /// to any existing entries.
+        /// </param>
+        /// <param name="errors">
+        /// Upon failure, this receives any error messages generated during
+        /// the search.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> if the script was evaluated and the
+        /// resulting paths were searched without error; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        private static ReturnCode FindViaEvaluateScript(
+            Interpreter interpreter,       /* in */
+            string text,                   /* in: OPTIONAL */
+            FindFlags flags,               /* in */
+            FindFlags allFlags,            /* in */
+            Version unknown,               /* in */
+            IClientData clientData,        /* in */
+            bool refresh,                  /* in */
+            ref TclBuildDictionary builds, /* out */
+            ref ResultList errors          /* out */
+            )
+        {
+            try
+            {
+                int errorCount; /* REUSED */
+                bool updateCache = false;
+
+                if (text == null)
+                {
+                    if (refresh)
+                        cachedFindViaEvaluateScriptResult = null;
+
+                    string path = cachedFindViaEvaluateScriptResult;
+
+                    if (path != null)
+                    {
+                        errorCount = 0;
+
+                        if (FlagOps.HasFlags(
+                                allFlags, FindFlags.FindArchitecture, true))
+                        {
+                            if (FindViaPath(interpreter,
+                                    flags | FindFlags.Part0, allFlags,
+                                    GetAlternateProcessorPath(path),
+                                    unknown, clientData, ref builds,
+                                    ref errors) != ReturnCode.Ok)
+                            {
+                                errorCount++;
+
+                                MaybeAddAnError(ref errors,
+                                    "find Tcl library builds via cached script evaluation processor path failed");
+                            }
+                        }
+
+                        if (FindViaPath(interpreter,
+                                flags | FindFlags.Part1, allFlags,
+                                path, unknown, clientData,
+                                ref builds, ref errors) != ReturnCode.Ok)
+                        {
+                            errorCount++;
+
+                            MaybeAddAnError(ref errors,
+                                "find Tcl library builds via cached script evaluation path failed");
+                        }
+
+                        return (errorCount > 0) ?
+                            ReturnCode.Error : ReturnCode.Ok;
+                    }
+
+                    text = DefaultFindViaEvaluateScript;
+
+                    if (text == null)
+                    {
+                        MaybeAddAnError(ref errors,
+                            "find Tcl library builds via script evaluation failed: unavailable");
+
+                        return ReturnCode.Error;
+                    }
+
+                    updateCache = true;
+                }
+
+                Result result = null;
+
+                if (interpreter.EvaluateScript(
+                        text, ref result) == ReturnCode.Ok)
+                {
+                    errorCount = 0;
+
+                    if (FlagOps.HasFlags(
+                            allFlags, FindFlags.FindArchitecture, true))
+                    {
+                        if (FindViaPath(interpreter,
+                                flags | FindFlags.Part2, allFlags,
+                                GetAlternateProcessorPath(result),
+                                unknown, clientData, ref builds,
+                                ref errors) != ReturnCode.Ok)
+                        {
+                            errorCount++;
+
+                            MaybeAddAnError(ref errors,
+                                "find Tcl library builds via script evaluation processor path failed");
+                        }
+                    }
+
+                    if (FindViaPath(interpreter,
+                            flags | FindFlags.Part3, allFlags,
+                            result, unknown, clientData,
+                            ref builds, ref errors) != ReturnCode.Ok)
+                    {
+                        errorCount++;
+
+                        MaybeAddAnError(ref errors,
+                            "find Tcl library builds via script evaluation path failed");
+                    }
+
+                    if (updateCache)
+                        cachedFindViaEvaluateScriptResult = result;
+
+                    return (errorCount > 0) ?
+                        ReturnCode.Error : ReturnCode.Ok;
+                }
+                else
+                {
+                    MaybeAddAnError(ref errors, result);
+                }
+            }
+            catch (Exception e)
+            {
+                MaybeAddAnError(ref errors, e);
+            }
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method builds the combined list of regular expressions used
+        /// to match candidate Tcl library file names, based on the specified
+        /// flags.
+        /// </summary>
+        /// <param name="flags">
+        /// The flags that select which name pattern lists to include.
+        /// </param>
+        /// <returns>
+        /// The combined list of name regular expressions, or null when no
+        /// matching pattern lists are selected or available.
+        /// </returns>
+        private static RegExList GetNameRegExList(
+            FindFlags flags /* in */
+            )
+        {
+            RegExList result = null;
+
+            bool extra = FlagOps.HasFlags(flags,
+                FindFlags.ExtraNamePatternList, true);
+
+            bool primary = FlagOps.HasFlags(flags,
+                FindFlags.PrimaryNamePatternList, true);
+
+            bool secondary = FlagOps.HasFlags(flags,
+                FindFlags.SecondaryNamePatternList, true);
+
+            bool other = FlagOps.HasFlags(flags,
+                FindFlags.OtherNamePatternList, true);
+
+            lock (syncRoot) /* TRANSACTIONAL */
+            {
+                if (extra && (extraNameRegExList != null))
+                {
+                    if (result == null)
+                        result = new RegExList();
+
+                    result.Add(extraNameRegExList);
+                }
+
+                if (primary && (primaryNameRegExList != null))
+                {
+                    if (result == null)
+                        result = new RegExList();
+
+                    result.Add(primaryNameRegExList);
+                }
+
+                if (secondary && (secondaryNameRegExList != null))
+                {
+                    if (result == null)
+                        result = new RegExList();
+
+                    result.Add(secondaryNameRegExList);
+                }
+
+                if (other && (otherNameRegExList != null))
+                {
+                    if (result == null)
+                        result = new RegExList();
+
+                    result.Add(otherNameRegExList);
+                }
+            }
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether the file named by the specified
+        /// path matches one of the configured Tcl library file name patterns.
+        /// </summary>
+        /// <param name="path">
+        /// The path whose file name is checked against the Tcl library
+        /// patterns.
+        /// </param>
+        /// <param name="flags">
+        /// The flags that select which name pattern lists to check and
+        /// control verbosity.
+        /// </param>
+        /// <param name="priority">
+        /// Upon success, this receives the priority corresponding to the
+        /// matched pattern.
+        /// </param>
+        /// <param name="errors">
+        /// Upon failure, this receives any error messages generated during
+        /// the check.
+        /// </param>
+        /// <returns>
+        /// True if the file name looks like a Tcl library; otherwise, false.
+        /// </returns>
+        private static bool LooksLikeTclLibrary(
+            string path,           /* in */
+            FindFlags flags,       /* in */
+            ref Priority priority, /* out */
+            ref ResultList errors  /* out */
+            )
+        {
+            bool verbose = FlagOps.HasFlags(
+                flags, FindFlags.VerboseLooksLike, true);
+
+            try
+            {
+                if (CheckTclLibraryPath(path))
+                {
+                    string fileName = Path.GetFileName(path);
+
+                    if (CheckTclLibraryPath(fileName))
+                    {
+                        bool extra = FlagOps.HasFlags(flags,
+                            FindFlags.ExtraNamePatternList, true);
+
+                        bool primary = FlagOps.HasFlags(flags,
+                            FindFlags.PrimaryNamePatternList, true);
+
+                        bool secondary = FlagOps.HasFlags(flags,
+                            FindFlags.SecondaryNamePatternList, true);
+
+                        bool other = FlagOps.HasFlags(flags,
+                            FindFlags.OtherNamePatternList, true);
+
+                        lock (syncRoot) /* TRANSACTIONAL */
+                        {
+                            foreach (RegExList list in new RegExList[] {
+                                extra ? extraNameRegExList : null,
+                                primary ? primaryNameRegExList : null,
+                                secondary ? secondaryNameRegExList : null,
+                                other ? otherNameRegExList : null })
+                            {
+                                if (list == null)
+                                    continue;
+
+                                for (int index = 0; index < list.Count; index++)
+                                {
+                                    Regex regEx = list[index];
+
+                                    if (regEx == null)
+                                        continue;
+
+                                    Match match = regEx.Match(fileName);
+
+                                    if ((match != null) && match.Success)
+                                    {
+                                        priority = (Priority)index;
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (verbose)
+                        {
+                            MaybeAddAnError(ref errors, String.Format(
+                                "file name {1} does not match {0}",
+                                GenericOps<Regex>.ListToEnglish(
+                                    GetNameRegExList(flags),
+                                    ", ", Characters.SpaceString,
+                                    "or ", Characters.QuotationMark.ToString(),
+                                    Characters.QuotationMark.ToString()),
+                                FormatOps.DisplayName(fileName)));
+                        }
+                    }
+                    else if (verbose)
+                    {
+                        MaybeAddAnError(ref errors, String.Format(
+                            "no file name in path {0} to check Tcl patterns against",
+                            FormatOps.DisplayName(path)));
+                    }
+                }
+                else if (verbose)
+                {
+                    MaybeAddAnError(ref errors, "invalid or empty path");
+                }
+            }
+            catch (Exception e)
+            {
+                if (verbose)
+                    MaybeAddAnError(ref errors, e);
+            }
+
+            return false;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method compares the patch level (version) of two Tcl library
+        /// builds.
+        /// </summary>
+        /// <param name="build1">
+        /// The first Tcl library build to compare.
+        /// </param>
+        /// <param name="build2">
+        /// The second Tcl library build to compare.
+        /// </param>
+        /// <returns>
+        /// A negative number if the patch level of <paramref name="build1" />
+        /// is less than that of <paramref name="build2" />, a positive number
+        /// if it is greater, or zero if they are equal.
+        /// </returns>
+        private static int ComparePatchLevels(
+            TclBuild build1, /* in */
+            TclBuild build2  /* in */
+            )
+        {
+            Version version1 = (build1 != null) ? build1.PatchLevel : null;
+            Version version2 = (build2 != null) ? build2.PatchLevel : null;
+
+            return PackageOps.VersionCompare(version1, version2);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method compares the release level of two Tcl library builds.
+        /// </summary>
+        /// <param name="build1">
+        /// The first Tcl library build to compare.
+        /// </param>
+        /// <param name="build2">
+        /// The second Tcl library build to compare.
+        /// </param>
+        /// <returns>
+        /// A negative number if the release level of <paramref name="build1" />
+        /// is less than that of <paramref name="build2" />, a positive number
+        /// if it is greater, or zero if they are equal.
+        /// </returns>
+        private static int CompareReleaseLevels(
+            TclBuild build1, /* in */
+            TclBuild build2  /* in */
+            )
+        {
+            Tcl_ReleaseLevel releaseLevel1 = (build1 != null) ?
+                build1.ReleaseLevel : Tcl_ReleaseLevel.TCL_UNKNOWN_RELEASE;
+
+            Tcl_ReleaseLevel releaseLevel2 = (build2 != null) ?
+                build2.ReleaseLevel : Tcl_ReleaseLevel.TCL_UNKNOWN_RELEASE;
+
+            return ReleaseLevelCompare(releaseLevel1, releaseLevel2);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method compares two Tcl release levels, treating an unknown
+        /// release level as ordering below any known release level.
+        /// </summary>
+        /// <param name="releaseLevel1">
+        /// The first Tcl release level to compare.
+        /// </param>
+        /// <param name="releaseLevel2">
+        /// The second Tcl release level to compare.
+        /// </param>
+        /// <returns>
+        /// A negative number if <paramref name="releaseLevel1" /> orders below
+        /// <paramref name="releaseLevel2" />, a positive number if it orders
+        /// above, or zero if they are equal.
+        /// </returns>
+        private static int ReleaseLevelCompare(
+            Tcl_ReleaseLevel releaseLevel1, /* in */
+            Tcl_ReleaseLevel releaseLevel2  /* in */
+            )
+        {
+            if (releaseLevel1 != Tcl_ReleaseLevel.TCL_UNKNOWN_RELEASE)
+            {
+                if (releaseLevel2 != Tcl_ReleaseLevel.TCL_UNKNOWN_RELEASE)
+                {
+                    if (releaseLevel1 > releaseLevel2)
+                    {
+                        return 1;
+                    }
+                    else if (releaseLevel1 < releaseLevel2)
+                    {
+                        return -1;
+                    }
+                    else
+                    {
+                        return 0;
+                    }
+                }
+                else
+                {
+                    return 1;
+                }
+            }
+            else if (releaseLevel2 != Tcl_ReleaseLevel.TCL_UNKNOWN_RELEASE)
+            {
+                return -1;
+            }
+            else
+            {
+                return 0;
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method compares two Tcl library builds based on whether their
+        /// underlying files are trusted, ranking a trusted build above an
+        /// untrusted one.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context used when evaluating file trust, if any.
+        /// </param>
+        /// <param name="build1">
+        /// The first Tcl library build to compare.
+        /// </param>
+        /// <param name="build2">
+        /// The second Tcl library build to compare.
+        /// </param>
+        /// <returns>
+        /// A negative number if only <paramref name="build2" /> is trusted, a
+        /// positive number if only <paramref name="build1" /> is trusted, or
+        /// zero if both or neither are trusted.
+        /// </returns>
+        private static int CompareTrustFlags(
+            Interpreter interpreter, /* in */
+            TclBuild build1,         /* in */
+            TclBuild build2          /* in */
+            )
+        {
+            bool trustFlag1 = (build1 != null) ? RuntimeOps.IsFileTrusted(
+                interpreter, null, build1.FileName, IntPtr.Zero) : false;
+
+            bool trustFlag2 = (build2 != null) ? RuntimeOps.IsFileTrusted(
+                interpreter, null, build2.FileName, IntPtr.Zero) : false;
+
+            return TrustFlagCompare(trustFlag1, trustFlag2);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method compares two trust flags, ranking a trusted flag above
+        /// an untrusted one.
+        /// </summary>
+        /// <param name="trustFlag1">
+        /// The first trust flag to compare; non-zero if trusted.
+        /// </param>
+        /// <param name="trustFlag2">
+        /// The second trust flag to compare; non-zero if trusted.
+        /// </param>
+        /// <returns>
+        /// A negative number if only <paramref name="trustFlag2" /> is trusted,
+        /// a positive number if only <paramref name="trustFlag1" /> is trusted,
+        /// or zero if both or neither are trusted.
+        /// </returns>
+        private static int TrustFlagCompare(
+            bool trustFlag1, /* in */
+            bool trustFlag2  /* in */
+            )
+        {
+            if (trustFlag1)
+            {
+                if (trustFlag2)
+                {
+                    return 0;
+                }
+                else
+                {
+                    return 1;
+                }
+            }
+            else if (trustFlag2)
+            {
+                return -1;
+            }
+            else
+            {
+                return 0;
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method compares the priority of two Tcl library builds.
+        /// </summary>
+        /// <param name="build1">
+        /// The first Tcl library build to compare.
+        /// </param>
+        /// <param name="build2">
+        /// The second Tcl library build to compare.
+        /// </param>
+        /// <returns>
+        /// A negative number if <paramref name="build1" /> ranks below
+        /// <paramref name="build2" /> by priority, a positive number if it
+        /// ranks above, or zero if they are equal.
+        /// </returns>
+        private static int ComparePriorities(
+            TclBuild build1, /* in */
+            TclBuild build2  /* in */
+            )
+        {
+            Priority priority1 = (build1 != null) ?
+                build1.Priority : Priority.None;
+
+            Priority priority2 = (build2 != null) ?
+                build2.Priority : Priority.None;
+
+            return PriorityCompare(priority1, priority2);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method compares two priority values, treating
+        /// <see cref="Priority.None" /> as ordering below any assigned
+        /// priority and a numerically lower priority as ranking higher.
+        /// </summary>
+        /// <param name="priority1">
+        /// The first priority to compare.
+        /// </param>
+        /// <param name="priority2">
+        /// The second priority to compare.
+        /// </param>
+        /// <returns>
+        /// A negative number if <paramref name="priority1" /> ranks below
+        /// <paramref name="priority2" />, a positive number if it ranks above,
+        /// or zero if they are equal.
+        /// </returns>
+        private static int PriorityCompare(
+            Priority priority1, /* in */
+            Priority priority2  /* in */
+            )
+        {
+            if (priority1 != Priority.None)
+            {
+                if (priority2 != Priority.None)
+                {
+                    if (priority1 < priority2)
+                    {
+                        return 1;
+                    }
+                    else if (priority1 > priority2)
+                    {
+                        return -1;
+                    }
+                    else
+                    {
+                        return 0;
+                    }
+                }
+                else
+                {
+                    return 1;
+                }
+            }
+            else if (priority2 != Priority.None)
+            {
+                return -1;
+            }
+            else
+            {
+                return 0;
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method compares the discovery sequence of two Tcl library
+        /// builds.
+        /// </summary>
+        /// <param name="build1">
+        /// The first Tcl library build to compare.
+        /// </param>
+        /// <param name="build2">
+        /// The second Tcl library build to compare.
+        /// </param>
+        /// <returns>
+        /// A negative number if <paramref name="build1" /> ranks below
+        /// <paramref name="build2" /> by sequence, a positive number if it
+        /// ranks above, or zero if they are equal.
+        /// </returns>
+        private static int CompareSequences(
+            TclBuild build1, /* in */
+            TclBuild build2  /* in */
+            )
+        {
+            Sequence sequence1 = (build1 != null) ?
+                build1.Sequence : Sequence.None;
+
+            Sequence sequence2 = (build2 != null) ?
+                build2.Sequence : Sequence.None;
+
+            return SequenceCompare(sequence1, sequence2);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method compares two discovery sequence values, treating
+        /// <see cref="Sequence.None" /> as ordering below any assigned sequence
+        /// and an earlier sequence as ranking higher.
+        /// </summary>
+        /// <param name="sequence1">
+        /// The first sequence to compare.
+        /// </param>
+        /// <param name="sequence2">
+        /// The second sequence to compare.
+        /// </param>
+        /// <returns>
+        /// A negative number if <paramref name="sequence1" /> ranks below
+        /// <paramref name="sequence2" />, a positive number if it ranks above,
+        /// or zero if they are equal.
+        /// </returns>
+        private static int SequenceCompare(
+            Sequence sequence1, /* in */
+            Sequence sequence2  /* in */
+            )
+        {
+            if (sequence1 != Sequence.None)
+            {
+                if (sequence2 != Sequence.None)
+                {
+                    if (sequence1 < sequence2)
+                    {
+                        return 1;
+                    }
+                    else if (sequence1 > sequence2)
+                    {
+                        return -1;
+                    }
+                    else
+                    {
+                        return 0;
+                    }
+                }
+                else
+                {
+                    return 1;
+                }
+            }
+            else if (sequence2 != Sequence.None)
+            {
+                return -1;
+            }
+            else
+            {
+                return 0;
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method computes the next discovery sequence value to assign to
+        /// a newly found Tcl library build, based on the number of builds found
+        /// so far.
+        /// </summary>
+        /// <param name="builds">
+        /// The dictionary of Tcl library builds found so far, or null if none
+        /// have been found yet.
+        /// </param>
+        /// <returns>
+        /// The next discovery sequence value; <see cref="Sequence.First" /> if
+        /// <paramref name="builds" /> is null.
+        /// </returns>
+        private static Sequence GetSequence(
+            TclBuildDictionary builds /* in */
+            )
+        {
+            return (builds != null) ?
+                (Sequence)(builds.Count + 1) : Sequence.First;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method extracts the distinct major version numbers from a
+        /// collection of required version range pairs.
+        /// </summary>
+        /// <param name="rangeRequired">
+        /// The collection of required version range pairs, where each pair
+        /// holds a major version and a minor version.
+        /// </param>
+        /// <returns>
+        /// The distinct major version numbers found in
+        /// <paramref name="rangeRequired" />, or null if it is null.
+        /// </returns>
+        private static IEnumerable<int> GetMajors(
+            IEnumerable<IPair<int>> rangeRequired /* in */
+            )
+        {
+            if (rangeRequired == null)
+                return null;
+
+            MajorsDictionary majors = new MajorsDictionary();
+
+            foreach (IPair<int> pair in rangeRequired)
+            {
+                if (pair == null)
+                    continue;
+
+                int major = pair.X;
+
+                if (majors.ContainsKey(major))
+                    continue;
+
+                majors.Add(major, null);
+            }
+
+            return majors.Keys;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method computes the range of two-part Tcl versions implied by
+        /// the specified minimum and maximum required versions, returning the
+        /// result as a list of version strings.
+        /// </summary>
+        /// <param name="flags">
+        /// The flags used to supply default bounds and increments when any are
+        /// not explicitly specified.
+        /// </param>
+        /// <param name="minimumRequired">
+        /// The minimum required version, or null to use the default.
+        /// </param>
+        /// <param name="maximumRequired">
+        /// The maximum required version, or null to use the default.
+        /// </param>
+        /// <param name="majorIncrement">
+        /// The amount to advance the major version by on each step, or null to
+        /// use the default.
+        /// </param>
+        /// <param name="minorIncrement">
+        /// The amount to advance the minor version by on each step, or null to
+        /// use the default.
+        /// </param>
+        /// <param name="intermediateMinimum">
+        /// The minimum minor version to use for major versions between the
+        /// minimum and maximum, or null to use the default.
+        /// </param>
+        /// <param name="intermediateMaximum">
+        /// The maximum minor version to use for major versions between the
+        /// minimum and maximum, or null to use the default.
+        /// </param>
+        /// <param name="result">
+        /// Upon success, receives the list of two-part version strings in the
+        /// computed range; upon failure, receives an error message.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode GetVersionRange(
+            FindFlags flags,          /* in */
+            Version minimumRequired,  /* in */
+            Version maximumRequired,  /* in */
+            int? majorIncrement,      /* in */
+            int? minorIncrement,      /* in */
+            int? intermediateMinimum, /* in */
+            int? intermediateMaximum, /* in */
+            ref Result result         /* out */
+            )
+        {
+            IEnumerable<IPair<int>> rangeRequired = null;
+
+            if (GetVersionRange(
+                    flags, minimumRequired, maximumRequired, majorIncrement,
+                    minorIncrement, intermediateMinimum, intermediateMaximum,
+                    ref rangeRequired, ref result) == ReturnCode.Ok)
+            {
+                if (rangeRequired != null)
+                {
+                    StringList list = new StringList();
+
+                    foreach (IPair<int> pair in rangeRequired)
+                    {
+                        list.Add(GlobalState.GetTwoPartVersion(
+                            pair.X, pair.Y).ToString());
+                    }
+
+                    result = list;
+                    return ReturnCode.Ok;
+                }
+                else
+                {
+                    result = "invalid version range";
+                }
+            }
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method computes the range of major and minor version pairs
+        /// implied by the specified minimum and maximum required versions,
+        /// applying defaults for any bounds or increments that are not
+        /// explicitly specified.
+        /// </summary>
+        /// <param name="flags">
+        /// The flags used to supply default bounds and increments when any are
+        /// not explicitly specified.
+        /// </param>
+        /// <param name="minimumRequired">
+        /// The minimum required version, or null to use the default.
+        /// </param>
+        /// <param name="maximumRequired">
+        /// The maximum required version, or null to use the default.
+        /// </param>
+        /// <param name="majorIncrement">
+        /// The amount to advance the major version by on each step, or null to
+        /// use the default.
+        /// </param>
+        /// <param name="minorIncrement">
+        /// The amount to advance the minor version by on each step, or null to
+        /// use the default.
+        /// </param>
+        /// <param name="intermediateMinimum">
+        /// The minimum minor version to use for major versions between the
+        /// minimum and maximum, or null to use the default.
+        /// </param>
+        /// <param name="intermediateMaximum">
+        /// The maximum minor version to use for major versions between the
+        /// minimum and maximum, or null to use the default.
+        /// </param>
+        /// <param name="rangeRequired">
+        /// Upon success, receives the collection of major and minor version
+        /// pairs in the computed range.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives an error message.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        private static ReturnCode GetVersionRange(
+            FindFlags flags,                           /* in */
+            Version minimumRequired,                   /* in */
+            Version maximumRequired,                   /* in */
+            int? majorIncrement,                       /* in */
+            int? minorIncrement,                       /* in */
+            int? intermediateMinimum,                  /* in */
+            int? intermediateMaximum,                  /* in */
+            ref IEnumerable<IPair<int>> rangeRequired, /* out */
+            ref Result error                           /* out */
+            )
+        {
+            if (minimumRequired == null)
+                minimumRequired = GetDefaultMinimumVersion(flags);
+
+            if (maximumRequired == null)
+                maximumRequired = GetDefaultMaximumVersion(flags);
+
+            if (majorIncrement == null)
+                majorIncrement = GetDefaultMajorIncrement(flags);
+
+            if (minorIncrement == null)
+                minorIncrement = GetDefaultMinorIncrement(flags);
+
+            if (intermediateMinimum == null)
+                intermediateMinimum = GetDefaultIntermediateMinimum(flags);
+
+            if (intermediateMaximum == null)
+                intermediateMaximum = GetDefaultIntermediateMaximum(flags);
+
+            if (minimumRequired == null)
+            {
+                error = "invalid minimum required version";
+                return ReturnCode.Error;
+            }
+
+            if (maximumRequired == null)
+            {
+                error = "invalid maximum required version";
+                return ReturnCode.Error;
+            }
+
+            if (PackageOps.VersionCompare(minimumRequired, maximumRequired) > 0)
+            {
+                error = "minimum required version cannot be greater than maximum required version";
+                return ReturnCode.Error;
+            }
+
+            bool sameMajor = (minimumRequired.Major == maximumRequired.Major);
+            List<IPair<int>> localRangeRequired = new List<IPair<int>>();
+
+            for (int major = minimumRequired.Major;
+                    major <= maximumRequired.Major;
+                    major += (int)majorIncrement)
+            {
+                int minorMinimum;
+                int minorMaximum;
+
+                if (major == minimumRequired.Major)
+                {
+                    minorMinimum = minimumRequired.Minor;
+
+                    if (sameMajor)
+                        minorMaximum = maximumRequired.Minor;
+                    else
+                        minorMaximum = (int)intermediateMaximum;
+                }
+                else if (major == maximumRequired.Major)
+                {
+                    if (sameMajor)
+                        minorMinimum = minimumRequired.Minor;
+                    else
+                        minorMinimum = (int)intermediateMinimum;
+
+                    minorMaximum = maximumRequired.Minor;
+                }
+                else
+                {
+                    minorMinimum = (int)intermediateMinimum;
+                    minorMaximum = (int)intermediateMaximum;
+                }
+
+                for (int minor = minorMinimum;
+                        minor <= minorMaximum;
+                        minor += (int)minorIncrement)
+                {
+                    localRangeRequired.Add(
+                        new Pair<int>(major, minor));
+                }
+            }
+
+            rangeRequired = localRangeRequired;
+            return ReturnCode.Ok;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method searches the various supported locations for available
+        /// Tcl library builds that satisfy the specified version constraints,
+        /// accumulating the matching builds and any errors encountered.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context to use while searching, if any.
+        /// </param>
+        /// <param name="flags">
+        /// The flags that control which locations are searched and how the
+        /// search is performed.
+        /// </param>
+        /// <param name="callback">
+        /// An optional delegate invoked before and after the other search
+        /// locations are checked; may be null.
+        /// </param>
+        /// <param name="paths">
+        /// An optional collection of specific directories or file names to
+        /// check before the other search locations; may be null.
+        /// </param>
+        /// <param name="text">
+        /// The optional script text used when the search falls back to
+        /// evaluating a script to locate a Tcl library; may be null.
+        /// </param>
+        /// <param name="minimumRequired">
+        /// The minimum required Tcl version, or null to use the default.
+        /// </param>
+        /// <param name="maximumRequired">
+        /// The maximum required Tcl version, or null to use the default.
+        /// </param>
+        /// <param name="unknown">
+        /// The version to assume for a candidate library whose version cannot
+        /// otherwise be determined; may be null.
+        /// </param>
+        /// <param name="clientData">
+        /// The optional client data to associate with discovered builds; may
+        /// be null.
+        /// </param>
+        /// <param name="builds">
+        /// Upon success, receives the dictionary of Tcl library builds that
+        /// were found.
+        /// </param>
+        /// <param name="errors">
+        /// Receives the list of errors encountered during the search, if any.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> if at least one matching build was
+        /// found; otherwise, <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode Find(
+            Interpreter interpreter,       /* in */
+            FindFlags flags,               /* in */
+            Tcl_FindCallback callback,     /* in */
+            IEnumerable<string> paths,     /* in */
+            string text,                   /* in */
+            Version minimumRequired,       /* in */
+            Version maximumRequired,       /* in */
+            Version unknown,               /* in */
+            IClientData clientData,        /* in */
+            ref TclBuildDictionary builds, /* out */
+            ref ResultList errors          /* out */
+            )
+        {
+            //
+            // NOTE: Tcl library search semantics:
+            //
+            //        1. The argument "callback" may provide a delegate to be
+            //           called before searching other locations.  If null, it
+            //           is simply ignored.  If the return value is "Error", a
+            //           message will be added to the list of errors.  If the
+            //           return value is "Break", all other search locations
+            //           are skipped.  If the return value is "Continue", all
+            //           other search locations will be retried.
+            //
+            //        2. The argument "path" may be a directory name where Tcl
+            //           libraries are located OR a fully qualified path and
+            //           file name to a specific Tcl library to load.
+            //
+            //        3. Next, we will check the directory that contains the
+            //           script currently being evaluated.
+            //
+            //        4. Next, we will fallback to the value of the Tcl_Dll
+            //           environment variable if it is set.  If set, it may
+            //           specify a file or directory name to check.
+            //
+            //        5. Next, we will check the directories that are present
+            //           in the auto-path.
+            //
+            //        6. Next, we will check the various Tcl package paths for
+            //           the currently executing assembly (e.g. package name
+            //           path, package name root path, both with and without
+            //           the "bin" sub-directory).
+            //
+            //        7. Next, we will check the path for the assembly
+            //           containing the managed entry point for the currently
+            //           running application.
+            //
+            //        8. Next, we will check the path for the assembly
+            //           containing this class (i.e. TclTk).
+            //
+            //        9. Next, we will check the path for the application that
+            //           started this process, native or managed.
+            //
+            //       10. Next, we will check the path where files imported from
+            //           external projects are located.
+            //
+            //       11. Next, we will check the path where a Tcl "peer" would
+            //           be (e.g. when Tcl and TclTk are installed in sibling
+            //           directories).
+            //
+            //       12. Next, on Unix platforms only, we will check the paths
+            //           where shared libraries are commonly installed (e.g.
+            //           "/usr/local/lib" and "/usr/lib").
+            //
+            //       13. Next, we will check the registry for all registered
+            //           ActiveTcl installations (e.g. in "HKEY_LOCAL_MACHINE\
+            //           Software\ActiveState\ActiveTcl\w.x.y.z").
+            //
+            //       14. Next, we will search all the directories contained in
+            //           the PATH environment variable.
+            //
+            //       15. Next, we will check the directory returned from a
+            //           script (e.g. [downloadAndExtractNativeTclKitDll]).
+            //
+            //       16. The argument "callback" may provide a delegate to be
+            //           called after searching other locations.  If null, it
+            //           is simply ignored.  If the return value is "Error", a
+            //           message will be added to the list of errors.  If the
+            //           return value is "Break", all other search locations
+            //           are skipped.  If the return value is "Continue", all
+            //           other search locations will be retried.
+            //
+        retry:
+
+            if (FlagOps.HasFlags(flags, FindFlags.PreCallback, true))
+            {
+                if (callback != null)
+                {
+                    ReturnCode code = callback(interpreter,
+                        FindFlags.PreCallback, flags, callback, paths, minimumRequired,
+                        maximumRequired, unknown, clientData, ref builds, ref errors);
+
+                    if (code == ReturnCode.Error)
+                    {
+                        MaybeAddAnError(ref errors,
+                            "find Tcl library builds via pre-callback failed");
+                    }
+                    else if (code == ReturnCode.Break)
+                    {
+                        goto filter;
+                    }
+                    else if (code == ReturnCode.Continue)
+                    {
+                        goto retry;
+                    }
+                }
+            }
+
+            if (FlagOps.HasFlags(flags, FindFlags.SpecificPath, true))
+            {
+                if (paths != null)
+                {
+                    foreach (string path in paths)
+                    {
+                        if (FindViaPath(interpreter,
+                                FindFlags.SpecificPath | FindFlags.PartX, flags,
+                                path, unknown, clientData, ref builds,
+                                ref errors) != ReturnCode.Ok)
+                        {
+                            MaybeAddAnError(ref errors, String.Format(
+                                "find Tcl library builds via specific path {0} failed",
+                                FormatOps.DisplayName(path)));
+                        }
+                    }
+                }
+                else
+                {
+                    MaybeAddAnError(ref errors, "invalid specific paths");
+                }
+            }
+
+            if (FlagOps.HasFlags(flags, FindFlags.ScriptPath, true))
+            {
+                string path = null;
+                Result error = null;
+
+                if ((ScriptOps.GetScriptPath(
+                        interpreter, true, ref path, ref error) == ReturnCode.Ok) &&
+                    (path != null))
+                {
+                    if (FindViaPath(interpreter,
+                            FindFlags.ScriptPath, flags, path, unknown, clientData,
+                            ref builds, ref errors) != ReturnCode.Ok)
+                    {
+                        MaybeAddAnError(ref errors, String.Format(
+                            "find Tcl library builds via script path {0} failed",
+                            FormatOps.DisplayName(path)));
+                    }
+                }
+                else
+                {
+                    MaybeAddAnError(ref errors, String.Format(
+                        "invalid script path: {0}", FormatOps.WrapOrNull(error)));
+                }
+            }
+
+            if (FlagOps.HasFlags(flags, FindFlags.Environment, true))
+            {
+                if (FindViaEnvironment(interpreter,
+                        FindFlags.Environment, flags, unknown, clientData,
+                        ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via environment failed");
+                }
+            }
+
+            if (FlagOps.HasFlags(flags, FindFlags.AutoPath, true))
+            {
+                StringList autoPathList = GlobalState.GetAutoPathList(
+                    interpreter, FlagOps.HasFlags(flags,
+                    FindFlags.RefreshAutoPath, true));
+
+                if (autoPathList != null)
+                {
+                    foreach (string path in autoPathList)
+                    {
+                        if (!CheckTclLibraryPath(path))
+                            continue;
+
+                        if (FindViaPath(interpreter,
+                                FindFlags.AutoPath | FindFlags.PartX, flags,
+                                path, unknown, clientData, ref builds,
+                                ref errors) != ReturnCode.Ok)
+                        {
+                            MaybeAddAnError(ref errors, String.Format(
+                                "find Tcl library builds via auto-path {0} failed",
+                                FormatOps.DisplayName(path)));
+                        }
+                    }
+                }
+                else
+                {
+                    MaybeAddAnError(ref errors, "fetch of auto-path list failed");
+                }
+            }
+
+            if (FlagOps.HasFlags(flags, FindFlags.PackageBinaryPath, true))
+            {
+                if (FlagOps.HasFlags(flags, FindFlags.FindArchitecture, true) &&
+                    FindViaPath(interpreter,
+                        FindFlags.PackageBinaryPath | FindFlags.Part0, flags,
+                        GetAlternateProcessorPath(PathOps.CombinePath(
+                            null, GlobalState.GetTclPackageNamePath(),
+                        TclVars.Path.Bin)), unknown, clientData, ref builds,
+                        ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via package name binary processor path failed");
+                }
+
+                if (FindViaPath(interpreter,
+                        FindFlags.PackageBinaryPath | FindFlags.Part1, flags,
+                        PathOps.CombinePath(
+                            null, GlobalState.GetTclPackageNamePath(),
+                        TclVars.Path.Bin), unknown, clientData, ref builds,
+                        ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via package name binary path failed");
+                }
+
+                if (FlagOps.HasFlags(flags, FindFlags.FindArchitecture, true) &&
+                    FindViaPath(interpreter,
+                        FindFlags.PackageBinaryPath | FindFlags.Part2, flags,
+                        GetAlternateProcessorPath(PathOps.CombinePath(
+                            null, GlobalState.GetTclPackageNameRootPath(),
+                        TclVars.Path.Bin)), unknown, clientData, ref builds,
+                        ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via package name root binary processor path failed");
+                }
+
+                if (FindViaPath(interpreter,
+                        FindFlags.PackageBinaryPath | FindFlags.Part3, flags,
+                        PathOps.CombinePath(
+                            null, GlobalState.GetTclPackageNameRootPath(),
+                        TclVars.Path.Bin), unknown, clientData, ref builds,
+                        ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via package name root binary path failed");
+                }
+            }
+
+            if (FlagOps.HasFlags(flags, FindFlags.PackageLibraryPath, true))
+            {
+                if (FlagOps.HasFlags(flags, FindFlags.FindArchitecture, true) &&
+                    FindViaPath(interpreter,
+                        FindFlags.PackageLibraryPath | FindFlags.Part0, flags,
+                        GetAlternateProcessorPath(PathOps.CombinePath(
+                            null, GlobalState.GetTclPackageNamePath(),
+                        TclVars.Path.Lib)), unknown, clientData, ref builds,
+                        ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via package name library processor path failed");
+                }
+
+                if (FindViaPath(interpreter,
+                        FindFlags.PackageLibraryPath | FindFlags.Part1, flags,
+                        PathOps.CombinePath(
+                            null, GlobalState.GetTclPackageNamePath(),
+                        TclVars.Path.Lib), unknown, clientData, ref builds,
+                        ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via package name library path failed");
+                }
+
+                if (FlagOps.HasFlags(flags, FindFlags.FindArchitecture, true) &&
+                    FindViaPath(interpreter,
+                        FindFlags.PackageLibraryPath | FindFlags.Part2, flags,
+                        GetAlternateProcessorPath(PathOps.CombinePath(
+                            null, GlobalState.GetTclPackageNameRootPath(),
+                        TclVars.Path.Lib)), unknown, clientData, ref builds,
+                        ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via package name root library processor path failed");
+                }
+
+                if (FindViaPath(interpreter,
+                        FindFlags.PackageLibraryPath | FindFlags.Part3, flags,
+                        PathOps.CombinePath(
+                            null, GlobalState.GetTclPackageNameRootPath(),
+                        TclVars.Path.Lib), unknown, clientData, ref builds,
+                        ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via package name root library path failed");
+                }
+            }
+
+            if (FlagOps.HasFlags(flags, FindFlags.PackagePath, true))
+            {
+                if (FlagOps.HasFlags(flags, FindFlags.FindArchitecture, true) &&
+                    FindViaPath(interpreter,
+                        FindFlags.PackagePath | FindFlags.Part0, flags,
+                        GetAlternateProcessorPath(
+                            GlobalState.GetTclPackageNamePath()),
+                        unknown, clientData, ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via package name processor path failed");
+                }
+
+                if (FindViaPath(interpreter,
+                        FindFlags.PackagePath | FindFlags.Part1, flags,
+                        GlobalState.GetTclPackageNamePath(), unknown,
+                        clientData, ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via package name path failed");
+                }
+
+                if (FlagOps.HasFlags(flags, FindFlags.FindArchitecture, true) &&
+                    FindViaPath(interpreter,
+                        FindFlags.PackagePath | FindFlags.Part2, flags,
+                        GetAlternateProcessorPath(
+                            GlobalState.GetTclPackageNameRootPath()),
+                        unknown, clientData, ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via package name root processor path failed");
+                }
+
+                if (FindViaPath(interpreter,
+                        FindFlags.PackagePath | FindFlags.Part3, flags,
+                        GlobalState.GetTclPackageNameRootPath(), unknown,
+                        clientData, ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via package name root path failed");
+                }
+            }
+
+            if (FlagOps.HasFlags(flags, FindFlags.EntryAssembly, true))
+            {
+                if (FindViaAssembly(interpreter,
+                        FindFlags.EntryAssembly, flags,
+                        GlobalState.GetEntryAssembly(), unknown, clientData,
+                        ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via entry assembly location failed");
+                }
+            }
+
+            if (FlagOps.HasFlags(flags, FindFlags.ExecutingAssembly, true))
+            {
+                if (FindViaAssembly(interpreter,
+                        FindFlags.ExecutingAssembly, flags,
+                        Assembly.GetExecutingAssembly(), unknown, clientData,
+                        ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via executing assembly location failed");
+                }
+            }
+
+            if (FlagOps.HasFlags(flags, FindFlags.BinaryPath, true))
+            {
+                if (FindViaPath(interpreter,
+                        FindFlags.BinaryPath, flags,
+                        GlobalState.InitializeOrGetBinaryPath(false), unknown,
+                        clientData, ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via binary path failed");
+                }
+            }
+
+            if (FlagOps.HasFlags(flags, FindFlags.ExternalsPath, true))
+            {
+                if (FlagOps.HasFlags(flags, FindFlags.FindArchitecture, true) &&
+                    FindViaPath(interpreter,
+                        FindFlags.ExternalsPath, flags,
+                        GetExternalsPath(true), unknown, clientData,
+                        ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via externals processor path failed");
+                }
+
+                if (FindViaPath(interpreter,
+                        FindFlags.ExternalsPath, flags,
+                        GetExternalsPath(false), unknown, clientData,
+                        ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via externals path failed");
+                }
+            }
+
+            if (FlagOps.HasFlags(flags, FindFlags.PeerPath, true))
+            {
+                if (FlagOps.HasFlags(flags, FindFlags.FindArchitecture, true) &&
+                    FindViaPath(interpreter,
+                        FindFlags.PeerPath, flags,
+                        GetPeerPath(true), unknown, clientData,
+                        ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via peer processor path failed");
+                }
+
+                if (FindViaPath(interpreter,
+                        FindFlags.PeerPath, flags,
+                        GetPeerPath(false), unknown, clientData,
+                        ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via peer path failed");
+                }
+            }
+
+#if UNIX
+            if (FlagOps.HasFlags(flags, FindFlags.LocalLibraryPath, true))
+            {
+                if (FindViaPath(interpreter,
+                        FindFlags.LocalLibraryPath, flags,
+                        PathOps.GetLibPath(true, false, FlagOps.HasFlags(
+                            flags, FindFlags.AlternateName, true)),
+                        unknown, clientData, ref builds,
+                        ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via local library processor path failed");
+                }
+
+                if (FindViaPath(interpreter,
+                        FindFlags.LocalLibraryPath, flags,
+                        TclVars.Path.UserLocalLib, unknown, clientData,
+                        ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via local library path failed");
+                }
+            }
+
+            if (FlagOps.HasFlags(flags, FindFlags.LibraryPath, true))
+            {
+                if (FindViaPath(interpreter,
+                        FindFlags.LibraryPath, flags,
+                        PathOps.GetLibPath(false, false, FlagOps.HasFlags(
+                            flags, FindFlags.AlternateName, true)),
+                        unknown, clientData, ref builds,
+                        ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via library processor path failed");
+                }
+
+                if (FindViaPath(interpreter,
+                        FindFlags.LibraryPath, flags, TclVars.Path.UserLib,
+                        unknown, clientData, ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via library path failed");
+                }
+            }
+
+            if (FlagOps.HasFlags(flags, FindFlags.HomebrewLibraryPath, true))
+            {
+                Version rangeMinimumRequired = minimumRequired;
+                Version rangeMaximumRequired = maximumRequired;
+
+                if ((rangeMaximumRequired == null) &&
+                    (rangeMinimumRequired != null))
+                {
+                    rangeMaximumRequired = rangeMinimumRequired;
+                }
+
+                IEnumerable<IPair<int>> rangeRequired = null;
+                Result localResult = null;
+
+                if (GetVersionRange(flags,
+                        rangeMinimumRequired, rangeMaximumRequired,
+                        null, null, null, null, ref rangeRequired,
+                        ref localResult) == ReturnCode.Ok)
+                {
+                    IEnumerable<int> majors = GetMajors(rangeRequired);
+
+                    if (majors != null)
+                    {
+                        foreach (int major in majors)
+                        {
+                            string path = String.Format(
+                                TclVars.Path.OptionalHomebrewLibFormat,
+                                major);
+
+                            if (FindViaPath(interpreter,
+                                    FindFlags.HomebrewLibraryPath, flags,
+                                    path, unknown, clientData, ref builds,
+                                    ref errors) != ReturnCode.Ok)
+                            {
+                                MaybeAddAnError(ref errors, String.Format(
+                                    "find Tcl v{0}.x library builds via " +
+                                    "optional Homebrew library path failed",
+                                    major));
+                            }
+                        }
+                    }
+                    else
+                    {
+                        MaybeAddAnError(ref errors,
+                            "invalid majors from version range");
+                    }
+                }
+                else
+                {
+                    MaybeAddAnError(ref errors, localResult);
+                }
+            }
+#endif
+
+#if !NET_STANDARD_20
+            if (FlagOps.HasFlags(flags, FindFlags.Registry, true))
+            {
+                if (FindViaRegistry(interpreter,
+                        FindFlags.Registry, flags, null, null, unknown, clientData,
+                        ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via registry failed");
+                }
+            }
+#endif
+
+            if (FlagOps.HasFlags(flags, FindFlags.SearchPath, true))
+            {
+                if (FindViaSearchPath(interpreter,
+                        FindFlags.SearchPath, flags, unknown, clientData,
+                        ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via search path failed");
+                }
+            }
+
+            if (FlagOps.HasFlags(flags, FindFlags.EvaluateScript, true))
+            {
+                if (FindViaEvaluateScript(
+                        interpreter, text, FindFlags.EvaluateScript,
+                        flags, unknown, clientData, FlagOps.HasFlags(
+                        flags, FindFlags.RefreshEvaluateScript, true),
+                        ref builds, ref errors) != ReturnCode.Ok)
+                {
+                    MaybeAddAnError(ref errors,
+                        "find Tcl library builds via script evaluation failed");
+                }
+            }
+
+            if (FlagOps.HasFlags(flags, FindFlags.PostCallback, true))
+            {
+                if (callback != null)
+                {
+                    ReturnCode code = callback(interpreter,
+                        FindFlags.PostCallback, flags, callback, paths, minimumRequired,
+                        maximumRequired, unknown, clientData, ref builds, ref errors);
+
+                    if (code == ReturnCode.Error)
+                    {
+                        MaybeAddAnError(ref errors,
+                            "find Tcl library builds via post-callback failed");
+                    }
+                    else if (code == ReturnCode.Break)
+                    {
+                        goto filter; // NOTE: Yes, currently redundant.
+                    }
+                    else if (code == ReturnCode.Continue)
+                    {
+                        goto retry;
+                    }
+                }
+            }
+
+        filter:
+
+            //
+            // NOTE: Were any builds of Tcl found at all?  If not, that is a
+            //       failure.
+            //
+            if (builds != null)
+            {
+                //
+                // NOTE: If requested by the caller, filter on the minimum and
+                //       maximum required versions.
+                //
+                if ((minimumRequired != null) || (maximumRequired != null))
+                {
+                    StringList keys = builds.GetKeysInOrder(false);
+
+                    if (keys != null)
+                    {
+                        foreach (string key in keys)
+                        {
+                            //
+                            // NOTE: Get the build object associated with this
+                            //       key (file name).
+                            //
+                            TclBuild build = builds[key];
+
+                            //
+                            // NOTE: Also remove invalid entries.
+                            //
+                            if (build != null)
+                            {
+                                //
+                                // NOTE: Compare the version of the current
+                                //       build with the minimum and/or maximum
+                                //       required versions.  If the current
+                                //       build does not meet the criteria,
+                                //       remove it from the resulting
+                                //       dictionary.
+                                //
+                                if (((minimumRequired == null) ||
+                                        PackageOps.VersionCompare(
+                                            build.PatchLevel,
+                                            minimumRequired) >= 0) &&
+                                    ((maximumRequired == null) ||
+                                        PackageOps.VersionCompare(
+                                            build.PatchLevel,
+                                            maximumRequired) <= 0))
+                                {
+                                    //
+                                    // NOTE: This build is ok, skip removing
+                                    //       it.
+                                    //
+                                    continue;
+                                }
+                            }
+
+                            builds.Remove(key);
+                        }
+                    }
+                }
+
+                //
+                // NOTE: If any (filtered) builds of Tcl were found, indicate
+                //       success to the caller.
+                //
+                if (builds.Count > 0)
+                    return ReturnCode.Ok;
+            }
+
+            //
+            // NOTE: Add a good default error message if none are present.
+            //
+            if (!HaveAnError(errors))
+            {
+                MaybeAddAnError(ref errors,
+                    "find Tcl library builds failed, nothing done");
+            }
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method selects the single best Tcl library build from the set
+        /// of discovered builds, preferring the highest version and applying
+        /// the remaining tie-breaking criteria as needed.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context to use while selecting, if any.
+        /// </param>
+        /// <param name="flags">
+        /// The flags that control how the selection is performed.
+        /// </param>
+        /// <param name="builds">
+        /// The dictionary of candidate Tcl library builds to choose from.
+        /// </param>
+        /// <param name="minimumRequired">
+        /// The minimum required Tcl version, or null to use the default.
+        /// </param>
+        /// <param name="maximumRequired">
+        /// The maximum required Tcl version, or null to use the default.
+        /// </param>
+        /// <param name="build">
+        /// Upon success, receives the selected Tcl library build.
+        /// </param>
+        /// <param name="errors">
+        /// Receives the list of errors encountered during selection, if any.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> if a build was selected; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode Select(
+            Interpreter interpreter,   /* in */
+            FindFlags flags,           /* in */
+            TclBuildDictionary builds, /* in */
+            Version minimumRequired,   /* in */
+            Version maximumRequired,   /* in */
+            ref TclBuild build,        /* out */
+            ref ResultList errors      /* out */
+            )
+        {
+            //
+            // NOTE: Tcl library selection semantics:
+            //
+            //       1. We always attempt to select the "highest version" available.
+            //          If multiple libraries have the "highest version" (i.e. not
+            //          always taking into account the patch level, because some of
+            //          the file names do not contain that information) the precise
+            //          one selected is unspecified; however, it will be one of the
+            //          libraries that shared the "highest version".
+            //
+            //       2. We refuse to consider any library that is not designed for
+            //          the current operating system.
+            //
+            //       3. If the "architecture" flag is set, we refuse to consider any
+            //          library that does not match the architecture for the current
+            //          process.
+            //
+            //       4. We refuse to consider any library that does not meet the
+            //          minimum required version (null means that this restriction
+            //          is waived).
+            //
+            //       5. We refuse to consider any library that does not meet the
+            //          maximum required version (null means that this restriction
+            //          is waived).
+            //
+            //       6. We always favor libraries with a higher release level.  This
+            //          allows us to prefer final releases over alphas and betas of
+            //          the same base version.
+            //
+            //       7. We always favor libraries that are "trusted" over ones that
+            //          are not (i.e. those with Authenticode signatures).
+            //
+            //       8. We always favor libraries with a higher relative priority
+            //          (i.e. libraries that match "more important" file name
+            //          patterns, where importance is determined by which pattern
+            //          occurs earliest in the list).
+            //
+            //       9. We always favor threaded libraries (if the file name contains
+            //          this information).
+            //
+            //      10. We always favor the DEBUG libraries if we are also compiled
+            //          in DEBUG.
+            //
+            //      11. We always validate that we are loading a threaded build
+            //          (failing if the selected library is not threaded).  This
+            //          restriction is handled while attempting to load the library
+            //          and not in this function because currently the library must
+            //          be at least partially loaded prior to querying whether or
+            //          not it is a threaded build of the Tcl library.
+            //
+            //      12. We always favor libraries with a lower relative sequence
+            //          (i.e. libraries that were closer to the start of the logical
+            //          search list).
+            //
+            bool verbose = FlagOps.HasFlags(
+                flags, FindFlags.VerboseSelect, true);
+
+            try
+            {
+                if ((builds != null) && (builds.Count > 0))
+                {
+                    string bestFileName = null;
+                    TclBuild bestBuild = null;
+
+                    IEnumerable<KeyValuePair<string, TclBuild>> pairs =
+                        builds.GetPairsInOrder(false);
+
+                    if (pairs != null)
+                    {
+                        foreach (KeyValuePair<string, TclBuild> pair in pairs)
+                        {
+                            //
+                            // NOTE: Grab the file name and build object for diagnostic
+                            //       purposes.
+                            //
+                            string thisFileName = pair.Key;
+                            TclBuild thisBuild = pair.Value;
+
+                            //
+                            // NOTE: Skip over invalid file names and/or files that do not
+                            //       actually exist.
+                            //
+                            if (!CheckTclLibraryFile(interpreter, thisFileName))
+                            {
+                                if (verbose)
+                                {
+                                    MaybeAddAnError(ref errors, String.Format(
+                                        "skipped Tcl build {0}, rejected file name",
+                                        FormatOps.DisplayTclBuild(thisBuild)));
+                                }
+
+                                continue;
+                            }
+
+                            if (thisBuild == null)
+                            {
+                                if (verbose)
+                                {
+                                    MaybeAddAnError(ref errors, String.Format(
+                                        "skipped Tcl library file {0}, invalid build",
+                                        FormatOps.DisplayName(thisFileName)));
+                                }
+
+                                continue;
+                            }
+
+                            //
+                            // NOTE: Make sure that the build has the same operating system as
+                            //       the current process.
+                            //
+                            OperatingSystemId guessOperatingSystemId =
+                                PlatformOps.GuessOperatingSystemId();
+
+                            if (!FlagOps.HasFlags(flags, FindFlags.NoOperatingSystem, true) &&
+                                (thisBuild.OperatingSystemId != guessOperatingSystemId))
+                            {
+                                MaybeAddAnError(ref errors, String.Format(
+                                    "skipped Tcl library file {0}, operating system {1} " +
+                                    "does NOT match process operating system {2}",
+                                    FormatOps.DisplayName(thisFileName),
+                                    FormatOps.WrapOrNull(thisBuild.OperatingSystemId),
+                                    FormatOps.WrapOrNull(guessOperatingSystemId)));
+
+                                continue;
+                            }
+
+                            //
+                            // NOTE: Make sure that the build has the same PE header magic that
+                            //       this process requires.
+                            //
+                            ushort processMagic = FileOps.GetPeFileMagicForProcess();
+
+                            if (FlagOps.HasFlags(flags, FindFlags.FindArchitecture, true) &&
+                                (thisBuild.Magic != processMagic))
+                            {
+                                MaybeAddAnError(ref errors, String.Format(
+                                    "skipped Tcl library file {0}, file magic {1} " +
+                                    "does NOT match process magic {2}",
+                                    FormatOps.DisplayName(thisFileName),
+                                    FormatOps.WrapOrNull(thisBuild.Magic),
+                                    FormatOps.WrapOrNull(processMagic)));
+
+                                continue;
+                            }
+
+                            //
+                            // NOTE: Compare the version of the current build with the minimum
+                            //       required patch level.
+                            //
+                            if ((minimumRequired != null) && PackageOps.VersionCompare(
+                                    thisBuild.PatchLevel, minimumRequired) < 0)
+                            {
+                                MaybeAddAnError(ref errors, String.Format(
+                                    "skipped Tcl library file {0}, patch level {1} " +
+                                    "does NOT meet minimum required version {2}",
+                                    FormatOps.DisplayName(thisFileName),
+                                    FormatOps.WrapOrNull(thisBuild.PatchLevel),
+                                    FormatOps.WrapOrNull(minimumRequired)));
+
+                                continue;
+                            }
+
+                            //
+                            // NOTE: Compare the version of the current build with the maximum
+                            //       allowed patch level.
+                            //
+                            if ((maximumRequired != null) && PackageOps.VersionCompare(
+                                    thisBuild.PatchLevel, maximumRequired) > 0)
+                            {
+                                MaybeAddAnError(ref errors, String.Format(
+                                    "skipped Tcl library file {0}, patch level {1} " +
+                                    "does NOT meet maximum required version {2}",
+                                    FormatOps.DisplayName(thisFileName),
+                                    FormatOps.WrapOrNull(thisBuild.PatchLevel),
+                                    FormatOps.WrapOrNull(maximumRequired)));
+
+                                continue;
+                            }
+
+                            //
+                            // NOTE: Compare the version of the current build with the patch
+                            //       level of the best build we have seen so far.
+                            //
+                            int patchLevelResult = ComparePatchLevels(thisBuild, bestBuild);
+
+                            if (patchLevelResult < 0)
+                            {
+                                if (verbose)
+                                {
+                                    MaybeAddAnError(ref errors, String.Format(
+                                        "skipped Tcl library file {0}, patch level {1} " +
+                                        "is worse than best patch level {2}",
+                                        FormatOps.DisplayName(thisFileName),
+                                        FormatOps.WrapOrNull(thisBuild.PatchLevel),
+                                        FormatOps.WrapOrNull((bestBuild != null) ?
+                                            bestBuild.PatchLevel : null)));
+                                }
+
+                                continue;
+                            }
+
+                            //
+                            // NOTE: Compare the release level of the current build with the
+                            //       release level of the best build we have seen so far.
+                            //
+                            int releaseLevelResult = CompareReleaseLevels(thisBuild, bestBuild);
+
+                            if (releaseLevelResult < 0)
+                            {
+                                if (verbose)
+                                {
+                                    MaybeAddAnError(ref errors, String.Format(
+                                        "skipped Tcl library file {0}, release level {1} " +
+                                        "is worse than best release level {2}",
+                                        FormatOps.DisplayName(thisFileName),
+                                        FormatOps.WrapOrNull(thisBuild.ReleaseLevel),
+                                        FormatOps.WrapOrNull((bestBuild != null) ?
+                                            bestBuild.ReleaseLevel.ToString() : null)));
+                                }
+
+                                continue;
+                            }
+
+                            //
+                            // NOTE: Compare the "trust" results of the two builds.  Always
+                            //       prefer trusted builds over non-trusted ones.
+                            //
+                            int trustFlagResult = CompareTrustFlags(
+                                interpreter, thisBuild, bestBuild);
+
+                            if (trustFlagResult < 0)
+                            {
+                                if (verbose)
+                                {
+                                    MaybeAddAnError(ref errors, String.Format(
+                                        "skipped Tcl library file {0}, it is NOT " +
+                                        "more trusted than best Tcl library file {1}",
+                                        FormatOps.DisplayName(thisFileName),
+                                        FormatOps.DisplayName(bestFileName)));
+                                }
+
+                                continue;
+                            }
+
+                            //
+                            // NOTE: Prefer to use builds that have a higher [known] relative
+                            //       priority.
+                            //
+                            int priorityResult = ComparePriorities(thisBuild, bestBuild);
+
+                            if (priorityResult < 0)
+                            {
+                                if (verbose)
+                                {
+                                    MaybeAddAnError(ref errors, String.Format(
+                                        "skipped Tcl library file {0}, priority {1} " +
+                                        "is worse than best priority {2}",
+                                        FormatOps.DisplayName(thisFileName),
+                                        FormatOps.WrapOrNull(thisBuild.Priority),
+                                        FormatOps.WrapOrNull((bestBuild != null) ?
+                                            bestBuild.Priority.ToString() : null)));
+                                }
+
+                                continue;
+                            }
+
+                            //
+                            // NOTE: The version number is greater than or equal to the best
+                            //       build we have seen so far.  Now, we need to make sure that
+                            //       we are not abandoning a threaded build unless the current
+                            //       build is also threaded.
+                            //
+                            bool bestThreaded = (bestBuild != null) &&
+                                (bestBuild.Threaded || bestBuild.DefaultThreaded);
+
+                            bool thisThreaded =
+                                thisBuild.Threaded || thisBuild.DefaultThreaded;
+
+                            if (bestThreaded && !thisThreaded)
+                            {
+                                if (verbose)
+                                {
+                                    MaybeAddAnError(ref errors, String.Format(
+                                        "skipped Tcl library file {0}, threaded flag " +
+                                        "{1} is worse than best threaded flag {2}",
+                                        FormatOps.DisplayName(thisFileName),
+                                        FormatOps.WrapOrNull(thisThreaded),
+                                        FormatOps.WrapOrNull(bestThreaded)));
+                                }
+
+                                continue;
+                            }
+
+                            //
+                            // NOTE: Do not abandon a build that matches our debugging affinity
+                            //       unless it has a higher version number or relative priority
+                            //       than the best build we have seen so far.
+                            //
+                            bool bestDebug = (bestBuild != null) && bestBuild.MatchDebug;
+                            bool thisDebug = thisBuild.MatchDebug;
+
+                            if (bestDebug &&
+                                (patchLevelResult <= 0) && (priorityResult <= 0))
+                            {
+                                if (verbose)
+                                {
+                                    MaybeAddAnError(ref errors, String.Format(
+                                        "skipped Tcl library file {0}, patch level " +
+                                        "and priority are NOT better than best debug " +
+                                        "build", FormatOps.DisplayName(thisFileName),
+                                        FormatOps.WrapOrNull(thisThreaded),
+                                        FormatOps.WrapOrNull(bestThreaded)));
+                                }
+
+                                continue;
+                            }
+
+                            //
+                            // BUGFIX: Stick with the best build we have so far unless we
+                            //         have some compelling reason not to (i.e. all other
+                            //         things being equal, prefer builds that are near the
+                            //         start of the logical search list).
+                            //
+                            if ((patchLevelResult <= 0) && (priorityResult <= 0) &&
+                                (bestThreaded == thisThreaded) && (bestDebug == thisDebug))
+                            {
+                                int sequenceResult = CompareSequences(thisBuild, bestBuild);
+
+                                if (sequenceResult < 0)
+                                {
+                                    if (verbose)
+                                    {
+                                        MaybeAddAnError(ref errors, String.Format(
+                                            "skipped Tcl library file {0}, sequence {1} " +
+                                            "is worse than best sequence {2}",
+                                            FormatOps.DisplayName(thisFileName),
+                                            FormatOps.WrapOrNull(thisBuild.Sequence),
+                                            FormatOps.WrapOrNull((bestBuild != null) ?
+                                                bestBuild.Sequence.ToString() : null)));
+                                    }
+
+                                    continue;
+                                }
+                            }
+
+                            //
+                            // NOTE: Either the best build has not been set yet (i.e. anything
+                            //       is better than nothing) or the current build is "better"
+                            //       than the best build we have seen so far (i.e. it matches
+                            //       our debugging affinity better, has threading enabled, or
+                            //       it has a higher version or priority).
+                            //
+                            if (verbose)
+                            {
+                                MaybeAddAnError(ref errors, String.Format(
+                                    "new best Tcl library file {0}, build {1}",
+                                    FormatOps.DisplayName(thisFileName),
+                                    FormatOps.DisplayTclBuild(thisBuild)));
+                            }
+
+                            bestBuild = thisBuild;
+                            bestFileName = thisFileName;
+                        }
+                    }
+
+                    //
+                    // NOTE: Did we select a build to use?
+                    //
+                    if (bestBuild != null)
+                    {
+                        build = bestBuild;
+
+                        return ReturnCode.Ok;
+                    }
+                    else
+                    {
+                        MaybeAddAnError(ref errors, "no suitable Tcl library file found");
+                    }
+                }
+                else
+                {
+                    MaybeAddAnError(ref errors, "no Tcl library builds found to select from");
+                }
+            }
+            catch (Exception e)
+            {
+                MaybeAddAnError(ref errors, e);
+            }
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method registers a Tcl exit handler callback with the native
+        /// Tcl library.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object that provides access to the loaded native Tcl library.
+        /// </param>
+        /// <param name="proc">
+        /// The exit handler procedure to register.
+        /// </param>
+        /// <param name="clientData">
+        /// The opaque client data to pass to the exit handler when it is
+        /// invoked.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives an error message.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode CreateExitHandler(
+            ITclApi tclApi,    /* in */
+            Tcl_ExitProc proc, /* in */
+            IntPtr clientData, /* in */
+            ref Result error   /* out */
+            )
+        {
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    Tcl_CreateExitHandler createExitHandler;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        createExitHandler = tclApi.CreateExitHandler;
+                    }
+
+                    if (proc != null)
+                    {
+                        if (createExitHandler != null)
+                        {
+                            /* NO RESULT */
+                            createExitHandler(proc, clientData);
+
+                            return ReturnCode.Ok;
+                        }
+                        else
+                        {
+                            error = "Tcl exit handler creation is not available";
+                        }
+                    }
+                    else
+                    {
+                        error = "invalid exit proc";
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+            }
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method unregisters a Tcl exit handler callback previously
+        /// registered with the native Tcl library.
+        /// </summary>
+        /// <param name="tclApi">
+        /// The object that provides access to the loaded native Tcl library.
+        /// </param>
+        /// <param name="proc">
+        /// The exit handler procedure to unregister.
+        /// </param>
+        /// <param name="clientData">
+        /// The opaque client data that was associated with the exit handler
+        /// when it was registered.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives an error message.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode DeleteExitHandler(
+            ITclApi tclApi,    /* in */
+            Tcl_ExitProc proc, /* in */
+            IntPtr clientData, /* in */
+            ref Result error   /* out */
+            )
+        {
+            try
+            {
+                if (TclApi.CheckModule(tclApi, ref error))
+                {
+                    Tcl_DeleteExitHandler deleteExitHandler;
+
+                    lock (tclApi.SyncRoot)
+                    {
+                        deleteExitHandler = tclApi.DeleteExitHandler;
+                    }
+
+                    if (proc != null)
+                    {
+                        if (deleteExitHandler != null)
+                        {
+                            /* NO RESULT */
+                            deleteExitHandler(proc, clientData);
+
+                            return ReturnCode.Ok;
+                        }
+                        else
+                        {
+                            error = "Tcl exit handler deletion is not available";
+                        }
+                    }
+                    else
+                    {
+                        error = "invalid exit proc";
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+            }
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method locates a suitable Tcl library build, loads it into the
+        /// process, and initializes a native Tcl interpreter from it.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context to use while loading.
+        /// </param>
+        /// <param name="findFlags">
+        /// The flags that control how the Tcl library build is located.
+        /// </param>
+        /// <param name="loadFlags">
+        /// The flags that control how the located Tcl library is loaded.
+        /// </param>
+        /// <param name="callback">
+        /// An optional delegate invoked during the search for a Tcl library
+        /// build; may be null.
+        /// </param>
+        /// <param name="paths">
+        /// An optional collection of specific directories or file names to
+        /// check first; may be null.
+        /// </param>
+        /// <param name="text">
+        /// The optional script text used when the search falls back to
+        /// evaluating a script to locate a Tcl library; may be null.
+        /// </param>
+        /// <param name="minimumRequired">
+        /// The minimum required Tcl version, or null to use the default.
+        /// </param>
+        /// <param name="maximumRequired">
+        /// The maximum required Tcl version, or null to use the default.
+        /// </param>
+        /// <param name="unknown">
+        /// The version to assume for a candidate library whose version cannot
+        /// otherwise be determined; may be null.
+        /// </param>
+        /// <param name="clientData">
+        /// The optional client data to associate with the loaded build; may be
+        /// null.
+        /// </param>
+        /// <param name="tclApi">
+        /// On input, the object providing access to an already loaded native
+        /// Tcl library, if any; upon success, receives the object providing
+        /// access to the loaded native Tcl library.
+        /// </param>
+        /// <param name="interp">
+        /// On input, an existing native Tcl interpreter handle, if any; upon
+        /// success, receives the handle of the created native Tcl interpreter.
+        /// </param>
+        /// <param name="result">
+        /// Upon failure, receives an error message; may also carry information
+        /// about the operation upon success.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode Load(
+            Interpreter interpreter,   /* in */
+            FindFlags findFlags,       /* in */
+            LoadFlags loadFlags,       /* in */
+            Tcl_FindCallback callback, /* in */
+            IEnumerable<string> paths, /* in */
+            string text,               /* in */
+            Version minimumRequired,   /* in */
+            Version maximumRequired,   /* in */
+            Version unknown,           /* in */
+            IClientData clientData,    /* in */
+            ref ITclApi tclApi,        /* in, out */
+            ref IntPtr interp,         /* in, out */
+            ref Result result          /* out */
+            )
+        {
+            ReturnCode code;
+
+            if (interpreter != null)
+            {
+                if (tclApi == null)
+                {
+                    if (interp == IntPtr.Zero)
+                    {
+                        FindFlags newFindFlags = findFlags |
+                            FindFlags.Architecture;
+
+                        TclBuildDictionary builds = null;
+                        ResultList errors = null;
+
+                        code = Find(
+                            interpreter, newFindFlags, callback, paths,
+                            text, minimumRequired, maximumRequired,
+                            unknown, clientData, ref builds, ref errors);
+
+                        if (code == ReturnCode.Ok)
+                        {
+                            TclBuild build = null;
+
+                            code = Select(interpreter,
+                                newFindFlags, builds, minimumRequired,
+                                maximumRequired, ref build, ref errors);
+
+                            if (code == ReturnCode.Ok)
+                            {
+                                IntPtr module = IntPtr.Zero;
+#if TCL_THREADED
+                                IntPtr threadedNameObjPtr = IntPtr.Zero;
+#endif
+                                IntPtr patchLevelNameObjPtr = IntPtr.Zero;
+                                IntPtr newInterp = IntPtr.Zero;
+
+                                try
+                                {
+                                    //
+                                    // NOTE: *NEW* Set the load flags for the selected build to the
+                                    //       ones provided by our caller.
+                                    //
+                                    build.LoadFlags = loadFlags;
+
+                                    //
+                                    // NOTE: Dynamically load the selected Tcl library module into
+                                    //       memory.  The Tcl API object will be populated (below)
+                                    //       with the delegates that wrap the actual Tcl C API based
+                                    //       on this module.  This will also increment the module
+                                    //       reference count.  If this is the first time we have seen
+                                    //       this module, the reference count will be one; otherwise
+                                    //       it will be one greater than before.
+                                    //
+                                    module = AddModuleReference(
+                                        build.FileName, true, FlagOps.HasFlags(build.LoadFlags,
+                                        LoadFlags.SetDllDirectory, true), ref result); /* throw */
+
+                                    if (NativeOps.IsValidHandle(module))
+                                    {
+                                        //
+                                        // NOTE: Attempt to find and setup all the Tcl API functions
+                                        //       that we require.  If this step fails, we will have
+                                        //       no Tcl API object; however, we must still cleanup
+                                        //       the partially loaded Tcl library module.
+                                        //
+                                        tclApi = TclApi.Create(
+                                            interpreter, build, build.FileName, module, IntPtr.Zero,
+                                            build.LoadFlags, ref result);
+
+                                        if (tclApi != null)
+                                        {
+                                            Tcl_FindExecutable findExecutable;
+                                            Tcl_CreateInterp createInterp;
+                                            Tcl_ObjGetVar2 objGetVar2;
+                                            Tcl_Init init;
+                                            Tcl_InitMemory initMemory;
+#if TCL_KITS
+                                            TclKit_SetKitPath kit_SetKitPath;
+                                            TclKit_AppInit kit_AppInit;
+#endif
+
+                                            lock (tclApi.SyncRoot)
+                                            {
+                                                findExecutable = tclApi.FindExecutable;
+                                                createInterp = tclApi.CreateInterp;
+                                                objGetVar2 = tclApi.ObjGetVar2;
+                                                init = tclApi.Init;
+                                                initMemory = tclApi.InitMemory;
+#if TCL_KITS
+                                                kit_SetKitPath = tclApi.Kit_SetKitPath;
+                                                kit_AppInit = tclApi.Kit_AppInit;
+#endif
+                                            }
+
+                                            Version loaded = GetVersion(tclApi);
+
+                                            //
+                                            // BUGFIX: Make sure we could obtain the version before trying
+                                            //         to compare it.
+                                            //
+                                            if (loaded != null)
+                                            {
+                                                if ((minimumRequired == null) ||
+                                                    (PackageOps.VersionCompare(loaded, minimumRequired) >= 0))
+                                                {
+                                                    if ((maximumRequired == null) ||
+                                                        (PackageOps.VersionCompare(loaded, maximumRequired) <= 0))
+                                                    {
+                                                        //
+                                                        // NOTE: *REQUIRED* Help Tcl figure out where its library
+                                                        //       and encodings are (among other things).
+                                                        //
+                                                        if (findExecutable != null)
+                                                            /* NO RESULT */
+                                                            findExecutable(PathOps.GetExecutableName());
+
+                                                        //
+                                                        // BUGFIX: We cannot setup the exit handler before this
+                                                        //         point because Tcl_FindExecutable must be the
+                                                        //         first function called in the Tcl library;
+                                                        //         therefore, do it now.
+                                                        //
+                                                        code = tclApi.SetExitHandler(ref result);
+
+                                                        if (code == ReturnCode.Ok)
+                                                        {
+#if TCL_KITS
+                                                            //
+                                                            // NOTE: *REQUIRED* If this API is available, it probably
+                                                            //       means that we are dealing with a "stardll" and we
+                                                            //       must let it know exactly where it was loaded from.
+                                                            //
+                                                            if (kit_SetKitPath != null)
+                                                                /* IGNORED */
+                                                                kit_SetKitPath(build.FileName);
+#endif
+
+                                                            //
+                                                            // NOTE: If this function is null, we will fail below.
+                                                            //
+                                                            if (createInterp != null)
+                                                                //
+                                                                // NOTE: Attempt to create a parent interp.
+                                                                //
+                                                                newInterp = createInterp();
+
+                                                            //
+                                                            // NOTE: Make sure that we got something that at least looks
+                                                            //       valid from Tcl_CreateInterp.
+                                                            //
+                                                            if (newInterp != IntPtr.Zero)
+                                                            {
+                                                                //
+                                                                // NOTE: Attempt to verify that GetNumLevels works because
+                                                                //       it is somewhat fragile between different Tcl builds
+                                                                //       and versions.  Since no scripts are being evaluated
+                                                                //       in the newly created Tcl interpreter, this should
+                                                                //       always return zero here.
+                                                                //
+                                                                if (!GetInterpActive(tclApi, newInterp))
+                                                                {
+                                                                    //
+                                                                    // NOTE: We want the patch level as it would be reported to
+                                                                    //       Tcl scripts.
+                                                                    //
+                                                                    patchLevelNameObjPtr = NewString(
+                                                                        tclApi, TclVars.Package.PatchLevelName);
+
+                                                                    //
+                                                                    // NOTE: Make sure we were able to allocate the Tcl object
+                                                                    //       (really a string).
+                                                                    //
+                                                                    if (patchLevelNameObjPtr != IntPtr.Zero)
+                                                                    {
+#if TCL_THREADED
+                                                                        //
+                                                                        // NOTE: For now, we always enforce the need for a threaded
+                                                                        //       build.
+                                                                        //
+                                                                        threadedNameObjPtr = NewString(
+                                                                            tclApi, FormatOps.VariableName(TclVars.Platform.Name,
+                                                                            TclVars.Platform.Threaded));
+
+                                                                        //
+                                                                        // NOTE: Make sure we were able to allocate the Tcl object
+                                                                        //       (really a string).
+                                                                        //
+                                                                        if (threadedNameObjPtr != IntPtr.Zero)
+#endif
+                                                                        {
+#if TCL_THREADED
+                                                                            //
+                                                                            // NOTE: The Tcl object where the threading variable
+                                                                            //       will be stored.
+                                                                            //
+                                                                            IntPtr threadedValueObjPtr = IntPtr.Zero;
+
+                                                                            //
+                                                                            // NOTE: If this function is null, we will fail below.
+                                                                            //
+                                                                            if (objGetVar2 != null)
+                                                                            {
+                                                                                //
+                                                                                // NOTE: Query the Tcl library to attempt to figure
+                                                                                //       out if this is a threaded build of Tcl.
+                                                                                //
+                                                                                threadedValueObjPtr = objGetVar2(
+                                                                                    newInterp, threadedNameObjPtr, IntPtr.Zero,
+                                                                                    Tcl_VarFlags.TCL_GLOBAL_ONLY);
+                                                                            }
+
+                                                                            //
+                                                                            // NOTE: If the returned variable value is non-NULL,
+                                                                            //       then this should be a threaded build of Tcl.
+                                                                            //
+                                                                            if ((threadedValueObjPtr != IntPtr.Zero) ||
+                                                                                FlagOps.HasFlags(loadFlags, LoadFlags.IgnoreThreaded, true))
+#endif
+                                                                            {
+#if TCL_KITS
+                                                                                if (kit_AppInit != null)
+                                                                                {
+                                                                                    //
+                                                                                    // NOTE: This appears to be a "stardll".  Call
+                                                                                    //       the provided initialization routine
+                                                                                    //       instead of the normal one (i.e.
+                                                                                    //       Tcl_Init).
+                                                                                    //
+                                                                                    code = kit_AppInit(newInterp);
+
+                                                                                    if (code != ReturnCode.Ok)
+                                                                                    {
+                                                                                        //
+                                                                                        // NOTE: Tcl failed to fully initialize itself,
+                                                                                        //       get the error message and return it to
+                                                                                        //       the caller.
+                                                                                        //
+                                                                                        string localResult = GetResultAsString(
+                                                                                            tclApi, newInterp, true);
+
+                                                                                        if (localResult != null)
+                                                                                        {
+                                                                                            result = localResult;
+                                                                                        }
+                                                                                        else
+                                                                                        {
+                                                                                            result = String.Format(
+                                                                                                "Tcl interpreter initialization failed " +
+                                                                                                "via {0}, result is not available",
+                                                                                                typeof(TclKit_AppInit).Name);
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                else
+#endif
+                                                                                if (init != null)
+                                                                                {
+                                                                                    //
+                                                                                    // NOTE: Attempt to initialize the Tcl interpreter
+                                                                                    //       for use by scripts using the standard
+                                                                                    //       initialization routine (i.e. Tcl_Init).
+                                                                                    //
+                                                                                    code = init(newInterp);
+
+                                                                                    if (code != ReturnCode.Ok)
+                                                                                    {
+                                                                                        //
+                                                                                        // NOTE: Tcl failed to fully initialize itself,
+                                                                                        //       get the error message and return it to
+                                                                                        //       the caller.
+                                                                                        //
+                                                                                        string localResult = GetResultAsString(
+                                                                                            tclApi, newInterp, true);
+
+                                                                                        if (localResult != null)
+                                                                                        {
+                                                                                            result = localResult;
+                                                                                        }
+                                                                                        else
+                                                                                        {
+                                                                                            result = String.Format(
+                                                                                                "Tcl interpreter initialization failed " +
+                                                                                                "via {0}, result is not available",
+                                                                                                typeof(Tcl_Init).Name);
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                else
+                                                                                {
+                                                                                    result = "Tcl interpreter initialization is not available";
+                                                                                    code = ReturnCode.Error;
+                                                                                }
+
+                                                                                if (code == ReturnCode.Ok)
+                                                                                {
+                                                                                    //
+                                                                                    // NOTE: Initialize the memory command(s).
+                                                                                    //
+                                                                                    if (initMemory != null)
+                                                                                        /* NO RESULT */
+                                                                                        initMemory(newInterp);
+
+                                                                                    //
+                                                                                    // NOTE: The Tcl object where the patch level will
+                                                                                    //       be stored.
+                                                                                    //
+                                                                                    IntPtr patchLevelValueObjPtr = IntPtr.Zero;
+
+                                                                                    //
+                                                                                    // NOTE: If this function is null, we will fail below.
+                                                                                    //
+                                                                                    if (objGetVar2 != null)
+                                                                                    {
+                                                                                        //
+                                                                                        // NOTE: Query the Tcl library patch level.
+                                                                                        //
+                                                                                        patchLevelValueObjPtr = objGetVar2(
+                                                                                            newInterp, patchLevelNameObjPtr, IntPtr.Zero,
+                                                                                            Tcl_VarFlags.TCL_GLOBAL_ONLY);
+                                                                                    }
+
+                                                                                    //
+                                                                                    // NOTE: Were we able to query the patch level for this Tcl
+                                                                                    //       library?
+                                                                                    //
+                                                                                    if (patchLevelValueObjPtr != IntPtr.Zero)
+                                                                                    {
+                                                                                        //
+                                                                                        // NOTE: Return the newly created parent Tcl interpreter
+                                                                                        //       to the caller.
+                                                                                        //
+                                                                                        interp = newInterp;
+
+                                                                                        //
+                                                                                        // NOTE: Return the full patchLevel of the loaded Tcl
+                                                                                        //       library to the caller.
+                                                                                        //
+                                                                                        result = GetString(tclApi, patchLevelValueObjPtr);
+                                                                                    }
+                                                                                    else
+                                                                                    {
+                                                                                        result = "unsuitable Tcl library, cannot query patch level";
+                                                                                        code = ReturnCode.Error;
+                                                                                    }
+                                                                                }
+                                                                            }
+#if TCL_THREADED
+                                                                            else
+                                                                            {
+                                                                                result = "unsuitable Tcl library, must be threaded";
+                                                                                code = ReturnCode.Error;
+                                                                            }
+#endif
+                                                                        }
+#if TCL_THREADED
+                                                                        else
+                                                                        {
+                                                                            result = "could not allocate Tcl object";
+                                                                            code = ReturnCode.Error;
+                                                                        }
+#endif
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        result = "could not allocate Tcl object";
+                                                                        code = ReturnCode.Error;
+                                                                    }
+                                                                }
+                                                                else
+                                                                {
+                                                                    result = String.Format(
+                                                                        "unsuitable Tcl library, numLevels offset is not {0}",
+                                                                        TclApi.INTERP_NUMLEVELS_OFFSET);
+
+                                                                    code = ReturnCode.Error;
+                                                                }
+                                                            }
+                                                            else
+                                                            {
+                                                                result = "could not create Tcl interpreter";
+                                                                code = ReturnCode.Error;
+                                                            }
+                                                        }
+                                                    }
+                                                    else
+                                                    {
+                                                        result = String.Format(
+                                                            "unsuitable Tcl library, loaded version {0} " +
+                                                            "does not meet maximum required version {1}",
+                                                            FormatOps.WrapOrNull(loaded),
+                                                            FormatOps.WrapOrNull(maximumRequired));
+
+                                                        code = ReturnCode.Error;
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    result = String.Format(
+                                                        "unsuitable Tcl library, loaded version {0} " +
+                                                        "does not meet minimum required version {1}",
+                                                        FormatOps.WrapOrNull(loaded),
+                                                        FormatOps.WrapOrNull(minimumRequired));
+
+                                                    code = ReturnCode.Error;
+                                                }
+                                            }
+                                            else
+                                            {
+                                                result = "unsuitable Tcl library, cannot obtain version";
+                                                code = ReturnCode.Error;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            code = ReturnCode.Error;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        code = ReturnCode.Error;
+                                    }
+
+                                    return code;
+                                }
+                                catch (Exception e)
+                                {
+                                    result = e;
+                                    code = ReturnCode.Error;
+                                }
+                                finally
+                                {
+                                    //
+                                    // NOTE: We cannot do any real cleanup without the Tcl API object
+                                    //       being available.
+                                    //
+                                    if (tclApi != null)
+                                    {
+                                        Tcl_DbDecrRefCount dbDecrRefCount;
+                                        Tcl_DeleteInterp deleteInterp;
+
+                                        lock (tclApi.SyncRoot)
+                                        {
+                                            dbDecrRefCount = tclApi.DbDecrRefCount;
+                                            deleteInterp = tclApi.DeleteInterp;
+                                        }
+
+                                        //
+                                        // NOTE: Always release the Tcl objects we allocated
+                                        //       earlier.  This must be done prior to cleaning up
+                                        //       partially loaded Tcl libraries (below) because it
+                                        //       requires access to the Tcl API.
+                                        //
+#if TCL_THREADED
+                                        if (threadedNameObjPtr != IntPtr.Zero)
+                                        {
+                                            if (dbDecrRefCount != null)
+                                                /* NO RESULT */
+                                                dbDecrRefCount(threadedNameObjPtr, String.Empty, 0);
+
+                                            threadedNameObjPtr = IntPtr.Zero;
+                                        }
+#endif
+
+                                        if (patchLevelNameObjPtr != IntPtr.Zero)
+                                        {
+                                            if (dbDecrRefCount != null)
+                                                /* NO RESULT */
+                                                dbDecrRefCount(patchLevelNameObjPtr, String.Empty, 0);
+
+                                            patchLevelNameObjPtr = IntPtr.Zero;
+                                        }
+
+                                        //
+                                        // NOTE: Cleanup everything that was partially loaded here.
+                                        //       This requires a valid Tcl API object.  If one was
+                                        //       not successfully created, we will fall through to
+                                        //       the "else if" block below which will unload the Tcl
+                                        //       library module itself (if one was even loaded).
+                                        //
+                                        if (code != ReturnCode.Ok)
+                                        {
+                                            //
+                                            // NOTE: Delete the Tcl interpreter directly rather than
+                                            //       ending up in the DeleteInterpreter method because
+                                            //       we created it directly and we know it belongs to
+                                            //       this thread.
+                                            //
+                                            if (newInterp != IntPtr.Zero)
+                                            {
+                                                if (deleteInterp != null)
+                                                    /* NO RESULT */
+                                                    deleteInterp(newInterp);
+
+                                                newInterp = IntPtr.Zero;
+                                            }
+
+                                            ReturnCode unloadCode;
+                                            Result unloadError = null;
+
+                                            //
+                                            // NOTE: We must force the interpreter to be deleted here
+                                            //       because the numLevels offset could be bogus;
+                                            //       however, this should be 100% safe since we never
+                                            //       used it to actually evaluate anything non-trivial
+                                            //       and we know it is not in use now since it belongs
+                                            //       to this thread.
+                                            //
+                                            unloadCode = Unload(interpreter, UnloadFlags.FromLoad,
+                                                ref tclApi, ref unloadError);
+
+                                            if (unloadCode != ReturnCode.Ok)
+                                                DebugOps.Complain(interpreter, unloadCode, unloadError);
+
+                                            //
+                                            // NOTE: Finally, we need to null out the Tcl API object that
+                                            //       we previously assigned to the variable provided by
+                                            //       the caller.
+                                            //
+                                            tclApi = null;
+                                        }
+                                    }
+                                    else if (NativeOps.IsValidHandle(module))
+                                    {
+                                        //
+                                        // NOTE: We [at least] partially loaded the Tcl library module.
+                                        //       Clean it up now if we did not totally succeed.
+                                        //
+                                        if (code != ReturnCode.Ok)
+                                        {
+                                            //
+                                            // NOTE: At this point, nobody is using the Tcl library module;
+                                            //       therefore, calling FreeLibrary should unload it from
+                                            //       memory.  If this fails, it may indicate a serious
+                                            //       problem; therefore, throw an exception.
+                                            //
+                                            int lastError;
+
+                                            if (NativeOps.FreeLibrary(module, out lastError)) /* throw */
+                                            {
+                                                TraceOps.DebugTrace(String.Format(
+                                                    "FreeLibrary (Load): success, " +
+                                                    "module = {0}", module),
+                                                    typeof(TclWrapper).Name,
+                                                    TracePriority.NativeDebug);
+
+                                                module = IntPtr.Zero;
+                                            }
+                                            else
+                                            {
+                                                throw new ScriptException(String.Format(
+                                                    "FreeLibrary(0x{1:X}) failed with error {0}: {2}",
+                                                    lastError, module, NativeOps.GetDynamicLoadingError(
+                                                    lastError)));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            else if (HaveAnError(errors))
+                            {
+                                result = ListOps.Concat(errors, 0, Environment.NewLine);
+                            }
+                            else
+                            {
+                                result = "cannot select a Tcl library";
+                            }
+                        }
+                        else if (HaveAnError(errors))
+                        {
+                            result = ListOps.Concat(errors, 0, Environment.NewLine);
+                        }
+                        else
+                        {
+                            result = "cannot find a Tcl library";
+                        }
+                    }
+                    else
+                    {
+                        result = "cannot overwrite valid Tcl interpreter";
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    result = "cannot overwrite valid Tcl API object";
+                    code = ReturnCode.Error;
+                }
+            }
+            else
+            {
+                result = "invalid interpreter";
+                code = ReturnCode.Error;
+            }
+
+            return code;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method unloads a previously loaded native Tcl library and
+        /// finalizes its associated interpreter, when applicable.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context to use while unloading.
+        /// </param>
+        /// <param name="unloadFlags">
+        /// The flags that control how the native Tcl library is unloaded.
+        /// </param>
+        /// <param name="tclApi">
+        /// On input, the object providing access to the loaded native Tcl
+        /// library; upon success, receives the updated (typically null) value.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives an error message.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+#if TCL_WRAPPER
+        internal
+#else
+        public
+#endif
+        static ReturnCode Unload(
+            Interpreter interpreter, /* in */
+            UnloadFlags unloadFlags, /* in */
+            ref ITclApi tclApi,      /* out */
+            ref Result error         /* out */
+            )
+        {
+            IntPtr interp = IntPtr.Zero;
+
+            return Unload(interpreter, unloadFlags, ref tclApi, ref interp, ref error);
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method unloads a previously loaded native Tcl library, using
+        /// the specified native interpreter handle, and finalizes the
+        /// associated interpreter, when applicable.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context; this parameter is not used.
+        /// </param>
+        /// <param name="unloadFlags">
+        /// The flags that control how the native Tcl library is unloaded.
+        /// </param>
+        /// <param name="tclApi">
+        /// On input, the object providing access to the loaded native Tcl
+        /// library; upon success, receives the updated (typically null) value.
+        /// </param>
+        /// <param name="interp">
+        /// On input, the handle of the native Tcl interpreter to finalize, if
+        /// any; upon success, receives the updated value.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, receives an error message.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        public static ReturnCode Unload(
+            Interpreter interpreter, /* in: NOT USED. */
+            UnloadFlags unloadFlags, /* in */
+            ref ITclApi tclApi,      /* in, out */
+            ref IntPtr interp,       /* in, out */
+            ref Result error         /* out */
+            )
+        {
+            //
+            // BUGBUG: I'm not 100% sure that this can ever be done properly in a managed
+            //         environment, especially in the presence of unmanaged callbacks into
+            //         managed objects via delegates and arbitrary Tcl packages being loaded
+            //         into one or more interpreters.
+            //
+            ReturnCode code;
+
+            try
+            {
+                if (interpreter != null)
+                {
+                    if (TclApi.CheckModule(tclApi, ref error))
+                    {
+                        string fileName;
+                        Tcl_Finalize _finalize;
+                        IntPtr module;
+
+                        lock (tclApi.SyncRoot)
+                        {
+                            fileName = tclApi.FileName;
+                            _finalize = tclApi._Finalize;
+                            module = tclApi.Module;
+                        }
+
+                        //
+                        // NOTE: If an apparently valid Tcl interpreter was specified by the caller
+                        //       then we must be on the correct thread to delete it.  If the force
+                        //       flag was specified, skip this check because the TclTk interpreter
+                        //       may not contain the necessary state information to validate it
+                        //       against the current thread.
+                        //
+                        bool noThread = FlagOps.HasFlags(unloadFlags, UnloadFlags.NoInterpThread, true);
+
+                        if (noThread || (interp == IntPtr.Zero) || tclApi.CheckInterp(interp, ref error))
+                        {
+                            //
+                            // NOTE: Do we want to skip checking if the Tcl interpreter is active?
+                            //       This flag should really only be used by the loader when
+                            //       cleaning up.
+                            //
+                            bool noActive = FlagOps.HasFlags(unloadFlags, UnloadFlags.NoInterpActive, true);
+
+                            //
+                            // NOTE: If the parent Tcl interpreter needs to be deleted, do it now.
+                            //       The parent Tcl interpreter is a per-interpreter resource, not
+                            //       a shared one; therefore, it does not need to be reference
+                            //       counted.
+                            //
+                            if ((interp != IntPtr.Zero) && !GetInterpDeleted(tclApi, interp))
+                                code = DeleteInterpreter(tclApi, noActive, ref interp, ref error);
+                            else
+                                code = ReturnCode.Ok;
+
+                            //
+                            // NOTE: Make 100% sure that we were able to delete the parent Tcl
+                            //       interpreter before continuing.  If not, it could mean that it
+                            //       is still in use and we should not yank the Tcl library out
+                            //       from under ourselves.
+                            //
+                            if (code == ReturnCode.Ok)
+                            {
+                                //
+                                // NOTE: Do we want to release the reference for the Tcl module?
+                                //       If this flag is not set, we simply assume we should skip
+                                //       reference count management.
+                                //
+                                bool releaseModule = FlagOps.HasFlags(unloadFlags,
+                                    UnloadFlags.ReleaseModule, true);
+
+                                //
+                                // NOTE: Attempt to reduce the Tcl library module reference count.
+                                //       If the count reaches zero, cleanup and unload the Tcl
+                                //       library.  If the returned count is invalid, we failed to
+                                //       release the reference for some reason.
+                                //
+                                int referenceCount = releaseModule ?
+                                    ReleaseModuleReference(fileName, false, false, ref error) : 0;
+
+                                //
+                                // BUGFIX: Make sure that we do [most] of the handling below even
+                                //         if the reference count has not reached zero.  The only
+                                //         things we CANNOT do until the reference count reaches
+                                //         zero are: finalizing the Tcl library and physically
+                                //         unloading the native library from memory.
+                                //
+                                if (referenceCount != Count.Invalid)
+                                {
+                                    //
+                                    // NOTE: Does the caller want us to delete or clear the exit
+                                    //       handler?
+                                    //
+                                    bool exitHandler = FlagOps.HasFlags(unloadFlags,
+                                        UnloadFlags.ExitHandler, true);
+
+                                    //
+                                    // NOTE: Do we want to call the Tcl_Finalize delegate, if
+                                    //       possible?  We should not do this if we are being
+                                    //       called via the exit handler (i.e. because, in that
+                                    //       case, we are being invoked by the exit handler,
+                                    //       which was invoked by Tcl_Finalize, which may have
+                                    //       been invoked by Tcl_Exit).
+                                    //
+                                    bool finalize = FlagOps.HasFlags(unloadFlags,
+                                        UnloadFlags.Finalize, true);
+
+                                    //
+                                    // NOTE: See if we need to deal with tearing down the exit
+                                    //       handler at all.
+                                    //
+                                    if (exitHandler)
+                                    {
+                                        //
+                                        // NOTE: If we are unloading from the exit handler (i.e.
+                                        //       via Tcl_Finalize) then there is no need to
+                                        //       remove the exit handler; otherwise, we must
+                                        //       succeed at doing so.
+                                        //
+                                        if (finalize)
+                                            code = tclApi.UnsetExitHandler(ref error);
+                                        else
+                                            code = tclApi.ClearExitHandler(ref error);
+                                    }
+
+                                    //
+                                    // NOTE: Make 100% sure that we were able to delete the exit
+                                    //       handler before continuing.  If not, it could mean
+                                    //       that it is still in use and we should not yank the
+                                    //       Tcl library out from under ourselves.
+                                    //
+                                    if (code == ReturnCode.Ok)
+                                    {
+                                        //
+                                        // NOTE: Finalize the Tcl library.  This is potentially
+                                        //       dangerous because it could cause quite a number
+                                        //       of side-effects to happen depending on the Tcl
+                                        //       packages that have been loaded and any
+                                        //       outstanding calls into the Tcl library.  It is
+                                        //       the responsbility of the caller of this function
+                                        //       to make sure that no outstanding calls into the
+                                        //       Tcl library are pending prior to calling this
+                                        //       function with the "finalize" flag enabled.
+                                        //
+                                        if (finalize && (referenceCount == 0) &&
+                                            (_finalize != null))
+                                        {
+                                            /* NO RESULT */
+                                            _finalize();
+                                        }
+
+                                        //
+                                        // NOTE: Have we been requested by the caller to free
+                                        //       the library itself (if the reference count
+                                        //       reaches zero)?
+                                        //
+                                        bool freeLibrary = FlagOps.HasFlags(unloadFlags,
+                                            UnloadFlags.FreeLibrary, true);
+
+                                        //
+                                        // NOTE: At this point, we believe that nobody is using
+                                        //       the Tcl library module; therefore, calling
+                                        //       FreeLibrary should unload it from memory.  We
+                                        //       should not do this if we are being called via
+                                        //       the exit handler because the Tcl library needs
+                                        //       to remain loaded as long as the call stack
+                                        //       contains code that resides in the Tcl library
+                                        //       (e.g. Tcl_Finalize, Tcl_Exit, etc); otherwise,
+                                        //       an access violation will occur.
+                                        //
+                                        if (freeLibrary && (referenceCount == 0) &&
+                                            NativeOps.IsValidHandle(module))
+                                        {
+                                            int lastError;
+
+                                            if (NativeOps.FreeLibrary(
+                                                    module, out lastError)) /* throw */
+                                            {
+                                                TraceOps.DebugTrace(String.Format(
+                                                    "FreeLibrary (Unload): success, " +
+                                                    "module = {0}", module),
+                                                    typeof(TclWrapper).Name,
+                                                    TracePriority.NativeDebug);
+
+                                                module = IntPtr.Zero;
+                                            }
+                                            else
+                                            {
+                                                throw new ScriptException(String.Format(
+                                                    "FreeLibrary(0x{1:X}) failed with error {0}: {2}",
+                                                    lastError, module, NativeOps.GetDynamicLoadingError(
+                                                    lastError)));
+                                            }
+                                        }
+
+                                        //
+                                        // NOTE: If we previously reduced the reference count
+                                        //       (to zero since we got to this point), completely
+                                        //       remove the module now.
+                                        //
+                                        if (releaseModule && (referenceCount == 0))
+                                        {
+                                            Result releaseError = null;
+
+                                            if (ReleaseModuleReference(fileName, true, true,
+                                                    ref releaseError) == Count.Invalid)
+                                            {
+                                                DebugOps.Complain(interpreter,
+                                                    ReturnCode.Error, releaseError);
+                                            }
+                                        }
+
+                                        //
+                                        // NOTE: Finally, dispose the Tcl API object, if any.
+                                        //
+                                        IDisposable disposable = tclApi as IDisposable;
+
+                                        if (disposable != null)
+                                        {
+                                            disposable.Dispose(); /* throw */
+                                            disposable = null;
+                                        }
+
+                                        //
+                                        // NOTE: Clear out our Tcl API object reference.
+                                        //
+                                        tclApi = null;
+                                    }
+                                    else
+                                    {
+                                        //
+                                        // NOTE: We did not even attempt to actually unload the
+                                        //       Tcl library; therefore, re-increment the
+                                        //       reference count, undoing our previous decrement
+                                        //       (above), if necessary, so that this operation
+                                        //       can be retried later.
+                                        //
+                                        if (releaseModule)
+                                        {
+                                            Result addError = null;
+
+                                            if (!AddModuleReference(fileName, ref addError))
+                                            {
+                                                DebugOps.Complain(interpreter,
+                                                    ReturnCode.Error, addError);
+                                            }
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    code = ReturnCode.Error;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    else
+                    {
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    error = "invalid interpreter";
+                    code = ReturnCode.Error;
+                }
+            }
+            catch (Exception e)
+            {
+                error = e;
+                code = ReturnCode.Error;
+            }
+
+            return code;
+        }
+    }
+}

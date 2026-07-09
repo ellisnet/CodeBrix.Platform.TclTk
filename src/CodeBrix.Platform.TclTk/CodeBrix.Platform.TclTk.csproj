@@ -1,0 +1,207 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>CodeBrix.Platform.TclTk</AssemblyName>
+    <RootNamespace>CodeBrix.Platform.TclTk</RootNamespace>
+    <!--
+      The engine derives its base package name (hence its embedded script-library
+      directory "lib/TclTk<major>.<minor>" and script extension ".tcltk") from the
+      assembly TITLE at runtime. It must be the single token "TclTk", not the dotted
+      assembly name, or interpreter startup cannot find "init.tcltk".
+    -->
+    <AssemblyTitle>TclTk</AssemblyTitle>
+    <!--
+      SITUATIONAL EXCEPTION (large fidelity port): the ported engine exposes
+      thousands of public members with no upstream XML doc comments; retrofitting
+      summaries on every entry point is out of scope for v1. The documentation
+      file is therefore disabled and CS1591 suppressed. Precedent in the CodeBrix
+      family: CodeBrix.AssemblyTools and CodeBrix.Platform.OpenGL. This is the
+      ONLY warning suppression in the project.
+    -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!--
+      SITUATIONAL EXCEPTION (large legacy fidelity port). Suppressed warning families:
+        * 1591                       - missing XML doc comments (doc file disabled; see above).
+        * SYSLIB* / CS0612 / CS0618 / CS0672
+                                     - the ported engine uses BCL APIs that modern .NET marks
+                                       obsolete (Thread.Abort, WebRequest/WebClient/ServicePointManager,
+                                       X509Certificate2 ctors, BinaryFormatter-adjacent, etc.). These
+                                       still function; migrating all call sites is out of v1 scope.
+        * CA1416                     - platform-compat: the engine calls Windows-only APIs
+                                       (Console.Beep/CursorVisible, ...) behind its own RUNTIME platform
+                                       guards, which the analyzer cannot see.
+        * CS0162 / CS0164 / CS0649 / CS8073 / CS9191 / CA2022 / CA2259
+                                     - benign artifacts of heavy conditional compilation in the port.
+      A future pass may retire these individually (HttpClient migration, X509CertificateLoader,
+      OperatingSystem.IsWindows() annotations). Precedent for situational NoWarn: CodeBrix.AssemblyTools,
+      CodeBrix.Platform.OpenGL.
+    -->
+    <NoWarn>1591;CS0162;CS0164;CS0612;CS0618;CS0649;CS0672;CS8073;CS9191;CA1416;CA2022;CA2259;SYSLIB0003;SYSLIB0005;SYSLIB0006;SYSLIB0007;SYSLIB0012;SYSLIB0013;SYSLIB0014;SYSLIB0018;SYSLIB0019;SYSLIB0021;SYSLIB0022;SYSLIB0023;SYSLIB0044;SYSLIB0045;SYSLIB0057</NoWarn>
+    <!--
+      Generate assembly attributes from the version block / metadata below. The
+      ported Properties/AssemblyInfo.cs (which carried its own, wildcard-versioned
+      attributes) is excluded from compilation, so there is no CS0579 duplicate.
+      The AssemblyVersion MUST be emitted: the engine derives its embedded script
+      library directory (lib/TclTk<major>.<minor>) from the assembly version at
+      runtime, so a missing/zero version breaks interpreter startup.
+    -->
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <!--
+      Embedded resources are declared explicitly (below / in P3), not auto-globbed:
+      the upstream .resx files use ResXFileRef links whose paths must be fixed up
+      first. Turning off default items keeps the staged .resx out of the build
+      until they are wired correctly.
+    -->
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+  </PropertyGroup>
+
+  <!--
+    Package / assembly version: date-stamped and auto-incrementing.
+
+    Format:  1.<x>.<y>.<z>   (every field is derived from UTC "now")
+
+      1  (major)     Always 1 for this library.
+      x  (minor)     Whole years since $(_VersionBaseYear).
+                     With base 2026: 2026=0, 2027=1, 2028=2, ...
+      y  (build)     Day of year, 1-based inclusive, UTC.
+                     Jan 1 = 1, Feb 1 = 32, Dec 31 = 365 (366 in a leap year).
+      z  (revision)  Minute of day, UTC, range 0 to 1439.
+                     00:00 = 0, 23:59 = 1439.
+
+    The version is always strictly increasing over time:
+      * within a day, z grows;
+      * at a day boundary, y increments and outranks z resetting to 0;
+      * at a (UTC) year boundary, x increments and outranks y and z resetting.
+
+    Notes / caveats:
+      * All fields read from System.DateTime.UtcNow, so a local dev build and a
+        UTC CI build agree on the value. Math.Floor on the minutes keeps z in
+        0..1439 (plain rounding could land on 1440 late in the day).
+      * Because the value depends on the clock, every build produces a NEW
+        version. With GeneratePackageOnBuild=true that means a fresh .nupkg on
+        each build, and two builds in the SAME UTC minute produce the SAME
+        version (so do not publish two packages from within one minute).
+      * This is date-stamp versioning, not SemVer: minor encodes the year and
+        major is pinned to 1, so major/minor do not signal API compatibility.
+      * To re-baseline the minor number, change _VersionBaseYear below.
+  -->
+  <PropertyGroup>
+    <_VersionBaseYear>2026</_VersionBaseYear>
+    <_VersionYears>$([MSBuild]::Subtract($([System.DateTime]::UtcNow.Year), $(_VersionBaseYear)))</_VersionYears>
+    <_VersionDayOfYear>$([System.DateTime]::UtcNow.DayOfYear)</_VersionDayOfYear>
+    <_VersionMinuteOfDay>$([System.Convert]::ToInt32($([System.Math]::Floor($([System.DateTime]::UtcNow.TimeOfDay.TotalMinutes)))))</_VersionMinuteOfDay>
+    <BuildVersion>1.$(_VersionYears).$(_VersionDayOfYear).$(_VersionMinuteOfDay)</BuildVersion>
+    <Version>$(BuildVersion)</Version>
+    <AssemblyVersion>$(BuildVersion)</AssemblyVersion>
+    <FileVersion>$(BuildVersion)</FileVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>CodeBrix.Platform.TclTk.BsdLicenseForever</PackageId>
+    <Product>CodeBrix.Platform.TclTk</Product>
+    <Title>CodeBrix.Platform.TclTk</Title>
+    <Authors>Jeremy Ellis</Authors>
+    <Description>A fully managed, cross-platform implementation of the Tcl scripting language for .NET. Provides an embeddable Tcl interpreter supporting variables, expressions, commands, procedures, namespaces, and a rich .NET object-interop bridge, with no native dependencies.</Description>
+    <PackageLicenseExpression>TCL AND BSD-2-Clause</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/ellisnet/CodeBrix.Platform.TclTk</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/ellisnet/CodeBrix.Platform.TclTk</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageIcon>icon-codebrix-128.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!--
+      Ported from BSD/Tcl-licensed upstream code whose license requires the
+      original copyright notice to travel with derivative works; per CodeBrix
+      porting convention the upstream attribution is PREPENDED to the family
+      copyright rather than replacing it.
+    -->
+    <Copyright>Copyright (c) 2007-2012 Joe Mistachkin and the Eagle Development Team. Copyright (c) 2026 Jeremy Ellis and contributors.</Copyright>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+    <IsPackable>true</IsPackable>
+    <PackageTags>tcl;scripting;interpreter;scripting-language;automation;embeddable;dynamic;CodeBrix</PackageTags>
+  </PropertyGroup>
+
+  <!--
+    Preprocessor symbols for the cross-platform net10.0 ("core") build.
+    Derived from the upstream known-good netstandard constant set (base symbol
+    renamed EAGLE->TCLTK per the rebrand), pruned of features that cannot compile
+    on cross-platform net10.0: System.Web (WEB), BinaryFormatter (SERIALIZATION),
+    native interop (NATIVE*), the native-Tcl bridge (TCL*), WinForms/desktop,
+    remoting/CAS, and Mono legacy hacks. Tuned in P3 against the compiler.
+  -->
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants>$(DefineConstants);TCLTK;SHELL;THROW_ON_DISPOSED;APPROVED_VERBS;CONSOLE;HISTORY;NETWORK;NET_40;MONO_HACKS;MONO_LEGACY;DATA;EMIT;RESULT_LIMITS;XML;UNSAFE;NET_STANDARD_20;NET_STANDARD_21;NET_CORE_REFERENCES;DEBUGGER;DEBUGGER_ARGUMENTS;DEBUGGER_ENGINE;DEBUGGER_EXECUTE;DEBUGGER_EXPRESSION;DEBUGGER_VARIABLE;BREAK_ON_EXITING;DEBUGGER_BREAKPOINTS;PROFILER;NOTIFY;NOTIFY_ARGUMENTS;NOTIFY_EXCEPTION;NOTIFY_EXECUTE;NOTIFY_EXPRESSION;NOTIFY_GLOBAL;NOTIFY_OBJECT;NOTIFY_TCL;DEBUG_TRACE;DEBUG_WRITE;PREVIOUS_RESULT;INTERACTIVE_COMMANDS;CALLBACK_QUEUE;TEST;TEST_PLUGIN;THREADING;NATIVE;NATIVE_PACKAGE;NATIVE_THREAD_ID;NATIVE_UTILITY;NATIVE_UTILITY_BSTR;LIBRARY;ARGUMENT_CACHE;PARSE_CACHE;LIST_CACHE;EXECUTE_CACHE;EXPRESSION_FLAGS;TYPE_CACHE;COM_TYPE_CACHE;CACHE_ARGUMENT_TOSTRING;CACHE_RESULT_TOSTRING;CACHE_ARGUMENTLIST_TOSTRING;CACHE_STRINGLIST_TOSTRING;CACHE_STATISTICS;DYNAMIC;TCL;TCL_KITS;TCL_THREADED;TCL_THREADS;TCL_UNICODE</DefineConstants>
+  </PropertyGroup>
+
+  <!--
+    Platform/feature files excluded from the cross-platform core build.
+      * AnsiConsole.cs           - needs the UNIX native-console feature (NATIVE && UNIX).
+      * WinForms form/key feature - KeyOps/FormOps/KeyEventManager/StatusFormOps/WindowOps
+                                    depend unconditionally on System.Windows.Forms (Windows-only).
+      * WinTrust/Authenticode     - WinTrustDotNet2/WinTrustOps are Windows-only signature checks.
+    These features cannot run cross-platform; their remaining references are gated out in P3.
+  -->
+  <ItemGroup>
+    <Compile Remove="Components\Private\AnsiConsole.cs" />
+    <Compile Remove="Components\Private\NativeConsole.cs" />
+    <Compile Remove="Components\Private\KeyOps.cs" />
+    <Compile Remove="Components\Private\FormOps.cs" />
+    <Compile Remove="Components\Private\StatusFormOps.cs" />
+    <Compile Remove="Interfaces\Public\KeyEventManager.cs" />
+    <!-- Mono-specific Authenticode path needs Mono.Security (unavailable on .NET);
+         the .NET Core path uses WinTrustDotNet2 with System.Security.Cryptography.Pkcs. -->
+    <Compile Remove="Components\Private\WinTrustMono.cs" />
+    <!-- Ported AssemblyInfo uses a wildcard AssemblyVersion ("1.0.*") incompatible
+         with deterministic builds; this project sets version via the date-stamp block. -->
+    <Compile Remove="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+
+  <!--
+    Sole NuGet dependency, matching the upstream Eagle.DotNet.Standard.2.1 package
+    (which declares the same dependency). Provides SignedCms/SignerInfo for the
+    cross-platform Authenticode/PKCS#7 signature-verification code (WinTrustDotNet2).
+    Microsoft first-party.
+  -->
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\icon-codebrix-128.png" Pack="true" PackagePath="" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="" />
+    <None Include="..\..\AGENT-README.txt" Pack="true" PackagePath="" />
+    <None Include="..\..\THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+  <!--
+    Embedded resources (explicit LogicalNames; default resx globbing is disabled).
+    The .resx files carry the core Tcl script library via ResXFileRef links to
+    lib/TclTk1.0/*.tcltk and are compiled to .resources at build.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\messages.resx">
+      <LogicalName>CodeBrix.Platform.TclTk._Messages.Messages.resources</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\library.resx">
+      <LogicalName>library.resources</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\packages.resx">
+      <LogicalName>packages.resources</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\loader.tcltk">
+      <LogicalName>lib/Loader1.0/loader.tcltk</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\syntax.tsv">
+      <LogicalName>syntax.tsv</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\DefaultTrustValues.txt">
+      <LogicalName>DefaultTrustValues.txt</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\WellKnownAssemblyFilePluginNames.tsv">
+      <LogicalName>WellKnownAssemblyFilePluginNames.tsv</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>

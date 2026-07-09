@@ -1,0 +1,1823 @@
+/*
+ * Sql.cs --
+ *
+ * Copyright (c) 2007-2012 by Joe Mistachkin.  All rights reserved.
+ *
+ * See the file "license.terms" for information on usage and redistribution of
+ * this file, and for a DISCLAIMER OF ALL WARRANTIES.
+ *
+ * RCS: @(#) $Id: $
+ */
+
+using System;
+using System.Data;
+using System.Globalization;
+using System.Reflection;
+using CodeBrix.Platform.TclTk._Attributes;
+using CodeBrix.Platform.TclTk._Components.Private;
+using CodeBrix.Platform.TclTk._Components.Public;
+using CodeBrix.Platform.TclTk._Constants;
+using CodeBrix.Platform.TclTk._Containers.Public;
+using CodeBrix.Platform.TclTk._Interfaces.Private;
+using CodeBrix.Platform.TclTk._Interfaces.Public;
+using IsolationLevel = System.Data.IsolationLevel;
+using SharedStringOps = CodeBrix.Platform.TclTk._Components.Shared.StringOps;
+
+using ConnectionTriplet = CodeBrix.Platform.TclTk._Components.Public.AnyTriplet<
+    string, string, byte[]>;
+
+#if NET_STANDARD_21
+using Index = CodeBrix.Platform.TclTk._Constants.Index;
+#endif
+
+namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
+{
+    /// <summary>
+    /// This class implements the <c>sql</c> command, which provides access to
+    /// ADO.NET database connections and transactions from within the
+    /// interpreter.  It is an ensemble whose sub-commands cover opening and
+    /// closing connections, querying connection state, executing statements
+    /// and iterating over their result sets, and beginning, committing, and
+    /// rolling back transactions.  See <c>core_language.md</c> for the command
+    /// syntax and semantics.
+    /// </summary>
+    [ObjectId("dbc78d04-325d-4805-a118-3cfeeddfb8fc")]
+    [CommandFlags(CommandFlags.Unsafe | CommandFlags.NonStandard
+#if NATIVE && WINDOWS
+        //
+        // NOTE: Uses native code indirectly for profiling [sql execute] with
+        //       the "-time" option (on Windows only).
+        //
+        | CommandFlags.NativeCode
+#endif
+        )]
+    [ObjectGroup("managedEnvironment")]
+    internal sealed class Sql : Core
+    {
+        #region Private Constants
+        /// <summary>
+        /// The name of the event, raised by an underlying database connection,
+        /// that is hooked when a changed-event callback is supplied to the
+        /// <c>execute</c> or <c>foreach</c> sub-commands.
+        /// </summary>
+        //
+        // HACK: This is purposely not read-only.
+        //
+        private static string ChangedEventName = "Changed";
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region Private Data
+        /// <summary>
+        /// The collection of sub-command names supported by the
+        /// <c>transaction</c> sub-command of this ensemble command, used to
+        /// dispatch each transaction action (for example begin, commit, or
+        /// rollback) to the appropriate handler.
+        /// </summary>
+        private readonly EnsembleDictionary transactionSubCommands =
+        new EnsembleDictionary(new string[] {
+            "begin", "commit", "rollback"
+        });
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region Public Constructors
+        /// <summary>
+        /// Constructs an instance of the <c>sql</c> command.
+        /// </summary>
+        /// <param name="commandData">
+        /// The data used to create and identify this command, such as its
+        /// name and flags.  This parameter may be null.
+        /// </param>
+        public Sql(
+            ICommandData commandData
+            )
+            : base(commandData)
+        {
+            // do nothing.
+        }
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region IEnsemble Members
+        /// <summary>
+        /// The collection of sub-command names supported by this ensemble
+        /// command, used to dispatch each invocation to the appropriate
+        /// sub-command handler.
+        /// </summary>
+        private readonly EnsembleDictionary subCommands = new EnsembleDictionary(new string[] {
+            "close", "connection", "execute", "foreach",
+            "hasbegun", "isopen", "open", "transaction",
+            "types"
+        });
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// Gets the collection of sub-command names supported by this ensemble
+        /// command.
+        /// </summary>
+        public override EnsembleDictionary SubCommands
+        {
+            get { return subCommands; }
+        }
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////////////////////////////
+
+        #region IExecute Members
+        /// <summary>
+        /// This method executes the <c>sql</c> command.  It dispatches to the
+        /// requested ensemble sub-command (for example <c>open</c>,
+        /// <c>close</c>, <c>execute</c>, <c>foreach</c>, <c>transaction</c>,
+        /// <c>connection</c>, <c>isopen</c>, <c>hasbegun</c>, or <c>types</c>)
+        /// in order to open or close database connections, execute statements
+        /// and process their result sets, manage transactions, or query
+        /// connection and provider information, honoring the recognized options
+        /// for each sub-command.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context this command is executing in.  This
+        /// parameter should not be null.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra, command-specific data supplied when this command was
+        /// created, if any.  This parameter may be null.
+        /// </param>
+        /// <param name="arguments">
+        /// The list of arguments for this invocation.  Element zero is the
+        /// command name and element one is the sub-command name, followed by
+        /// any sub-command-specific arguments.  This parameter should not be
+        /// null.
+        /// </param>
+        /// <param name="result">
+        /// Upon success, this contains the result produced by the dispatched
+        /// sub-command.  Upon failure, this contains an appropriate error
+        /// message.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" /> when the wrong number of arguments
+        /// is supplied, the interpreter is null, the argument list is null, or
+        /// the dispatched sub-command fails, with details placed in
+        /// <paramref name="result" />.
+        /// </returns>
+        public override ReturnCode Execute(
+            Interpreter interpreter,
+            IClientData clientData,
+            ArgumentList arguments,
+            ref Result result
+            )
+        {
+            ReturnCode code = ReturnCode.Ok;
+
+            if (interpreter != null)
+            {
+                if (arguments != null)
+                {
+                    if (arguments.Count >= 2)
+                    {
+                        string subCommand = arguments[1];
+                        bool tried = false;
+
+                        code = ScriptOps.TryExecuteSubCommandFromEnsemble(
+                            interpreter, this, clientData, arguments, true,
+                            null, ref subCommand, ref tried, ref result);
+
+                        if ((code == ReturnCode.Ok) && !tried)
+                        {
+                            switch (subCommand)
+                            {
+                                case "close":
+                                    {
+                                        if (arguments.Count == 3)
+                                        {
+                                            IDbConnection connection = null;
+
+                                            code = interpreter.GetDbConnection(
+                                                arguments[2], LookupFlags.Default, ref connection, ref result);
+
+                                            if (code == ReturnCode.Ok)
+                                            {
+                                                if (connection != null)
+                                                {
+                                                    //
+                                                    // NOTE: We intend to modify the interpreter state,
+                                                    //       make sure this is not forbidden.
+                                                    //
+                                                    if (interpreter.IsModifiable(false, ref result))
+                                                    {
+                                                        if (interpreter.HasDbConnections(ref result))
+                                                        {
+                                                            try
+                                                            {
+                                                                connection.Close();
+                                                                interpreter.RemoveDbConnection(arguments[2]);
+
+#if NOTIFY
+                                                                /* IGNORED */
+                                                                interpreter.CheckNotification(
+                                                                    NotifyType.Connection, NotifyFlags.Removed,
+                                                                    connection, interpreter, null, null, null,
+                                                                    ref result);
+#endif
+
+                                                                connection = null;
+                                                                result = String.Empty;
+                                                            }
+                                                            catch (Exception e)
+                                                            {
+                                                                Engine.SetExceptionErrorCode(interpreter, e);
+
+                                                                result = e;
+                                                                code = ReturnCode.Error;
+                                                            }
+                                                        }
+                                                        else
+                                                        {
+                                                            code = ReturnCode.Error;
+                                                        }
+                                                    }
+                                                    else
+                                                    {
+                                                        code = ReturnCode.Error;
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    result = String.Format(
+                                                        "invalid connection {0}",
+                                                        FormatOps.WrapOrNull(arguments[2]));
+
+                                                    code = ReturnCode.Error;
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"sql close connection\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "connection":
+                                    {
+                                        if (arguments.Count == 3)
+                                        {
+                                            if (interpreter.HasDbConnections(ref result))
+                                            {
+                                                IDbConnection connection = null;
+
+                                                code = interpreter.GetAnyDbConnection(
+                                                    arguments[2], LookupFlags.Default, ref connection, ref result);
+
+                                                if (code == ReturnCode.Ok)
+                                                {
+                                                    if (connection != null)
+                                                    {
+                                                        try
+                                                        {
+                                                            result = StringList.MakeList(
+                                                                "type", connection.GetType().Name,
+                                                                "state", connection.State,
+                                                                "database", connection.Database,
+                                                                "timeout", connection.ConnectionTimeout,
+                                                                "string", connection.ConnectionString);
+                                                        }
+                                                        catch (Exception e)
+                                                        {
+                                                            Engine.SetExceptionErrorCode(interpreter, e);
+
+                                                            result = e;
+                                                            code = ReturnCode.Error;
+                                                        }
+                                                    }
+                                                    else
+                                                    {
+                                                        result = String.Format(
+                                                            "invalid connection {0}",
+                                                            FormatOps.WrapOrNull(arguments[2]));
+
+                                                        code = ReturnCode.Error;
+                                                    }
+                                                }
+                                            }
+                                            else
+                                            {
+                                                code = ReturnCode.Error;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"sql connection connection\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "execute":
+                                    {
+                                        int argumentCount = arguments.Count;
+
+                                        if (argumentCount >= 4)
+                                        {
+                                            OptionDictionary options = CommandOptions.GetCommandOptions(
+                                                CommandOptionType.Sql_Execute);
+
+                                            int argumentIndex = Index.Invalid;
+
+                                            code = interpreter.GetOptions(
+                                                options, arguments, 0, 2, Index.Invalid, false,
+                                                ref argumentIndex, ref result);
+
+                                            if (code == ReturnCode.Ok)
+                                            {
+                                                if ((argumentIndex != Index.Invalid) &&
+                                                    ((argumentIndex + 1) < argumentCount))
+                                                {
+                                                    IVariant value = null;
+                                                    IDbTransaction transaction = null;
+
+                                                    if (options.IsPresent("-transaction", ref value))
+                                                    {
+                                                        string transactionName = value.ToString();
+
+                                                        if (!String.IsNullOrEmpty(transactionName))
+                                                        {
+                                                            code = interpreter.GetAnyDbTransaction(
+                                                                transactionName, LookupFlags.Default,
+                                                                ref transaction, ref result);
+
+                                                            if ((code == ReturnCode.Ok) &&
+                                                                (transaction == null))
+                                                            {
+                                                                result = String.Format(
+                                                                    "invalid transaction {0}",
+                                                                    FormatOps.WrapOrNull(transactionName));
+
+                                                                code = ReturnCode.Error;
+                                                            }
+                                                        }
+                                                    }
+
+                                                    if (code == ReturnCode.Ok)
+                                                    {
+                                                        Type returnType;
+                                                        ObjectFlags objectFlags;
+                                                        string objectName;
+                                                        string interpName;
+                                                        bool create;
+                                                        bool disposeReader;
+                                                        bool alias;
+                                                        bool aliasRaw;
+                                                        bool aliasAll;
+                                                        bool aliasReference;
+                                                        bool toString;
+
+                                                        ObjectOps.ProcessFixupReturnValueOptions(
+                                                            options, null, out returnType, out objectFlags,
+                                                            out objectName, out interpName, out create,
+                                                            out disposeReader, out alias, out aliasRaw,
+                                                            out aliasAll, out aliasReference, out toString);
+
+                                                        CultureInfo cultureInfo;
+                                                        CommandType commandType;
+                                                        CommandBehavior commandBehavior;
+                                                        DbExecuteType executeType;
+                                                        DbResultFormat resultFormat;
+                                                        ValueFlags valueFlags;
+                                                        DateTimeBehavior dateTimeBehavior;
+                                                        BlobBehavior blobBehavior;
+                                                        DateTimeKind dateTimeKind;
+                                                        DateTimeStyles dateTimeStyles;
+                                                        ICallback changedCallback;
+                                                        string rowsVarName;
+                                                        string timeVarName;
+                                                        string valueFormat;
+                                                        string dateTimeFormat;
+                                                        string numberFormat;
+                                                        string nullValue;
+                                                        string dbNullValue;
+                                                        string errorValue;
+                                                        int? commandTimeout;
+                                                        int limit;
+                                                        bool nested;
+                                                        bool allowNull;
+                                                        bool pairs;
+                                                        bool names;
+                                                        bool time;
+                                                        bool verbatim;
+                                                        bool noFixup;
+
+                                                        ObjectOps.ProcessExecuteOptions(
+                                                            interpreter, options, null, null, null, null, null, null,
+                                                            null, null, null, out cultureInfo, out commandType,
+                                                            out commandBehavior, out executeType, out resultFormat,
+                                                            out valueFlags, out blobBehavior, out dateTimeBehavior,
+                                                            out dateTimeKind, out dateTimeStyles, out changedCallback,
+                                                            out rowsVarName, out timeVarName, out valueFormat,
+                                                            out dateTimeFormat, out numberFormat, out nullValue,
+                                                            out dbNullValue, out errorValue, out commandTimeout,
+                                                            out limit, out nested, out allowNull, out pairs,
+                                                            out names, out time, out verbatim, out noFixup);
+
+                                                        if (rowsVarName == null)
+                                                            rowsVarName = Vars.ResultSet.Rows;
+
+                                                        if (timeVarName == null)
+                                                            timeVarName = Vars.ResultSet.Time;
+
+                                                        //
+                                                        // HACK: If the value format option is null, try to
+                                                        //       use the "legacy" date time format option.
+                                                        //
+                                                        if ((valueFormat == null) && (dateTimeFormat != null))
+                                                            valueFormat = dateTimeFormat;
+
+                                                        nullValue = StringOps.NullIfEmpty(nullValue);
+
+                                                        if (dbNullValue == null)
+                                                            dbNullValue = nullValue; /* COMPAT: TclTk beta. */
+
+                                                        dbNullValue = StringOps.NullIfEmpty(dbNullValue);
+
+                                                        if (errorValue == null)
+                                                            errorValue = nullValue; /* COMPAT: TclTk beta. */
+
+                                                        errorValue = StringOps.NullIfEmpty(errorValue);
+
+                                                        if (interpreter.HasDbConnections(ref result))
+                                                        {
+                                                            IDbConnection connection = null;
+
+                                                            code = interpreter.GetAnyDbConnection(
+                                                                arguments[argumentIndex], LookupFlags.Default,
+                                                                ref connection, ref result);
+
+                                                            if (code == ReturnCode.Ok)
+                                                            {
+                                                                if (connection != null)
+                                                                {
+                                                                    if (changedCallback != null)
+                                                                    {
+                                                                        Type connectionType = connection.GetType();
+
+                                                                        if (connectionType != null)
+                                                                        {
+                                                                            EventInfo eventInfo = connectionType.GetEvent(
+                                                                                ChangedEventName);
+
+                                                                            if (eventInfo != null)
+                                                                            {
+                                                                                Delegate @delegate = changedCallback.Delegate;
+
+                                                                                if (@delegate != null)
+                                                                                {
+                                                                                    eventInfo.AddEventHandler(
+                                                                                        connection, @delegate); /* throw */
+                                                                                }
+                                                                                else
+                                                                                {
+                                                                                    result = "invalid changed event delegate";
+                                                                                    code = ReturnCode.Error;
+                                                                                }
+                                                                            }
+                                                                            else
+                                                                            {
+                                                                                result = "invalid changed event info";
+                                                                                code = ReturnCode.Error;
+                                                                            }
+                                                                        }
+                                                                        else
+                                                                        {
+                                                                            result = "invalid connection type";
+                                                                            code = ReturnCode.Error;
+                                                                        }
+                                                                    }
+
+                                                                    if (code == ReturnCode.Ok)
+                                                                    {
+                                                                        IDbCommand command = null;
+
+                                                                        try
+                                                                        {
+                                                                            command = connection.CreateCommand();
+
+                                                                            //
+                                                                            // NOTE: Set command text itself to the value of the second
+                                                                            //       argument after the options.
+                                                                            //
+                                                                            command.CommandText = arguments[argumentIndex + 1];
+
+                                                                            //
+                                                                            // NOTE: If the timeout was supplied, set the timeout value
+                                                                            //       now; otherwise, leave it alone to retain the default
+                                                                            //       for the underlying provider.
+                                                                            //
+                                                                            if (commandTimeout != null)
+                                                                                command.CommandTimeout = (int)commandTimeout;
+
+                                                                            //
+                                                                            // NOTE: Set the command type to the value specified in the
+                                                                            //       option (or the default if none was supplied).
+                                                                            //
+                                                                            command.CommandType = commandType;
+
+                                                                            //
+                                                                            // NOTE: Setup the transaction for this query.  If this is set
+                                                                            //       to null, default transaction semantics may be used by
+                                                                            //       the underlying data provider.
+                                                                            //
+                                                                            command.Transaction = transaction; /* throw */
+
+                                                                            //
+                                                                            // NOTE: Add any supplied parameters to this command.
+                                                                            //
+                                                                            if ((argumentIndex + 2) < argumentCount)
+                                                                            {
+                                                                                code = DataOps.GetParameters(
+                                                                                    interpreter, cultureInfo, valueFormat, valueFlags,
+                                                                                    dateTimeKind, dateTimeStyles, command, arguments,
+                                                                                    argumentIndex + 2, Index.Invalid, verbatim,
+                                                                                    ref result);
+                                                                            }
+
+                                                                            //
+                                                                            // NOTE: Make sure we succeeded parsing optional parameters,
+                                                                            //       if any were provided.
+                                                                            //
+                                                                            if (code == ReturnCode.Ok)
+                                                                            {
+                                                                                //
+                                                                                // NOTE: These variables are used to measure performance
+                                                                                //       if the -time option is enabled.
+                                                                                //
+                                                                                IProfilerState profiler = null;
+                                                                                bool disposeProfiler = true;
+
+                                                                                try
+                                                                                {
+                                                                                    if (time)
+                                                                                    {
+                                                                                        profiler = ProfilerState.Create(
+                                                                                            interpreter, ref disposeProfiler);
+                                                                                    }
+
+                                                                                    //
+                                                                                    // NOTE: Always prepare the statement, even though
+                                                                                    //       it may result in a no-op.
+                                                                                    //
+                                                                                    if (profiler != null)
+                                                                                        profiler.Start();
+
+                                                                                    command.Prepare();
+
+                                                                                    if (profiler != null)
+                                                                                    {
+                                                                                        profiler.Stop();
+
+                                                                                        ReturnCode setCode;
+                                                                                        Result setError = null;
+
+                                                                                        setCode = interpreter.SetVariableValue2(
+                                                                                            VariableFlags.None, timeVarName,
+                                                                                            Vars.ResultSet.Prepare,
+                                                                                            profiler.ToString(), ref setError);
+
+                                                                                        if (setCode != ReturnCode.Ok)
+                                                                                            DebugOps.Complain(interpreter, setCode, setError);
+
+                                                                                        profiler.Start();
+                                                                                    }
+
+                                                                                    code = DataOps.ExecuteCommandAndGetResults(
+                                                                                        interpreter, interpreter.InternalBinder,
+                                                                                        cultureInfo, command, options, executeType,
+                                                                                        commandBehavior, resultFormat, rowsVarName,
+                                                                                        blobBehavior, dateTimeBehavior, dateTimeKind,
+                                                                                        dateTimeFormat, numberFormat, nullValue,
+                                                                                        dbNullValue, errorValue, limit, nested,
+                                                                                        allowNull, pairs, names, returnType,
+                                                                                        objectFlags, objectName, interpName,
+                                                                                        create, disposeReader, alias, aliasRaw,
+                                                                                        aliasAll, aliasReference, toString,
+                                                                                        noFixup, ref result);
+
+                                                                                    if (profiler != null)
+                                                                                    {
+                                                                                        profiler.Stop();
+
+                                                                                        ReturnCode setCode;
+                                                                                        Result setError = null;
+
+                                                                                        setCode = interpreter.SetVariableValue2(
+                                                                                            VariableFlags.None, timeVarName,
+                                                                                            Vars.ResultSet.Execute,
+                                                                                            profiler.ToString(), ref setError);
+
+                                                                                        if (setCode != ReturnCode.Ok)
+                                                                                            DebugOps.Complain(interpreter, setCode, setError);
+                                                                                    }
+                                                                                }
+                                                                                finally
+                                                                                {
+                                                                                    if (profiler != null)
+                                                                                    {
+                                                                                        if (disposeProfiler)
+                                                                                        {
+                                                                                            ObjectOps.TryDisposeOrComplain<IProfilerState>(
+                                                                                                interpreter, ref profiler);
+                                                                                        }
+
+                                                                                        profiler = null;
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                        catch (Exception e)
+                                                                        {
+                                                                            Engine.SetExceptionErrorCode(interpreter, e);
+
+                                                                            result = e;
+                                                                            code = ReturnCode.Error;
+                                                                        }
+                                                                        finally
+                                                                        {
+                                                                            if (command != null)
+                                                                            {
+                                                                                command.Dispose();
+                                                                                command = null;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                                else
+                                                                {
+                                                                    result = String.Format(
+                                                                        "invalid connection {0}",
+                                                                        FormatOps.WrapOrNull(arguments[argumentIndex]));
+
+                                                                    code = ReturnCode.Error;
+                                                                }
+                                                            }
+                                                        }
+                                                        else
+                                                        {
+                                                            code = ReturnCode.Error;
+                                                        }
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    if ((argumentIndex != Index.Invalid) &&
+                                                        Option.LooksLikeOption(arguments[argumentIndex]))
+                                                    {
+                                                        result = OptionDictionary.BadOption(
+                                                            options, arguments[argumentIndex], !interpreter.InternalIsSafe());
+                                                    }
+                                                    else
+                                                    {
+                                                        result = String.Format(
+                                                            "wrong # args: should be \"{0} {1} ?options? connection string ?{3}paramName ?paramType? ?paramValue? ?paramSize? ?paramValueFlags?{4} ...?\"",
+                                                            this.Name, subCommand, null, Characters.OpenBrace, Characters.CloseBrace);
+                                                    }
+
+                                                    code = ReturnCode.Error;
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = String.Format(
+                                                "wrong # args: should be \"{0} {1} ?options? connection string ?{3}paramName ?paramType? ?paramValue? ?paramSize? ?paramValueFlags?{4} ...?\"",
+                                                this.Name, subCommand, null, Characters.OpenBrace, Characters.CloseBrace);
+
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "foreach":
+                                    {
+                                        int argumentCount = arguments.Count;
+
+                                        if (argumentCount >= 4)
+                                        {
+                                            OptionDictionary options = CommandOptions.GetCommandOptions(
+                                                CommandOptionType.Sql_Execute);
+
+                                            int argumentIndex = Index.Invalid;
+
+                                            code = interpreter.GetOptions(
+                                                options, arguments, 0, 2, Index.Invalid, false,
+                                                ref argumentIndex, ref result);
+
+                                            if (code == ReturnCode.Ok)
+                                            {
+                                                if ((argumentIndex != Index.Invalid) &&
+                                                    ((argumentIndex + 2) < argumentCount))
+                                                {
+                                                    IVariant value = null;
+                                                    IDbTransaction transaction = null;
+
+                                                    if (options.IsPresent("-transaction", ref value))
+                                                    {
+                                                        string transactionName = value.ToString();
+
+                                                        if (!String.IsNullOrEmpty(transactionName))
+                                                        {
+                                                            code = interpreter.GetDbTransaction(
+                                                                transactionName, LookupFlags.Default,
+                                                                ref transaction, ref result);
+
+                                                            if ((code == ReturnCode.Ok) &&
+                                                                (transaction == null))
+                                                            {
+                                                                result = String.Format(
+                                                                    "invalid transaction {0}",
+                                                                    FormatOps.WrapOrNull(transactionName));
+
+                                                                code = ReturnCode.Error;
+                                                            }
+                                                        }
+                                                    }
+
+                                                    if (code == ReturnCode.Ok)
+                                                    {
+                                                        Type returnType;
+                                                        ObjectFlags objectFlags;
+                                                        string objectName;
+                                                        string interpName;
+                                                        bool create;
+                                                        bool disposeReader;
+                                                        bool alias;
+                                                        bool aliasRaw;
+                                                        bool aliasAll;
+                                                        bool aliasReference;
+                                                        bool toString;
+
+                                                        ObjectOps.ProcessFixupReturnValueOptions(
+                                                            options, null, out returnType, out objectFlags,
+                                                            out objectName, out interpName, out create,
+                                                            out disposeReader, out alias, out aliasRaw,
+                                                            out aliasAll, out aliasReference, out toString);
+
+                                                        CultureInfo cultureInfo;
+                                                        CommandType commandType;
+                                                        CommandBehavior commandBehavior;
+                                                        DbExecuteType executeType;
+                                                        DbResultFormat resultFormat;
+                                                        ValueFlags valueFlags;
+                                                        BlobBehavior blobBehavior;
+                                                        DateTimeBehavior dateTimeBehavior;
+                                                        DateTimeKind dateTimeKind;
+                                                        DateTimeStyles dateTimeStyles;
+                                                        ICallback changedCallback;
+                                                        string rowsVarName;
+                                                        string timeVarName;
+                                                        string valueFormat;
+                                                        string dateTimeFormat;
+                                                        string numberFormat;
+                                                        string nullValue;
+                                                        string dbNullValue;
+                                                        string errorValue;
+                                                        int? commandTimeout;
+                                                        int limit;
+                                                        bool nested;
+                                                        bool allowNull;
+                                                        bool pairs;
+                                                        bool names;
+                                                        bool time;
+                                                        bool verbatim;
+                                                        bool noFixup;
+
+                                                        ObjectOps.ProcessExecuteOptions(
+                                                            interpreter, options, null, null, null, null, null, null,
+                                                            null, null, null, out cultureInfo, out commandType,
+                                                            out commandBehavior, out executeType, out resultFormat,
+                                                            out valueFlags, out blobBehavior, out dateTimeBehavior,
+                                                            out dateTimeKind, out dateTimeStyles, out changedCallback,
+                                                            out rowsVarName, out timeVarName, out valueFormat,
+                                                            out dateTimeFormat, out numberFormat, out nullValue,
+                                                            out dbNullValue, out errorValue, out commandTimeout,
+                                                            out limit, out nested, out allowNull, out pairs,
+                                                            out names, out time, out verbatim, out noFixup);
+
+                                                        if (rowsVarName == null)
+                                                            rowsVarName = Vars.ResultSet.Row;
+
+                                                        if (timeVarName == null)
+                                                            timeVarName = Vars.ResultSet.Time;
+
+                                                        //
+                                                        // HACK: If the value format option is null, try to
+                                                        //       use the "legacy" date time format option.
+                                                        //
+                                                        if ((valueFormat == null) && (dateTimeFormat != null))
+                                                            valueFormat = dateTimeFormat;
+
+                                                        nullValue = StringOps.NullIfEmpty(nullValue);
+
+                                                        if (dbNullValue == null)
+                                                            dbNullValue = nullValue; /* COMPAT: TclTk beta. */
+
+                                                        dbNullValue = StringOps.NullIfEmpty(dbNullValue);
+
+                                                        if (errorValue == null)
+                                                            errorValue = nullValue; /* COMPAT: TclTk beta. */
+
+                                                        errorValue = StringOps.NullIfEmpty(errorValue);
+
+                                                        if (interpreter.HasDbConnections(ref result))
+                                                        {
+                                                            IDbConnection connection = null;
+
+                                                            code = interpreter.GetAnyDbConnection(
+                                                                arguments[argumentIndex], LookupFlags.Default,
+                                                                ref connection, ref result);
+
+                                                            if (code == ReturnCode.Ok)
+                                                            {
+                                                                if (connection != null)
+                                                                {
+                                                                    if (changedCallback != null)
+                                                                    {
+                                                                        Type connectionType = connection.GetType();
+
+                                                                        if (connectionType != null)
+                                                                        {
+                                                                            EventInfo eventInfo = connectionType.GetEvent(
+                                                                                ChangedEventName);
+
+                                                                            if (eventInfo != null)
+                                                                            {
+                                                                                Delegate @delegate = changedCallback.Delegate;
+
+                                                                                if (@delegate != null)
+                                                                                {
+                                                                                    eventInfo.AddEventHandler(
+                                                                                        connection, @delegate); /* throw */
+                                                                                }
+                                                                                else
+                                                                                {
+                                                                                    result = "invalid changed event delegate";
+                                                                                    code = ReturnCode.Error;
+                                                                                }
+                                                                            }
+                                                                            else
+                                                                            {
+                                                                                result = "invalid changed event info";
+                                                                                code = ReturnCode.Error;
+                                                                            }
+                                                                        }
+                                                                        else
+                                                                        {
+                                                                            result = "invalid connection type";
+                                                                            code = ReturnCode.Error;
+                                                                        }
+                                                                    }
+
+                                                                    if (code == ReturnCode.Ok)
+                                                                    {
+                                                                        IDbCommand command = null;
+
+                                                                        try
+                                                                        {
+                                                                            command = connection.CreateCommand();
+
+                                                                            //
+                                                                            // NOTE: Set command text itself to the value of the second
+                                                                            //       argument after the options.
+                                                                            //
+                                                                            command.CommandText = arguments[argumentIndex + 1];
+
+                                                                            //
+                                                                            // NOTE: If the timeout was supplied, set the timeout value
+                                                                            //       now; otherwise, leave it alone to retain the default
+                                                                            //       for the underlying provider.
+                                                                            //
+                                                                            if (commandTimeout != null)
+                                                                                command.CommandTimeout = (int)commandTimeout;
+
+                                                                            //
+                                                                            // NOTE: Set the command type to the value specified in the
+                                                                            //       option (or the default if none was supplied).
+                                                                            //
+                                                                            command.CommandType = commandType;
+
+                                                                            //
+                                                                            // NOTE: Setup the transaction for this query.  If this is set
+                                                                            //       to null, default transaction semantics may be used by
+                                                                            //       the underlying data provider.
+                                                                            //
+                                                                            command.Transaction = transaction; /* throw */
+
+                                                                            //
+                                                                            // NOTE: Add any supplied parameters to this command.
+                                                                            //
+                                                                            if ((argumentIndex + 3) < argumentCount)
+                                                                            {
+                                                                                code = DataOps.GetParameters(
+                                                                                    interpreter, cultureInfo, valueFormat, valueFlags,
+                                                                                    dateTimeKind, dateTimeStyles, command, arguments,
+                                                                                    argumentIndex + 2, Index.Invalid, verbatim,
+                                                                                    ref result);
+                                                                            }
+
+                                                                            //
+                                                                            // NOTE: Make sure we succeeded parsing optional parameters,
+                                                                            //       if any were provided.
+                                                                            //
+                                                                            if (code == ReturnCode.Ok)
+                                                                            {
+                                                                                //
+                                                                                // NOTE: These variables are used to measure performance
+                                                                                //       if the -time option is enabled.
+                                                                                //
+                                                                                IProfilerState profiler = null;
+                                                                                bool disposeProfiler = true;
+
+                                                                                try
+                                                                                {
+                                                                                    if (time)
+                                                                                    {
+                                                                                        profiler = ProfilerState.Create(
+                                                                                            interpreter, ref disposeProfiler);
+                                                                                    }
+
+                                                                                    //
+                                                                                    // NOTE: Always prepare the statement, even though
+                                                                                    //       it may result in a no-op.
+                                                                                    //
+                                                                                    if (profiler != null)
+                                                                                        profiler.Start();
+
+                                                                                    command.Prepare();
+
+                                                                                    if (profiler != null)
+                                                                                    {
+                                                                                        profiler.Stop();
+
+                                                                                        ReturnCode setCode;
+                                                                                        Result setError = null;
+
+                                                                                        setCode = interpreter.SetVariableValue2(
+                                                                                            VariableFlags.None, timeVarName,
+                                                                                            Vars.ResultSet.Prepare,
+                                                                                            profiler.ToString(), ref setError);
+
+                                                                                        if (setCode != ReturnCode.Ok)
+                                                                                            DebugOps.Complain(interpreter, setCode, setError);
+
+                                                                                        profiler.Start();
+                                                                                    }
+
+                                                                                    Argument body = arguments[argumentCount - 1];
+
+                                                                                    code = DataOps.ExecuteCommandAndEvaluateBody(
+                                                                                        interpreter, interpreter.InternalBinder,
+                                                                                        cultureInfo, command, options, executeType,
+                                                                                        commandBehavior, resultFormat, this.Name,
+                                                                                        rowsVarName, body, body, blobBehavior,
+                                                                                        dateTimeBehavior, dateTimeKind,
+                                                                                        dateTimeFormat, numberFormat, nullValue,
+                                                                                        dbNullValue, errorValue, limit, nested,
+                                                                                        allowNull, pairs, names, returnType,
+                                                                                        objectFlags, objectName, interpName,
+                                                                                        create, disposeReader, alias, aliasRaw,
+                                                                                        aliasAll, aliasReference, toString,
+                                                                                        noFixup, ref result);
+
+                                                                                    if (profiler != null)
+                                                                                    {
+                                                                                        profiler.Stop();
+
+                                                                                        ReturnCode setCode;
+                                                                                        Result setError = null;
+
+                                                                                        setCode = interpreter.SetVariableValue2(
+                                                                                            VariableFlags.None, timeVarName,
+                                                                                            Vars.ResultSet.Execute,
+                                                                                            profiler.ToString(), ref setError);
+
+                                                                                        if (setCode != ReturnCode.Ok)
+                                                                                            DebugOps.Complain(interpreter, setCode, setError);
+                                                                                    }
+                                                                                }
+                                                                                finally
+                                                                                {
+                                                                                    if (profiler != null)
+                                                                                    {
+                                                                                        if (disposeProfiler)
+                                                                                        {
+                                                                                            ObjectOps.TryDisposeOrComplain<IProfilerState>(
+                                                                                                interpreter, ref profiler);
+                                                                                        }
+
+                                                                                        profiler = null;
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                        catch (Exception e)
+                                                                        {
+                                                                            Engine.SetExceptionErrorCode(interpreter, e);
+
+                                                                            result = e;
+                                                                            code = ReturnCode.Error;
+                                                                        }
+                                                                        finally
+                                                                        {
+                                                                            if (command != null)
+                                                                            {
+                                                                                command.Dispose();
+                                                                                command = null;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                                else
+                                                                {
+                                                                    result = String.Format(
+                                                                        "invalid connection {0}",
+                                                                        FormatOps.WrapOrNull(arguments[argumentIndex]));
+
+                                                                    code = ReturnCode.Error;
+                                                                }
+                                                            }
+                                                        }
+                                                        else
+                                                        {
+                                                            code = ReturnCode.Error;
+                                                        }
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    if ((argumentIndex != Index.Invalid) &&
+                                                        Option.LooksLikeOption(arguments[argumentIndex]))
+                                                    {
+                                                        result = OptionDictionary.BadOption(
+                                                            options, arguments[argumentIndex], !interpreter.InternalIsSafe());
+                                                    }
+                                                    else
+                                                    {
+                                                        result = String.Format(
+                                                            "wrong # args: should be \"{0} {1} ?options? connection string ?{3}paramName ?paramType? ?paramValue? ?paramSize? ?paramValueFlags?{4} ...? body\"",
+                                                            this.Name, subCommand, null, Characters.OpenBrace, Characters.CloseBrace);
+                                                    }
+
+                                                    code = ReturnCode.Error;
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = String.Format(
+                                                "wrong # args: should be \"{0} {1} ?options? connection string ?{3}paramName ?paramType? ?paramValue? ?paramSize? ?paramValueFlags?{4} ...? body\"",
+                                                this.Name, subCommand, null, Characters.OpenBrace, Characters.CloseBrace);
+
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "hasbegun":
+                                    {
+                                        if ((arguments.Count == 3) || (arguments.Count == 4))
+                                        {
+                                            if (arguments.Count == 4)
+                                            {
+                                                IDbTransaction transaction = null;
+                                                IDbConnection connection = null;
+
+                                                if ((interpreter.InternalGetDbTransaction(
+                                                        arguments[2], LookupFlags.Default,
+                                                        ref transaction) == ReturnCode.Ok) &&
+                                                    (interpreter.InternalGetDbConnection(
+                                                        arguments[3], LookupFlags.Default,
+                                                        ref connection) == ReturnCode.Ok))
+                                                {
+                                                    if (Object.ReferenceEquals(
+                                                            transaction.Connection, connection))
+                                                    {
+                                                        result = true;
+                                                    }
+                                                    else
+                                                    {
+                                                        result = false;
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    result = false;
+                                                }
+                                            }
+                                            else
+                                            {
+                                                if (interpreter.DoesDbTransactionExist(
+                                                        arguments[2]) == ReturnCode.Ok)
+                                                {
+                                                    result = true;
+                                                }
+                                                else
+                                                {
+                                                    result = false;
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"sql hasbegun transaction ?connection?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "isopen":
+                                    {
+                                        if (arguments.Count == 3)
+                                        {
+                                            if (interpreter.DoesDbConnectionExist(
+                                                    arguments[2]) == ReturnCode.Ok)
+                                            {
+                                                result = true;
+                                            }
+                                            else
+                                            {
+                                                result = false;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"sql isopen connection\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "open":
+                                    {
+                                        if (arguments.Count >= 3)
+                                        {
+                                            int argumentIndex; /* REUSED */
+
+                                            OptionDictionary preOptions = CommandOptions.GetCommandOptions(
+                                                CommandOptionType.Sql_OpenPreOptions);
+
+                                            argumentIndex = Index.Invalid; /* IGNORED */
+
+                                            code = interpreter.CheckOptions(
+                                                preOptions, arguments, 0, 2, Index.Invalid,
+                                                ref argumentIndex, ref result);
+
+                                            if (code == ReturnCode.Ok)
+                                            {
+                                                //
+                                                // NOTE: Perform case-insensitive search for the
+                                                //       type name?
+                                                //
+                                                bool noCase = false;
+
+                                                if (preOptions.IsPresent("-nocase"))
+                                                    noCase = true;
+
+                                                //
+                                                // NOTE: Prevent any "magical" type searches (i.e.
+                                                //       use their specified type string verbatim)?
+                                                //
+                                                bool strictType = false;
+
+                                                if (preOptions.IsPresent("-stricttype"))
+                                                    strictType = true;
+
+                                                //
+                                                // NOTE: Return all Type exception information (this
+                                                //       can be very costly for performance).
+                                                //
+                                                bool verbose = false;
+
+                                                if (preOptions.IsPresent("-verbose"))
+                                                    verbose = true;
+
+                                                ValueFlags valueFlags = Value.GetTypeValueFlags(
+                                                    strictType, verbose, noCase);
+
+                                                OptionDictionary options = CommandOptions.GetCommandOptions(
+                                                    CommandOptionType.Sql_Open, interpreter, null, null,
+                                                    valueFlags, null, null, null);
+
+                                                argumentIndex = Index.Invalid;
+
+                                                code = interpreter.GetOptions(
+                                                    options, arguments, 0, 2, Index.Invalid, false,
+                                                    ref argumentIndex, ref result);
+
+                                                if (code == ReturnCode.Ok)
+                                                {
+                                                    if ((argumentIndex != Index.Invalid) &&
+                                                        ((argumentIndex + 1) == arguments.Count))
+                                                    {
+                                                        IVariant value = null;
+                                                        DbConnectionType dbConnectionType1 = DbConnectionType.Default; /* TODO: Good default? */
+                                                        DbConnectionType dbConnectionType2 = DbConnectionType.None; /* TODO: Good default? */
+
+                                                        if (options.IsPresent("-type", ref value))
+                                                        {
+                                                            dbConnectionType1 = (DbConnectionType)value.Value;
+
+                                                            //
+                                                            // HACK: When SQLite is being used, prefer to use its
+                                                            //       Enterprise Edition, when available.
+                                                            //
+                                                            if ((dbConnectionType1 == DbConnectionType.SQLite) &&
+                                                                (dbConnectionType2 == DbConnectionType.None))
+                                                            {
+                                                                dbConnectionType1 = DbConnectionType.SQLiteEnterprise;
+                                                                dbConnectionType2 = DbConnectionType.SQLite;
+                                                            }
+                                                        }
+
+                                                        if (options.IsPresent("-type1", ref value))
+                                                            dbConnectionType1 = (DbConnectionType)value.Value;
+
+                                                        if (options.IsPresent("-type2", ref value))
+                                                            dbConnectionType2 = (DbConnectionType)value.Value;
+
+                                                        string varName = null;
+
+                                                        if (options.IsPresent("-variable", ref value))
+                                                            varName = value.ToString();
+
+                                                        string assemblyFileName = null;
+
+                                                        if (options.IsPresent("-assemblyfilename", ref value))
+                                                            assemblyFileName = value.ToString();
+
+                                                        string typeName = null;
+
+                                                        if (options.IsPresent("-typename", ref value))
+                                                            typeName = value.ToString();
+
+                                                        string typeFullName = null;
+
+                                                        if (options.IsPresent("-typefullname", ref value))
+                                                            typeFullName = value.ToString();
+
+                                                        if (options.IsPresent("-valueflags", ref value))
+                                                            valueFlags = (ValueFlags)value.Value;
+
+                                                        if (options.IsPresent("-trustedonly"))
+                                                            valueFlags |= ValueFlags.TrustedOnly;
+
+#if !DEBUG
+                                                        if (options.IsPresent("-maybetrustedonly"))
+                                                            valueFlags |= ValueFlags.TrustedOnly;
+#endif
+
+                                                        /////////////////////////////////////////////////////////
+                                                        //
+                                                        // NOTE: These two boolean variables are read from the
+                                                        //       interpreter data flags, not the sub-command
+                                                        //       options.
+                                                        //
+                                                        bool trustedOnly = FlagOps.HasFlags(
+                                                            interpreter.DataFlagsNoLock, DataFlags.TrustedOnly,
+                                                            true);
+
+                                                        bool verifiedOnly = FlagOps.HasFlags(
+                                                            interpreter.DataFlagsNoLock, DataFlags.VerifiedOnly,
+                                                            true);
+
+                                                        /////////////////////////////////////////////////////////
+
+                                                        if (trustedOnly)
+                                                            valueFlags |= ValueFlags.TrustedOnly;
+
+                                                        byte[] publicKeyToken1 = null;
+                                                        byte[] publicKeyToken2 = null;
+
+                                                        value = null;
+
+                                                        if ((code == ReturnCode.Ok) && (verifiedOnly ||
+                                                            options.IsPresent("-publickeytoken1", ref value)))
+                                                        {
+                                                            if (value == null)
+                                                            {
+                                                                value = new Variant(String.Format(
+                                                                    "0x{0}", PublicKeyToken.SQLiteEnterprise));
+                                                            }
+
+                                                            code = RuntimeOps.GetPublicKeyToken(
+                                                                value.ToString(), interpreter.InternalCultureInfo,
+                                                                ref publicKeyToken1, ref result);
+                                                        }
+
+                                                        value = null;
+
+                                                        if ((code == ReturnCode.Ok) && (verifiedOnly ||
+                                                            options.IsPresent("-publickeytoken2", ref value)))
+                                                        {
+                                                            if (value == null)
+                                                            {
+                                                                value = new Variant(String.Format(
+                                                                    "0x{0}", PublicKeyToken.SQLite));
+                                                            }
+
+                                                            code = RuntimeOps.GetPublicKeyToken(
+                                                                value.ToString(), interpreter.InternalCultureInfo,
+                                                                ref publicKeyToken2, ref result);
+                                                        }
+
+                                                        if (code == ReturnCode.Ok)
+                                                        {
+                                                            //
+                                                            // NOTE: We intend to modify the interpreter state,
+                                                            //       make sure this is not forbidden.
+                                                            //
+                                                            if (interpreter.IsModifiable(true, ref result))
+                                                            {
+                                                                if (interpreter.HasDbConnections(ref result))
+                                                                {
+                                                                    try
+                                                                    {
+                                                                        bool usePublicKeyToken = (publicKeyToken1 != null) ||
+                                                                            (publicKeyToken2 != null);
+
+                                                                        IDbConnection connection = null;
+                                                                        DbConnectionType dbConnectionType = DbConnectionType.None;
+                                                                        byte[] publicKeyToken = null; /* NOT USED */
+
+                                                                        code = DataOps.CreateDbConnection(
+                                                                            interpreter, dbConnectionType1,
+                                                                            dbConnectionType2, publicKeyToken1,
+                                                                            publicKeyToken2, arguments[argumentIndex],
+                                                                            assemblyFileName, typeFullName,
+                                                                            typeName, null, valueFlags,
+                                                                            DataOps.GetOtherDbConnectionTypes(
+                                                                                valueFlags, true, usePublicKeyToken,
+                                                                                true),
+                                                                            DataOps.GetOtherDbConnectionTypes(
+                                                                                valueFlags, true, usePublicKeyToken,
+                                                                                false),
+                                                                            ref connection, ref dbConnectionType,
+                                                                            ref publicKeyToken, ref result);
+
+                                                                        if (code == ReturnCode.Ok)
+                                                                        {
+                                                                            string connectionName;
+
+                                                                            if (varName != null)
+                                                                            {
+                                                                                connectionName = FormatOps.DatabaseConnectionName(
+                                                                                    connection, dbConnectionType, interpreter);
+
+                                                                                code = interpreter.SetDbVariableValue(
+                                                                                    varName, connectionName, ref result);
+
+                                                                                if ((code == ReturnCode.Ok) && (connection != null))
+                                                                                    connection.Open();
+                                                                            }
+                                                                            else
+                                                                            {
+                                                                                //
+                                                                                // HACK: Preserve legacy ordering of these operations.
+                                                                                //
+                                                                                if (connection != null)
+                                                                                    connection.Open();
+
+                                                                                connectionName = FormatOps.DatabaseConnectionName(
+                                                                                    connection, dbConnectionType, interpreter);
+                                                                            }
+
+                                                                            if (code == ReturnCode.Ok)
+                                                                            {
+                                                                                /* NO RESULT */
+                                                                                interpreter.AddDbConnection(connectionName, connection);
+
+                                                                                result = connectionName;
+
+#if NOTIFY
+                                                                                /* IGNORED */
+                                                                                interpreter.CheckNotification(
+                                                                                    NotifyType.Connection, NotifyFlags.Added,
+                                                                                    connection, interpreter, null, null, null,
+                                                                                    ref result);
+#endif
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    catch (Exception e)
+                                                                    {
+                                                                        Engine.SetExceptionErrorCode(interpreter, e);
+
+                                                                        result = e;
+                                                                        code = ReturnCode.Error;
+                                                                    }
+                                                                }
+                                                                else
+                                                                {
+                                                                    code = ReturnCode.Error;
+                                                                }
+                                                            }
+                                                            else
+                                                            {
+                                                                code = ReturnCode.Error;
+                                                            }
+                                                        }
+                                                    }
+                                                    else
+                                                    {
+                                                        if ((argumentIndex != Index.Invalid) &&
+                                                            Option.LooksLikeOption(arguments[argumentIndex]))
+                                                        {
+                                                            result = OptionDictionary.BadOption(
+                                                                options, arguments[argumentIndex], !interpreter.InternalIsSafe());
+                                                        }
+                                                        else
+                                                        {
+                                                            result = "wrong # args: should be \"sql open ?options? connectionString\"";
+                                                        }
+
+                                                        code = ReturnCode.Error;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"sql open ?options? connectionString\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "transaction":
+                                    {
+                                        if (arguments.Count >= 4)
+                                        {
+                                            OptionDictionary options = CommandOptions.GetCommandOptions(
+                                                CommandOptionType.Sql_Transaction);
+
+                                            int argumentIndex = Index.Invalid;
+
+                                            code = interpreter.GetOptions(options, arguments, 0, 2, Index.Invalid, false, ref argumentIndex, ref result);
+
+                                            if (code == ReturnCode.Ok)
+                                            {
+                                                if ((argumentIndex != Index.Invalid) &&
+                                                    ((argumentIndex + 2) == arguments.Count))
+                                                {
+                                                    IVariant value = null;
+                                                    IsolationLevel isolationLevel = IsolationLevel.Unspecified; /* NOTE: Yes, this default is OK, per MSDN. */
+
+                                                    if (options.IsPresent("-isolation", ref value))
+                                                        isolationLevel = (IsolationLevel)value.Value;
+
+                                                    string varName = null;
+
+                                                    if (options.IsPresent("-variable", ref value))
+                                                        varName = value.ToString();
+
+                                                    string subSubCommand = arguments[argumentIndex];
+
+                                                    code = ScriptOps.SubCommandFromEnsemble(
+                                                        interpreter, transactionSubCommands, null,
+                                                        true, false, ref subSubCommand, ref result);
+
+                                                    if (code == ReturnCode.Ok)
+                                                    {
+                                                        switch (subSubCommand)
+                                                        {
+                                                            case "begin":
+                                                                {
+                                                                    IDbConnection connection = null;
+
+                                                                    code = interpreter.GetDbConnection(
+                                                                        arguments[argumentIndex + 1], LookupFlags.Default,
+                                                                        ref connection, ref result);
+
+                                                                    if (code == ReturnCode.Ok)
+                                                                    {
+                                                                        if (connection != null)
+                                                                        {
+                                                                            //
+                                                                            // NOTE: We are going to modify the interpreter state, make
+                                                                            //       sure it is not set to read-only.  Technically, this
+                                                                            //       modifies the interpreter state directly (via the
+                                                                            //       transactions dictionary); however, we may need to
+                                                                            //       relax or remove this read-only restriction in the
+                                                                            //       future.
+                                                                            //
+                                                                            if (interpreter.IsModifiable(true, ref result))
+                                                                            {
+                                                                                if (interpreter.HasDbTransactions(ref result))
+                                                                                {
+                                                                                    try
+                                                                                    {
+                                                                                        string transactionName;
+                                                                                        IDbTransaction transaction = null;
+
+                                                                                        if (varName != null)
+                                                                                        {
+                                                                                            transactionName = FormatOps.DatabaseTransactionName(
+                                                                                                typeof(IDbTransaction), interpreter);
+
+                                                                                            code = interpreter.SetDbVariableValue(
+                                                                                                varName, transactionName, ref result);
+
+                                                                                            if (code == ReturnCode.Ok)
+                                                                                            {
+                                                                                                transaction = connection.BeginTransaction(
+                                                                                                    isolationLevel);
+                                                                                            }
+                                                                                        }
+                                                                                        else
+                                                                                        {
+                                                                                            //
+                                                                                            // HACK: Preserve legacy ordering of these operations.
+                                                                                            //
+                                                                                            transaction = connection.BeginTransaction(
+                                                                                                isolationLevel);
+
+                                                                                            transactionName = FormatOps.DatabaseTransactionName(
+                                                                                                transaction, interpreter);
+                                                                                        }
+
+                                                                                        if (code == ReturnCode.Ok)
+                                                                                        {
+                                                                                            /* NO RESULT */
+                                                                                            interpreter.AddDbTransaction(transactionName, transaction);
+
+                                                                                            result = transactionName;
+
+#if NOTIFY
+                                                                                            /* IGNORED */
+                                                                                            interpreter.CheckNotification(
+                                                                                                NotifyType.Transaction, NotifyFlags.Added,
+                                                                                                transaction, interpreter, null, null, null,
+                                                                                                ref result);
+#endif
+                                                                                        }
+                                                                                    }
+                                                                                    catch (Exception e)
+                                                                                    {
+                                                                                        Engine.SetExceptionErrorCode(interpreter, e);
+
+                                                                                        result = e;
+                                                                                        code = ReturnCode.Error;
+                                                                                    }
+                                                                                }
+                                                                                else
+                                                                                {
+                                                                                    code = ReturnCode.Error;
+                                                                                }
+                                                                            }
+                                                                            else
+                                                                            {
+                                                                                code = ReturnCode.Error;
+                                                                            }
+                                                                        }
+                                                                        else
+                                                                        {
+                                                                            result = String.Format(
+                                                                                "invalid connection {0}",
+                                                                                FormatOps.WrapOrNull(arguments[argumentIndex + 1]));
+
+                                                                            code = ReturnCode.Error;
+                                                                        }
+                                                                    }
+                                                                    break;
+                                                                }
+                                                            case "commit":
+                                                                {
+                                                                    IDbTransaction transaction = null;
+
+                                                                    code = interpreter.GetDbTransaction(
+                                                                        arguments[argumentIndex + 1], LookupFlags.Default,
+                                                                        ref transaction, ref result);
+
+                                                                    if (code == ReturnCode.Ok)
+                                                                    {
+                                                                        if (transaction != null)
+                                                                        {
+                                                                            //
+                                                                            // NOTE: We are going to modify the interpreter state, make
+                                                                            //       sure it is not set to read-only.  Technically, this
+                                                                            //       modifies the interpreter state directly (via the
+                                                                            //       transactions dictionary); however, we may need to
+                                                                            //       relax or remove this read-only restriction in the
+                                                                            //       future.
+                                                                            //
+                                                                            if (interpreter.IsModifiable(true, ref result))
+                                                                            {
+                                                                                if (interpreter.HasDbTransactions(ref result))
+                                                                                {
+                                                                                    try
+                                                                                    {
+                                                                                        transaction.Commit();
+                                                                                        interpreter.RemoveDbTransaction(arguments[argumentIndex + 1]);
+
+#if NOTIFY
+                                                                                        /* IGNORED */
+                                                                                        interpreter.CheckNotification(
+                                                                                            NotifyType.Transaction, NotifyFlags.Removed,
+                                                                                            transaction, interpreter, null, null, null,
+                                                                                            ref result);
+#endif
+
+                                                                                        transaction = null;
+                                                                                    }
+                                                                                    catch (Exception e)
+                                                                                    {
+                                                                                        Engine.SetExceptionErrorCode(interpreter, e);
+
+                                                                                        result = e;
+                                                                                        code = ReturnCode.Error;
+                                                                                    }
+                                                                                }
+                                                                                else
+                                                                                {
+                                                                                    code = ReturnCode.Error;
+                                                                                }
+                                                                            }
+                                                                            else
+                                                                            {
+                                                                                code = ReturnCode.Error;
+                                                                            }
+                                                                        }
+                                                                        else
+                                                                        {
+                                                                            result = String.Format(
+                                                                                "invalid transaction {0}",
+                                                                                FormatOps.WrapOrNull(arguments[argumentIndex + 1]));
+
+                                                                            code = ReturnCode.Error;
+                                                                        }
+                                                                    }
+                                                                    break;
+                                                                }
+                                                            case "rollback":
+                                                                {
+                                                                    IDbTransaction transaction = null;
+
+                                                                    code = interpreter.GetDbTransaction(
+                                                                        arguments[argumentIndex + 1], LookupFlags.Default,
+                                                                        ref transaction, ref result);
+
+                                                                    if (code == ReturnCode.Ok)
+                                                                    {
+                                                                        if (transaction != null)
+                                                                        {
+                                                                            //
+                                                                            // NOTE: We are going to modify the interpreter state, make
+                                                                            //       sure it is not set to read-only.  Technically, this
+                                                                            //       modifies the interpreter state directly (via the
+                                                                            //       transactions dictionary); however, we may need to
+                                                                            //       relax or remove this read-only restriction in the
+                                                                            //       future.
+                                                                            //
+                                                                            if (interpreter.IsModifiable(true, ref result))
+                                                                            {
+                                                                                if (interpreter.HasDbTransactions(ref result))
+                                                                                {
+                                                                                    try
+                                                                                    {
+                                                                                        transaction.Rollback();
+                                                                                        interpreter.RemoveDbTransaction(arguments[argumentIndex + 1]);
+
+#if NOTIFY
+                                                                                        /* IGNORED */
+                                                                                        interpreter.CheckNotification(
+                                                                                            NotifyType.Transaction, NotifyFlags.Removed,
+                                                                                            transaction, interpreter, null, null, null,
+                                                                                            ref result);
+#endif
+
+                                                                                        transaction = null;
+                                                                                    }
+                                                                                    catch (Exception e)
+                                                                                    {
+                                                                                        Engine.SetExceptionErrorCode(interpreter, e);
+
+                                                                                        result = e;
+                                                                                        code = ReturnCode.Error;
+                                                                                    }
+                                                                                }
+                                                                                else
+                                                                                {
+                                                                                    code = ReturnCode.Error;
+                                                                                }
+                                                                            }
+                                                                            else
+                                                                            {
+                                                                                code = ReturnCode.Error;
+                                                                            }
+                                                                        }
+                                                                        else
+                                                                        {
+                                                                            result = String.Format(
+                                                                                "invalid transaction {0}",
+                                                                                FormatOps.WrapOrNull(arguments[argumentIndex + 1]));
+
+                                                                            code = ReturnCode.Error;
+                                                                        }
+                                                                    }
+                                                                    break;
+                                                                }
+                                                            default:
+                                                                {
+                                                                    result = ScriptOps.BadSubCommand(
+                                                                        interpreter, null, null, subSubCommand,
+                                                                        transactionSubCommands, null, null);
+
+                                                                    code = ReturnCode.Error;
+                                                                    break;
+                                                                }
+                                                        }
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    if ((argumentIndex != Index.Invalid) &&
+                                                        Option.LooksLikeOption(arguments[argumentIndex]))
+                                                    {
+                                                        result = OptionDictionary.BadOption(
+                                                            options, arguments[argumentIndex], !interpreter.InternalIsSafe());
+                                                    }
+                                                    else
+                                                    {
+                                                        result = String.Format(
+                                                            "wrong # args: should be \"{0} {1} ?options? {2} object\"",
+                                                            this.Name, subCommand, "action");
+                                                    }
+
+                                                    code = ReturnCode.Error;
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = String.Format(
+                                                "wrong # args: should be \"{0} {1} ?options? {2} object\"",
+                                                this.Name, subCommand, "action");
+
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                case "types":
+                                    {
+                                        if ((arguments.Count == 2) || (arguments.Count == 3))
+                                        {
+                                            IStringList list = GenericOps<string, string>.Combine(
+                                                true, true, true, DataOps.GetDbConnectionTypeNames(),
+                                                DataOps.GetOtherDbConnectionTypeNames(true, true, true),
+                                                DataOps.GetOtherDbConnectionTypeNames(true, false, true),
+                                                DataOps.GetOtherDbConnectionTypeNames(false, true, false));
+
+                                            string pattern = null;
+
+                                            if (arguments.Count == 3)
+                                                pattern = arguments[2];
+
+                                            result = list.ToString(pattern, false);
+                                        }
+                                        else
+                                        {
+                                            result = "wrong # args: should be \"sql types ?pattern?\"";
+                                            code = ReturnCode.Error;
+                                        }
+                                        break;
+                                    }
+                                default:
+                                    {
+                                        result = ScriptOps.BadSubCommand(
+                                            interpreter, null, null, subCommand, this, null, null);
+
+                                        code = ReturnCode.Error;
+                                        break;
+                                    }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        result = "wrong # args: should be \"sql option ?arg ...?\"";
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    result = "invalid argument list";
+                    code = ReturnCode.Error;
+                }
+            }
+            else
+            {
+                result = "invalid interpreter";
+                code = ReturnCode.Error;
+            }
+
+            return code;
+        }
+        #endregion
+    }
+}

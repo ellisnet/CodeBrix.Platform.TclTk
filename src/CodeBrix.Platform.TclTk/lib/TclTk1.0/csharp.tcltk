@@ -1,0 +1,3537 @@
+###############################################################################
+#
+# csharp.tcltk --
+#
+# Extensible Adaptable Generalized Logic Engine (TclTk)
+# TclTk CSharp Package File
+#
+# Copyright (c) 2007-2012 by Joe Mistachkin.  All rights reserved.
+#
+# See the file "license.terms" for information on usage and redistribution of
+# this file, and for a DISCLAIMER OF ALL WARRANTIES.
+#
+# RCS: @(#) $Id: $
+#
+###############################################################################
+
+#
+# NOTE: Use our own namespace here because even though we do not directly
+#       support namespaces ourselves, we do not want to pollute the global
+#       namespace if this script actually ends up being evaluated in Tcl.
+#
+namespace eval ::TclTk {
+  #
+  # NOTE: This procedure is used to log various stages of the C# compilation
+  #       lifecycle.  Under normal circumstances, this procedure will not do
+  #       anything.
+  #
+  proc csharpLog { string {object ""} } {
+    # <help>
+    # This procedure emits a single diagnostic log message describing some
+    # stage of the C# compilation lifecycle.  It exists so that the many other
+    # procedures in this package can record what they are doing (which SDK path
+    # was found, which reference assemblies were selected, why a candidate was
+    # skipped, what the compiler emitted, and so on) without each of them
+    # having to know where, or whether, such output should go.  Under normal
+    # circumstances this procedure does nothing at all; logging is strictly
+    # opt-in.
+    #
+    # How it works: nothing is emitted unless the global array element
+    # ::no(csharpLog) is absent, the helper command [hasRuntimeOption] is
+    # available, and the runtime option named enableCSharpLog is currently
+    # enabled.  When logging is active and a non-null opaque object handle was
+    # supplied, it attempts to enrich the message with that object's public
+    # property values: it calls the private MarshalOps.ListProperties method
+    # via [object invoke -create], converts the resulting handle back to a
+    # string (necessary because -create returns the return code as an object),
+    # and, if successful, formats the property list as a dictionary using
+    # [formatListAsDict] when that helper is present (falling back to the raw
+    # list text otherwise); any failure is recorded as a placeholder suffix
+    # instead.  A single space is inserted before the suffix when it does not
+    # already begin with whitespace.  The final destination depends on the
+    # testCSharpLog runtime option: when set, the message is written (prefixed
+    # with a marker and a trailing newline) to the test channel obtained from
+    # [getTestChannelOrDefault] (or the ::test_channel variable, or stdout) by
+    # way of [tputs] or, if unavailable, [tqputs]; otherwise it is sent to
+    # [tclLog].
+    #
+    # Tricky details: every external helper this procedure leans on (the object
+    # command, [hasRuntimeOption], [formatListAsDict], [getTestChannelOrDefault], and
+    # tputs) is probed for via [info commands] or guarded so that the procedure
+    # degrades gracefully rather than failing when those helpers are absent.
+    # The object property query deliberately uses the +NonPublic flag and an
+    # aliased, created result, so the success comparison is performed against a
+    # stringified return code rather than the object handle itself.
+    #
+    # Arguments:
+    #   string -- The base log message text to emit.
+    #   object -- An optional opaque object handle.  When it is a non-null
+    #             object handle (and the object command exists), its public
+    #             properties are queried and appended to the message; an empty
+    #             string or invalid handle is simply ignored.
+    #
+    # Results:
+    #   Always the empty string; this procedure is invoked purely for its
+    #   logging side effect.
+    # </help>
+
+    #
+    # NOTE: If the "enableCSharpLog" runtime option is enabled, this routine
+    #       will emit log output somewhere; otherwise, it will do nothing.
+    #
+    if {![info exists ::no(csharpLog)] && \
+        [llength [info commands hasRuntimeOption]] > 0 && \
+        [hasRuntimeOption enableCSharpLog]} then {
+      #
+      # NOTE: If the caller passed a valid opaque object handle, query its
+      #       list of properties and emit them with the log output.
+      #
+      if {[llength [info commands object]] > 0 && \
+          [isNonNullObjectHandle $object]} then {
+        #
+        # HACK: Attempt to dynamically query all public properties of the
+        #       specified object -AND- add them to the log output.
+        #
+        set list null; set error null
+
+        set code [object invoke -create -alias -flags +NonPublic \
+            CodeBrix.Platform.TclTk._Components.Private.MarshalOps ListProperties \
+            "" $object null null true list error]
+
+        #
+        # HACK: Since -create was used above in the [object invoke] call,
+        #       the "code" variable must be converted to a string before
+        #       we can check it for success.
+        #
+        set code [getStringFromObjectHandle $code]
+
+        if {$code eq "Ok"} then {
+          #
+          # HACK: In theory, at this point, the "list" variable must be
+          #       a valid opaque object handle; however, to prevent any
+          #       future issues with the ListProperties method check it
+          #       just in case.
+          #
+          if {[isNonNullObjectHandle $list]} then {
+            #
+            # HACK: The [formatListAsDict] procedure will almost always
+            #       be available at this point; however, we do not want
+            #       to require it.
+            #
+            if {[llength [info commands formatListAsDict]] > 0} then {
+              set suffix [formatListAsDict \
+                  [getStringFromObjectHandle $list]]
+            } else {
+              set suffix [getStringFromObjectHandle $list]
+            }
+          } else {
+            set suffix [appendArgs \
+                "invalid property list for object \"" $object \"]
+          }
+        } else {
+          set suffix [getStringFromObjectHandle $error]
+        }
+
+        if {[string length $suffix] > 0 && \
+            [string is not space -strict [string index $suffix 0]]} then {
+          set suffix [appendArgs " " $suffix]
+        }
+
+        set newString [appendArgs $string $suffix]
+      } else {
+        set newString $string
+      }
+
+      #
+      # NOTE: If the "testCSharpLog" runtime option is enabled, emit the
+      #       output to the test log.
+      #
+      if {[hasRuntimeOption testCSharpLog]} then {
+        #
+        # HACK: The [getTestChannelOrDefault] procedure will almost always
+        #       be available at this point; however, we can work around the
+        #       lack of it.
+        #
+        if {[llength [info commands getTestChannelOrDefault]] > 0} then {
+          set channel [getTestChannelOrDefault]
+        } else {
+          if {[info exists ::test_channel]} then {
+            set channel $::test_channel
+          } else {
+            set channel stdout
+          }
+        }
+
+        #
+        # HACK: The [tputs] procedure will almost always be available at
+        #       this point; however, we can work around the lack of it.
+        #
+        set newString [appendArgs "---- " $newString \n]
+
+        if {[llength [info commands tputs]] > 0} then {
+          tputs $channel $newString
+        } else {
+          tqputs $channel $newString
+        }
+      } else {
+        #
+        # TODO: Is there a better place to send this log output when the
+        #       test suite is not available?
+        #
+        tclLog $newString
+      }
+    }
+
+    return ""
+  }
+
+  #
+  # NOTE: This procedure is used to determine the fully qualified path to the
+  #       .NET Core SDK.  An empty string will be returned to indicate an
+  #       error.  This procedure should not raise script errors.
+  #
+  proc getDotNetCoreSdkPath {} {
+    # <help>
+    # This procedure determines the fully qualified path to the base directory
+    # of the active .NET Core (or modern .NET) SDK.  That path is the anchor
+    # from which the rest of this package locates reference assemblies and the
+    # command line C# compiler, so almost everything that compiles C# on .NET
+    # Core ultimately depends on it.
+    #
+    # How it works: if the user has installed a hook by setting the global
+    # array element ::compileCSharp(getDotNetCoreSdkPath), that script is
+    # evaluated and its result is returned verbatim.  Otherwise the procedure
+    # runs the external command "dotnet --info", normalizes its line endings,
+    # and uses a line-anchored regular expression to extract the value that
+    # follows the "Base Path:" label, returning that value after passing it
+    # through [file normalize].  All progress and error conditions are recorded
+    # via [csharpLog].
+    #
+    # Tricky details: the [exec] of "dotnet --info" is wrapped so that a
+    # failure to run it (for example, because the dotnet driver is not on the
+    # PATH) does not raise a script error; it simply results in the empty
+    # string being returned.  Likewise, if the expected "Base Path:" line is
+    # not present, the empty string is returned.  This procedure is documented
+    # as never raising script errors.
+    #
+    # Arguments:
+    #   (none)
+    #
+    # Results:
+    #   The normalized, fully qualified path to the .NET Core SDK base
+    #   directory, or the empty string to indicate that it could not be
+    #   determined.
+    # </help>
+
+    if {[info exists ::compileCSharp(getDotNetCoreSdkPath)]} then {
+      return [eval $::compileCSharp(getDotNetCoreSdkPath)]; # HOOK
+    }
+
+    if {[catch {exec -- dotnet --info} info] == 0} then {
+      csharpLog [appendArgs \
+          "getDotNetCoreSdkPath ok:\n\t" \
+          [string map [list \n \n\t] $info]]
+
+      set info [string map [list \r\n \n] $info]
+
+      if {[regexp -line -- \
+          {^\s*Base Path:\s+([^\n]+)$} $info dummy path]} then {
+        return [file normalize $path]
+      }
+    } else {
+      csharpLog [appendArgs \
+          "getDotNetCoreSdkPath error: " $info]
+    }
+
+    return ""
+  }
+
+  #
+  # NOTE: This procedure attempts to populate the library directory -AND- the
+  #       build reference directory based on the version of the .NET Standard
+  #       currently in use.  Non-zero will be returned only upon success; no
+  #       script errors should be raised by this procedure.
+  #
+  # TODO: Update this procedure when a new version of the .NET Standard is
+  #       released.
+  #
+  proc populateDotNetStandardReferenceDirectories {
+          path standardVersion runtimeVersion targetVersion
+          {libraryDirectoryVarName ""} {buildReferenceSubDirectoryVarName ""}
+          {useSdkVersion false} } {
+    # <help>
+    # This procedure attempts to locate, for a given .NET Standard version, the
+    # reference assembly "library directory" and the "build reference"
+    # sub-directory underneath it that together contain the assemblies the C#
+    # compiler must reference when targeting that version of the .NET Standard.
+    # It exists because the on-disk layout of these reference assemblies has
+    # changed substantially across .NET Core and modern .NET releases, and this
+    # procedure encapsulates the several historical and current conventions in
+    # one place.  Callers use it to discover where the .NET Standard reference
+    # assemblies actually live before constructing compiler reference options.
+    #
+    # How it works: it returns the two discovered paths to the caller through
+    # the variable names supplied by the last two named arguments, using
+    # [upvar] (when those names are non-empty).  If the user has overridden the
+    # result via the global array element
+    # ::compileCSharp(dotNetStandardReferenceDirectories), its first element is
+    # taken as the library directory and its second as the build reference
+    # sub-directory, provided the library directory exists.  Otherwise the
+    # procedure branches on standardVersion: for netstandard2.0 it looks under
+    # the SDK's NuGetFallbackFolder for netstandard.library; for netstandard2.1
+    # it tries, in order, a legacy NETStandard.Library.Ref pack, a target
+    # framework moniker directory under Microsoft.NETCore.App.Ref (choosing a
+    # "net" or "netcoreapp" moniker depending on whether the major version is
+    # five or greater), the shared Microsoft.NETCore.App runtime directory
+    # keyed by the runtime version, and finally the SDK path itself as a
+    # fallback.  Each candidate is accepted only if it exists on disk, in which
+    # case the procedure sets the build reference sub-directory and returns
+    # true.
+    #
+    # Tricky details: before evaluating the netstandard2.1 candidates it may
+    # decide to skip the "ref" style directories entirely.  It does so when the
+    # .NET Standard preference computed for the runtime version disagrees with
+    # the preference computed for the candidate version (the SDK version, or
+    # the target version when useSdkVersion is true), as determined by
+    # [shouldPreferTheNetStandardVersion]; this guards against mixing reference
+    # assemblies that belong to incompatible standard preferences.  Several of
+    # the individual candidate branches can be individually disabled by the
+    # user through ::compileCSharp array elements (for example noStdReference,
+    # noTfmReference, noRuntimeReference, noSdkReference, noSkipRefDirectories);
+    # these are probed with [info exists].  The procedure does not raise script
+    # errors and logs each miss via [csharpLog].
+    #
+    # Arguments:
+    #   path                             -- The .NET Core SDK base path (as
+    #                                       returned by [getDotNetCoreSdkPath]);
+    #                                       its file tail is treated as the SDK
+    #                                       version, and its parent directories
+    #                                       are used to locate the various pack
+    #                                       and shared directories.
+    #   standardVersion                  -- The .NET Standard version to locate
+    #                                       reference assemblies for, expected
+    #                                       to be netstandard2.0 or
+    #                                       netstandard2.1.
+    #   runtimeVersion                   -- The full .NET runtime version string,
+    #                                       used both for the modern shared
+    #                                       runtime candidate and for the
+    #                                       standard preference comparison; may
+    #                                       be empty.
+    #   targetVersion                    -- The version being targeted, used to
+    #                                       derive a target framework moniker
+    #                                       and, when useSdkVersion is true, as
+    #                                       the candidate version.
+    #   libraryDirectoryVarName          -- The optional name of a caller
+    #                                       variable that receives the located
+    #                                       library directory; empty disables
+    #                                       this output.
+    #   buildReferenceSubDirectoryVarName -- The optional name of a caller
+    #                                       variable that receives the located
+    #                                       build reference sub-directory; empty
+    #                                       disables this output.
+    #   useSdkVersion                    -- A boolean; when true the target
+    #                                       version (rather than the SDK version
+    #                                       derived from the path tail) is used
+    #                                       as the candidate version for the
+    #                                       preference comparison.  Defaults to
+    #                                       false.
+    #
+    # Results:
+    #   Non-zero (true) only when both directories were located and exist on
+    #   disk, with the discovered values stored into the caller's variables;
+    #   otherwise zero (false).
+    # </help>
+
+    if {[string length $libraryDirectoryVarName] > 0} then {
+      upvar 1 $libraryDirectoryVarName libraryDirectory
+    }
+
+    if {[string length $buildReferenceSubDirectoryVarName] > 0} then {
+      upvar 1 $buildReferenceSubDirectoryVarName buildReferenceSubDirectory
+    }
+
+    if {[info exists \
+        ::compileCSharp(dotNetStandardReferenceDirectories)]} then {
+      set libraryDirectory \
+          [lindex $::compileCSharp(dotNetStandardReferenceDirectories) 0]
+
+      if {[file exists $libraryDirectory]} then {
+        set buildReferenceSubDirectory \
+            [lindex $::compileCSharp(dotNetStandardReferenceDirectories) 1]
+
+        return true
+      }
+
+      csharpLog [appendArgs \
+          "missing overridden .NET Standard 2.x library directory: " \
+          $libraryDirectory]
+    } else {
+      set skipRefDirectories false
+
+      if {![info exists ::compileCSharp(noSkipRefDirectories)]} then {
+        set sdkVersion [file tail $path]
+
+        if {$useSdkVersion} then {
+          set candidateVersion $targetVersion
+        } else {
+          set candidateVersion $sdkVersion
+        }
+
+        if {[string length $runtimeVersion] > 0 && \
+            [string length $candidateVersion] > 0} then {
+          set preferRuntimeVersion [shouldPreferTheNetStandardVersion \
+              $standardVersion $runtimeVersion]
+
+          set preferCandidateVersion [shouldPreferTheNetStandardVersion \
+              $standardVersion $candidateVersion]
+
+          if {$preferRuntimeVersion != $preferCandidateVersion} then {
+            set skipRefDirectories true
+
+            csharpLog [appendArgs \
+                "skipping \"ref\" directories due to .NET Standard " \
+                "preference mismatch between the runtime version " \
+                $runtimeVersion " (" $preferRuntimeVersion ") " \
+                "and the candidate version " $candidateVersion " (" \
+                $preferCandidateVersion ") with .NET SDK version " \
+                $sdkVersion]
+          }
+        }
+      }
+
+      switch -exact -- $standardVersion {
+        netstandard2.0 {
+          set libraryDirectory [file normalize \
+              [file join [file dirname $path] \
+              NuGetFallbackFolder netstandard.library]]
+
+          if {[file exists $libraryDirectory]} then {
+            set buildReferenceSubDirectory \
+                [file join build $standardVersion ref]
+
+            return true
+          }
+
+          csharpLog [appendArgs \
+              "missing default .NET Standard 2.0 library directory: " \
+              $libraryDirectory]
+        }
+        netstandard2.1 {
+          #
+          # HACK: This may depend on the .NET runtime version and/or
+          #       exactly how the .NET SDK was installed; we may use
+          #       "/usr/[local/]share/dotnet/sdk/<targetVersion>" as
+          #       the (reference) library (base) directory and "ref"
+          #       as the build reference (assembly) sub-directory.
+          #
+          if {!$skipRefDirectories && \
+              ![info exists ::compileCSharp(noStdReference)]} then {
+            set libraryDirectory [file normalize \
+                [file join [file dirname [file dirname \
+                $path]] packs NETStandard.Library.Ref]]; # LEGACY
+
+            if {[file exists $libraryDirectory]} then {
+              set buildReferenceSubDirectory \
+                  [file join ref $standardVersion]
+
+              return true
+            }
+          }
+
+          if {!$skipRefDirectories && \
+              ![info exists ::compileCSharp(noTfmReference)] && \
+              [regexp -skip 1 -- {^(\d+)\.(\d+)(?:\.|$)} \
+              $targetVersion majorVersion minorVersion]} then {
+            if {$majorVersion >= 5} then {
+              set targetFrameworkMoniker [appendArgs \
+                  net $majorVersion . $minorVersion]
+            } else {
+              set targetFrameworkMoniker [appendArgs \
+                  netcoreapp $majorVersion . $minorVersion]
+            }
+
+            set libraryDirectory [file normalize \
+                [file join [file dirname [file dirname \
+                $path]] packs Microsoft.NETCore.App.Ref]]; # PRIMARY
+
+            if {[file exists $libraryDirectory]} then {
+              set buildReferenceSubDirectory [file join \
+                  ref $targetFrameworkMoniker]
+
+              return true
+            }
+          }
+
+          if {![info exists ::compileCSharp(noRuntimeReference)] && \
+              [string is version -strict $runtimeVersion]} then {
+            set libraryDirectory [file normalize \
+                [file join [file dirname [file dirname \
+                $path]] shared Microsoft.NETCore.App]]; # MODERN
+
+            if {[file exists $libraryDirectory]} then {
+              set buildReferenceSubDirectory $runtimeVersion
+              return true
+            }
+          }
+
+          if {![info exists ::compileCSharp(noSdkReference)]} then {
+            set libraryDirectory $path; # FALLBACK
+
+            if {[file exists $libraryDirectory]} then {
+              set buildReferenceSubDirectory ref
+              return true
+            }
+          }
+
+          csharpLog [appendArgs \
+              "missing default .NET Standard 2.1 library directory: " \
+              $libraryDirectory]
+        }
+      }
+    }
+
+    return false
+  }
+
+  #
+  # NOTE: This procedure attempts to parse the specified string into two
+  #       parts.  The first part is the dotted System.Version value.  The
+  #       second (optional) part is the suffix, e.g. "-preview.X.Y", etc.
+  #       Upon success, non-zero will be returned.  This procedure should
+  #       not raise script errors.
+  #
+  proc tryParseDotNetCoreVersion {
+          value {versionVarName ""} {suffixNameVarName ""}
+          {suffixVersionVarName ""} {suffixMetadataVarName ""} } {
+    # <help>
+    # This procedure parses a .NET (Core) version string into its dotted
+    # System.Version portion and an optional trailing suffix, returning the
+    # parsed pieces to the caller through optional variable names.  .NET
+    # runtime and SDK version directories on disk often carry suffixes such as
+    # "-preview.5.21301.5" or "+buildmetadata", and the rest of this package
+    # needs to separate the comparable numeric version from those decorations
+    # in order to compare, filter, and select candidate directories reliably.
+    #
+    # How it works: if the user installed a hook via the global array element
+    # ::compileCSharp(tryParseDotNetCoreVersion), that script is evaluated and,
+    # if it returns a strict boolean, that result is honored; otherwise the
+    # default parsing proceeds.  The named result variables are bound with
+    # [upvar] only when their names are non-empty.  A value that is already a
+    # strict System.Version is accepted immediately, with all three suffix
+    # outputs set to empty.  Otherwise a regular expression strips a leading
+    # dotted version (one major, one minor, and up to two further components)
+    # from the front; if that fails, or the extracted prefix is not a strict
+    # version, the parse fails.  The suffix (the text after the first "-" or
+    # "+") is then matched against a second pattern that splits it into a
+    # suffix name, an optional dotted-or-dashed suffix version, and optional
+    # metadata.
+    #
+    # Tricky details: the version output is only assigned once parsing has
+    # fully succeeded, so callers should not rely on it being set on failure.
+    # The suffix pattern matching is case-insensitive and tolerant of both "."
+    # and "-" separators within the suffix version.  There is a defensive
+    # branch (documented in the body as not currently reachable) that clears
+    # the suffix outputs when no "-" or "+" is found.  This procedure does not
+    # raise script errors.
+    #
+    # Arguments:
+    #   value                  -- The version string to parse.
+    #   versionVarName         -- Optional caller variable name to receive the
+    #                            dotted System.Version portion; empty disables.
+    #   suffixNameVarName      -- Optional caller variable name to receive the
+    #                            suffix name (for example "preview"); empty
+    #                            disables.
+    #   suffixVersionVarName   -- Optional caller variable name to receive the
+    #                            numeric suffix version; empty disables.
+    #   suffixMetadataVarName  -- Optional caller variable name to receive the
+    #                            trailing metadata portion; empty disables.
+    #
+    # Results:
+    #   Non-zero (true) when the value parsed successfully (with the requested
+    #   outputs assigned), or zero (false) when it could not be parsed.
+    # </help>
+
+    if {[info exists ::compileCSharp(tryParseDotNetCoreVersion)]} then {
+      #
+      # HACK: If this "hook" does not return a valid boolean, the default
+      #       handling (below) will still be used.
+      #
+      set result [eval $::compileCSharp(tryParseDotNetCoreVersion)]; # HOOK
+
+      if {[string is boolean -strict $result]} then {
+        return $result
+      }
+    }
+
+    if {[string length $versionVarName] > 0} then {
+      upvar 1 $versionVarName version
+    }
+
+    if {[string length $suffixNameVarName] > 0} then {
+      upvar 1 $suffixNameVarName suffixName
+    }
+
+    if {[string length $suffixVersionVarName] > 0} then {
+      upvar 1 $suffixVersionVarName suffixVersion
+    }
+
+    if {[string length $suffixMetadataVarName] > 0} then {
+      upvar 1 $suffixMetadataVarName suffixMetadata
+    }
+
+    if {[string is version -strict $value]} then {
+      set suffixName ""; set suffixVersion ""; set suffixMetadata ""
+      set version $value; # NOTE: Only the version portion is present.
+
+      return true
+    }
+
+    set versionPattern {^(\d+\.\d+(?:\.\d+){0,2})(?:[\+\-].*)$}
+
+    if {[regsub -- $versionPattern $value {\1} maybeVersion] == 0 || \
+        [string is not version -strict $maybeVersion]} then {
+      return false
+    }
+
+    set index [string first - $value]
+
+    if {$index == -1} then {
+      set index [string first + $value]
+    }
+
+    if {$index != -1} then {
+      set beforeSuffix [string range $value 0 [incr index -1]]
+
+      if {[string is not version -strict $beforeSuffix]} then {
+        return false
+      }
+
+      set suffixPattern [appendArgs \
+          {^(\w+)(?:[\.\-](\d+(?:[\.\-]\d+){0,3}))?} \
+          {(?:[\+\-](\d+\.\d+|[0-9A-F]+|[A-Z]+))?$}]
+
+      if {![regexp -nocase -skip 1 -- $suffixPattern \
+          [string range $value [incr index 2] end] \
+          suffixName suffixVersion suffixMetadata]} then {
+        return false
+      }
+    } else {
+      #
+      # TODO: It should not be possible for this case to be hit; however,
+      #       just in case that changes in the future, this code is being
+      #       left in-place.
+      #
+      set suffixName ""; set suffixVersion ""; set suffixMetadata ""
+    }
+
+    set version $maybeVersion
+    return true
+  }
+
+  #
+  # NOTE: This procedure returns non-zero if the specified value appears to
+  #       refer to a "well-known" version of the .NET (Core?) runtime -AND-
+  #       it should not raise script errors.  Only the versions checked for
+  #       within this procedure are known to work with this script package.
+  #
+  # TODO: Update this procedure when a new version of the .NET Standard or
+  #       the .NET runtime is released.
+  #
+  proc isKnownDotNetCoreVersion { value {standardVersion ""} } {
+    # <help>
+    # This procedure reports whether a version value appears to name a
+    # "well-known" version of the .NET (Core) runtime that this script package
+    # is known to work with.  It exists as a deliberately conservative gate:
+    # rather than trusting any parseable version, the package only proceeds for
+    # runtime major versions that have actually been validated against TclTk,
+    # so unexpected or future versions are flagged rather than silently
+    # assumed to work.
+    #
+    # How it works: if the user installed a hook via the global array element
+    # ::compileCSharp(isKnownDotNetCoreVersion) and it returns a strict
+    # boolean, that result is used.  Otherwise the procedure checks the value's
+    # leading major version with [string match against] simple glob patterns,
+    # gated by the optional standardVersion.  When standardVersion is empty or
+    # netstandard2.0, a leading "2." is accepted.  When standardVersion is
+    # empty or netstandard2.1, the recognized major versions (currently 3 and 5
+    # through 10) are accepted.  If no pattern matches, false is returned.
+    #
+    # Tricky details: the list of accepted major versions is maintained by hand
+    # and is explicitly called out in the body as something to update when new
+    # .NET runtime or .NET Standard versions are released; it is not derived
+    # from any general comparison.  This procedure does not raise script
+    # errors.
+    #
+    # Arguments:
+    #   value           -- The runtime version string to test (only its leading
+    #                      major-version component is examined via glob match).
+    #   standardVersion -- An optional .NET Standard version that constrains
+    #                      which major versions are considered known; empty
+    #                      considers both netstandard2.0 and netstandard2.1
+    #                      sets.  Defaults to the empty string.
+    #
+    # Results:
+    #   Non-zero (true) when the value matches a known runtime version for the
+    #   given standard version, otherwise zero (false).
+    # </help>
+
+    if {[info exists ::compileCSharp(isKnownDotNetCoreVersion)]} then {
+      #
+      # HACK: If this "hook" does not return a valid boolean, the default
+      #       handling (below) will still be used.
+      #
+      set result [eval $::compileCSharp(isKnownDotNetCoreVersion)]; # HOOK
+
+      if {[string is boolean -strict $result]} then {
+        return $result
+      }
+    }
+
+    if {$standardVersion in [list "" netstandard2.0]} then {
+      #
+      # NOTE: This check will probably not need to be changed;
+      #       however, do double-check it when appropriate.
+      #
+      if {[string match 2.* $value]} then {
+        return true
+      }
+    }
+
+    if {$standardVersion in [list "" netstandard2.1]} then {
+      #
+      # TODO: Update this check when new versions of the .NET
+      #       runtime are released.
+      #
+      if {[string match 10.* $value] || \
+          [string match 9.* $value] || \
+          [string match 8.* $value] || \
+          [string match 7.* $value] || \
+          [string match 6.* $value] || \
+          [string match 5.* $value] || \
+          [string match 3.* $value]} then {
+        return true
+      }
+    }
+
+    return false
+  }
+
+  #
+  # NOTE: This procedure returns non-zero if the specified version of the
+  #       .NET Standard specification should be preferred for its primary
+  #       reference assembly.
+  #
+  # TODO: Update this procedure when a new version of the .NET Standard or
+  #       the .NET runtime is released.
+  #
+  proc shouldPreferTheNetStandardVersion { standardVersion targetVersion } {
+    # <help>
+    # This procedure decides whether a particular version of the .NET Standard
+    # specification should be preferred (for the purpose of selecting its
+    # primary reference assembly) given a target runtime version.  It is the
+    # core policy routine that maps a concrete runtime version onto a .NET
+    # Standard generation, and its answer drives both reference directory
+    # selection and the ordering of standard versions tried elsewhere in this
+    # package.
+    #
+    # How it works: a user hook, the global array element
+    # ::compileCSharp(shouldPreferTheNetStandardVersion), is consulted first
+    # and honored when it returns a strict boolean.  Otherwise the target
+    # version is first cleaned up by [tryParseDotNetCoreVersion] to strip any
+    # "preview" or other non-final decorations (the original value is saved for
+    # diagnostics, and an invalidTargetVersion hook may run on parse failure).
+    # The cleaned version is validated against [isKnownDotNetCoreVersion],
+    # which may trigger one of several optional user hooks (emptyTargetVersion,
+    # unsupportedTargetVersion, or supportedTargetVersion) and emit a warning
+    # via [csharpLog] for empty or unsupported versions.  When the target is a
+    # strict version, the procedure uses [package vcompare] to set two internal
+    # booleans: versions at or above 3.0 prefer netstandard2.1, versions at or
+    # above 2.0 but below 3.0 prefer netstandard2.0, and anything lower prefers
+    # neither.  When the target is not a strict version (empty or a non-final
+    # release), it falls back to [isKnownDotNetCoreVersion] keyed by each
+    # standard version to set the same booleans.  Finally it returns the
+    # boolean corresponding to the requested standardVersion via a [switch].
+    #
+    # Tricky details: the two internal booleans are only assigned when not
+    # already set (via [info exists] guards), which is precisely what allows
+    # the optional user hooks invoked earlier to pre-seed and thereby override
+    # the built-in mapping.  The body explains that [package vcompare] is
+    # deliberately not used as the sole mechanism because it rejects empty
+    # strings and non-final releases and because the explicit checks make
+    # manual verification of new runtime versions easier.  This is another
+    # routine flagged for manual update as new versions ship.  It does not
+    # raise script errors.
+    #
+    # Arguments:
+    #   standardVersion -- The .NET Standard version whose preference is being
+    #                      queried; meaningful values are netstandard2.0 and
+    #                      netstandard2.1 (anything else yields false).
+    #   targetVersion   -- The target runtime version to evaluate; may carry a
+    #                      preview/non-final suffix or be empty.
+    #
+    # Results:
+    #   Non-zero (true) when the given standard version should be preferred for
+    #   the target version, otherwise zero (false).
+    # </help>
+
+    if {[info exists \
+        ::compileCSharp(shouldPreferTheNetStandardVersion)]} then {
+      #
+      # HACK: If this "hook" does not return a valid boolean, the default
+      #       handling (below) will still be used.
+      #
+      set result [eval \
+          $::compileCSharp(shouldPreferTheNetStandardVersion)]; # HOOK
+
+      if {[string is boolean -strict $result]} then {
+        return $result
+      }
+    }
+
+    #
+    # HACK: If necessary, attempt to fixup the target version in order
+    #       to remove any extraneous "preview" (or other) indicators.
+    #
+    set savedTargetVersion $targetVersion
+
+    if {![tryParseDotNetCoreVersion $targetVersion targetVersion]} then {
+      if {[info exists ::compileCSharp(invalidTargetVersion)]} then {
+        eval $::compileCSharp(invalidTargetVersion)
+      }
+    }
+
+    #
+    # HACK: This could simply use [package vcompare]; however, this way
+    #       makes it easier to (manually) verify compatibility of newer
+    #       versions of the .NET runtime and allows for easier addition
+    #       of newer versions of the .NET Standard itself.  The list of
+    #       target versions represent the ones that are known to "work"
+    #       with TclTk.  Also, using [package vcompare] does not permit
+    #       empty strings nor does it permit things like "preview" (or
+    #       any other non-final) releases.
+    #
+    # TODO: Update this check when new versions of the .NET runtime are
+    #       released.
+    #
+    if {![isKnownDotNetCoreVersion $targetVersion]} then {
+      csharpLog [appendArgs "WARNING: " [expr {
+        [string length $targetVersion] == 0 ? \
+            "empty" : "unsupported"
+      }] " .NET (Core?) runtime target version " [expr {
+        [string length $targetVersion] == 0 ? \
+            "<none>" : $targetVersion
+      }] " with original runtime target version " [expr {
+        [string length $savedTargetVersion] == 0 ? \
+            "<none>" : $savedTargetVersion
+      }]]
+
+      if {[string length $targetVersion] == 0} then {
+        if {[info exists ::compileCSharp(emptyTargetVersion)]} then {
+          eval $::compileCSharp(emptyTargetVersion)
+        }
+      } else {
+        if {[info exists ::compileCSharp(unsupportedTargetVersion)]} then {
+          eval $::compileCSharp(unsupportedTargetVersion)
+        }
+      }
+    } else {
+      if {[info exists ::compileCSharp(supportedTargetVersion)]} then {
+        eval $::compileCSharp(supportedTargetVersion)
+      }
+    }
+
+    #
+    # NOTE: Make sure the target version being checked is not empty -AND-
+    #       that it is not a "preview" (or any other non-final) release.
+    #
+    if {[string is version -strict $targetVersion]} then {
+      #
+      # NOTE: This is the actual version checking / mapping, where we just
+      #       use [package vcompare].  Please note that the [info exists]
+      #       checks are being used to allow the optional the user-defined
+      #       script (above) to override the handling here.
+      #
+      if {[package vcompare $targetVersion 3.0] >= 0} then {
+        if {![info exists isNetStandard20]} then {set isNetStandard20 false}
+        if {![info exists isNetStandard21]} then {set isNetStandard21 true}
+      } elseif {[package vcompare $targetVersion 2.0] >= 0} then {
+        if {![info exists isNetStandard20]} then {set isNetStandard20 true}
+        if {![info exists isNetStandard21]} then {set isNetStandard21 false}
+      } else {
+        if {![info exists isNetStandard20]} then {set isNetStandard20 false}
+        if {![info exists isNetStandard21]} then {set isNetStandard21 false}
+      }
+    } else {
+      #
+      # HACK: *FALLBACK* This will properly handle both empty versions
+      #       -AND- various "preview" (or any other non-final) releases.
+      #
+      # TODO: Update this check when new versions of the .NET runtime are
+      #       released.
+      #
+      if {[isKnownDotNetCoreVersion $targetVersion netstandard2.1]} then {
+        if {![info exists isNetStandard20]} then {set isNetStandard20 false}
+        if {![info exists isNetStandard21]} then {set isNetStandard21 true}
+      } elseif {[isKnownDotNetCoreVersion $targetVersion netstandard2.0]} then {
+        if {![info exists isNetStandard20]} then {set isNetStandard20 true}
+        if {![info exists isNetStandard21]} then {set isNetStandard21 false}
+      } else {
+        if {![info exists isNetStandard20]} then {set isNetStandard20 false}
+        if {![info exists isNetStandard21]} then {set isNetStandard21 false}
+      }
+    }
+
+    switch -exact -- $standardVersion {
+      netstandard2.0 {return $isNetStandard20}
+      netstandard2.1 {return $isNetStandard21}
+    }
+
+    return false
+  }
+
+  #
+  # NOTE: This procedure attempts to determine which version of the .NET
+  #       Standard should be used for the explicit purpose of determining
+  #       the needed .NET Standard reference assembly path(s) to compile
+  #       C# code.  An empty string is used to indicate an error, i.e. no
+  #       suitable .NET Standard version was found.  This procedure should
+  #       not raise script errors.
+  #
+  # TODO: Update this procedure when a new version of the .NET Standard is
+  #       released.
+  #
+  proc determineDotNetStandardVersion {
+          path runtimeVersionVarName targetVersionVarName
+          {useSdkVersion false} {defaultTargetVersion ""} } {
+    # <help>
+    # This procedure determines which version of the .NET Standard should be
+    # used when locating the reference assemblies needed to compile C# code,
+    # and as a side effect reports back the runtime version and the target
+    # version it settled on.  It ties together the version-preference policy
+    # and the on-disk directory probing so that callers can ask a single
+    # question -- "which .NET Standard applies here?" -- and receive an answer
+    # that is known to correspond to reference assemblies that actually exist.
+    #
+    # How it works: it binds the two caller variables named by
+    # runtimeVersionVarName and targetVersionVarName with [upvar].  The runtime
+    # version is taken from ::tcltk_platform(runtimeVersion) when present, else
+    # left empty.  Unless disabled by ::compileCSharp(noFindLoadedVersion), and
+    # only when the object command exists, the procedure scans the loaded
+    # "netstandard" assemblies for diagnostic logging (it intentionally does
+    # not use that assembly version as the target).  The target version is then
+    # chosen as: the runtime version when running on .NET Core with a strict
+    # runtime version and useSdkVersion is false; otherwise the file tail of
+    # the supplied path when that path is non-empty; otherwise the
+    # defaultTargetVersion.  Given a non-empty target version, it builds an
+    # ordered list of candidate standard versions -- either an explicit
+    # override from ::compileCSharp(dotNetStandardVersions), or an order
+    # derived from [shouldPreferTheNetStandardVersion] (preferring
+    # netstandard2.1 first, or netstandard2.0 first, or an empty list when
+    # neither is preferred).  For each candidate it clears and re-probes the
+    # directories via [populateDotNetStandardReferenceDirectories]; the first
+    # candidate for which both a non-empty library directory and build
+    # reference sub-directory are found is returned.
+    #
+    # Tricky details: the runtime and target versions are reported to the
+    # caller regardless of whether a standard version is ultimately found, so
+    # callers can inspect them even on failure.  The loaded-assembly scan is
+    # purely informational.  All steps log via [csharpLog], and the procedure
+    # is documented as not raising script errors and as needing manual updates
+    # when new .NET Standard versions are released.
+    #
+    # Arguments:
+    #   path                  -- The .NET Core SDK base path used to probe
+    #                            reference directories and, in some cases, to
+    #                            derive the target version from its file tail.
+    #   runtimeVersionVarName -- The name of a caller variable that receives the
+    #                            determined runtime version (required; bound via
+    #                            [upvar]).
+    #   targetVersionVarName  -- The name of a caller variable that receives the
+    #                            determined target version (required; bound via
+    #                            [upvar]).
+    #   useSdkVersion         -- A boolean controlling whether the SDK/target
+    #                            version is preferred over the loaded runtime
+    #                            version; defaults to false.
+    #   defaultTargetVersion  -- The target version to fall back to when neither
+    #                            the runtime version nor the path tail yields
+    #                            one; defaults to the empty string.
+    #
+    # Results:
+    #   The selected .NET Standard version string (for example netstandard2.1)
+    #   for which reference directories were found, or the empty string when no
+    #   suitable version could be determined.
+    # </help>
+
+    upvar 1 $runtimeVersionVarName runtimeVersion
+
+    if {[info exists ::tcltk_platform(runtimeVersion)]} then {
+      set runtimeVersion $::tcltk_platform(runtimeVersion)
+    } else {
+      set runtimeVersion ""
+    }
+
+    upvar 1 $targetVersionVarName targetVersion
+
+    if {![info exists ::compileCSharp(noFindLoadedVersion)]} then {
+      if {[llength [info commands object]] > 0} then {
+        if {!$useSdkVersion && [isDotNetCore]} then {
+          foreach assembly [object assemblies "netstandard, *"] {
+            if {[regexp -skip 1 -- \
+                {^netstandard, Version=(\d+\.\d+\.\d+\.\d+)(?:, |$)} \
+                $assembly assemblyVersion]} then {
+              # set targetVersion $assemblyVersion; # NOTE: Wrong.
+
+              csharpLog [appendArgs \
+                  "found loaded .NET Standard assembly: " $assembly]
+
+              break
+            }
+          }
+        } else {
+          csharpLog "skipped finding loaded .NET Standard assemblies"
+        }
+      }
+    }
+
+    if {!$useSdkVersion && [isDotNetCore] && \
+        [string is version -strict $runtimeVersion]} then {
+      set targetVersion $runtimeVersion
+    } elseif {[string length $path] > 0} then {
+      set targetVersion [file tail $path]
+    } else {
+      set targetVersion $defaultTargetVersion
+    }
+
+    if {[string length $targetVersion] > 0} then {
+      if {[info exists ::compileCSharp(dotNetStandardVersions)]} then {
+        set standardVersions $::compileCSharp(dotNetStandardVersions)
+      } else {
+        if {[shouldPreferTheNetStandardVersion \
+            netstandard2.1 $targetVersion]} then {
+          set standardVersions [list netstandard2.1 netstandard2.0]
+        } elseif {[shouldPreferTheNetStandardVersion \
+            netstandard2.0 $targetVersion]} then {
+          set standardVersions [list netstandard2.0 netstandard2.1]
+        } else {
+          set standardVersions [list]
+
+          csharpLog [appendArgs \
+              "unknown .NET Standard preference for target version: " \
+              $targetVersion]
+        }
+      }
+
+      csharpLog [appendArgs \
+          "final list of .NET Standard versions: " $standardVersions]
+
+      foreach standardVersion $standardVersions {
+        unset -nocomplain libraryDirectory
+        unset -nocomplain buildReferenceSubDirectory
+
+        populateDotNetStandardReferenceDirectories \
+            $path $standardVersion $runtimeVersion \
+            $targetVersion libraryDirectory \
+            buildReferenceSubDirectory $useSdkVersion
+
+        if {[info exists libraryDirectory] && \
+            [string length $libraryDirectory] > 0 && \
+            [info exists buildReferenceSubDirectory] && \
+            [string length $buildReferenceSubDirectory] > 0} then {
+          csharpLog [appendArgs \
+              "selected .NET Standard preference for target version: " \
+              $standardVersion]
+
+          return $standardVersion
+        }
+      }
+    }
+
+    return ""
+  }
+
+  #
+  # NOTE: This procedure is used to determine the fully qualified path to the
+  #       directory containing the reference assemblies for the .NET Standard
+  #       2.x.  An empty string will be returned to indicate an error.  This
+  #       procedure should not raise script errors.
+  #
+  proc getDotNetStandardReferencePath {
+          {packageVersion ""} {standardVersion ""} {useSdkVersion false} } {
+    # <help>
+    # This procedure returns the fully qualified path to the directory that
+    # actually contains the .NET Standard 2.x reference assemblies to be passed
+    # to the C# compiler.  Where [populateDotNetStandardReferenceDirectories]
+    # finds the base library directory and a relative reference sub-directory,
+    # this procedure goes the final step: it joins those (often with an
+    # intervening version directory whose exact name is not known in advance)
+    # and verifies that the resulting assembly directory exists on disk.  It is
+    # the routine the compiler-invocation code calls to resolve reference paths.
+    #
+    # How it works: it first obtains the SDK path via [getDotNetCoreSdkPath].
+    # If no standard version was supplied, it asks [determineDotNetStandardVersion]
+    # to choose one (also yielding the runtime and target versions); otherwise
+    # the runtime and target versions are left empty.  It then probes the
+    # library directory and build reference sub-directory via
+    # [populateDotNetStandardReferenceDirectories].  Given both, it resolves the
+    # final assembly directory in one of several ways, returning the first that
+    # exists:  (1) when a packageVersion was supplied, by joining the library
+    # directory, that package version, and the build reference sub-directory;
+    # (2) when no package version was supplied but either the build reference
+    # sub-directory or the library directory tail already looks like a version
+    # (using strict-version checks under ::compileCSharp(noSuffixedVersions),
+    # or [tryParseDotNetCoreVersion] otherwise), by joining the library
+    # directory directly with the build reference sub-directory; and
+    # (3) otherwise, by enumerating the version-like sub-directories of the
+    # library directory, filtering and sorting them, and joining each candidate
+    # version with the build reference sub-directory until an existing
+    # directory is found.
+    #
+    # Tricky details: the third strategy is the most involved.  Candidate
+    # sub-directory names are gathered with [glob] over directories, filtered
+    # by a command that rejects names that are not parseable versions (using a
+    # strict System.Version check when ::compileCSharp(noSuffixedVersions) is
+    # set, or full .NET runtime version parsing otherwise), and sorted in
+    # decreasing order by a custom comparison command.  That comparison command
+    # (overridable via ::compileCSharp(compareCommand)) is built from several
+    # other overridable pieces -- a list of version suffix names ordered from
+    # least to most stable, a suffix version pattern, and separate command
+    # prefixes for comparing versions, integers, and strings -- and it ranks
+    # full runtime versions first by their numeric version and then by their
+    # suffix components, treating a missing suffix as the most stable.  The
+    # custom comparison callback is removed via [object removecallback] after
+    # sorting.  As a fail-safe, even after filtering and sorting, each selected
+    # candidate is re-validated with [tryParseDotNetCoreVersion] before its
+    # directory is accepted.  Every selection and rejection is logged via
+    # [csharpLog], and the procedure is documented as not raising script
+    # errors.
+    #
+    # Arguments:
+    #   packageVersion  -- An optional explicit package/version directory name
+    #                      to insert between the library directory and the build
+    #                      reference sub-directory; empty triggers the automatic
+    #                      version-directory discovery strategies.
+    #   standardVersion -- An optional .NET Standard version to use directly; an
+    #                      empty value causes one to be determined automatically
+    #                      via [determineDotNetStandardVersion].
+    #   useSdkVersion   -- A boolean forwarded to the determination and
+    #                      population helpers controlling SDK-versus-runtime
+    #                      version preference; defaults to false.
+    #
+    # Results:
+    #   The fully qualified, normalized path to the reference assembly directory
+    #   that exists on disk, or the empty string when no suitable directory
+    #   could be located.
+    # </help>
+
+    set path [getDotNetCoreSdkPath]
+
+    if {[string length $path] > 0} then {
+      if {[string length $standardVersion] == 0} then {
+        set standardVersion [determineDotNetStandardVersion \
+            $path runtimeVersion targetVersion $useSdkVersion]
+      } else {
+        set runtimeVersion ""
+        set targetVersion ""
+      }
+
+      unset -nocomplain libraryDirectory
+      unset -nocomplain buildReferenceSubDirectory
+
+      populateDotNetStandardReferenceDirectories \
+          $path $standardVersion $runtimeVersion \
+          $targetVersion libraryDirectory \
+          buildReferenceSubDirectory $useSdkVersion
+
+      if {[info exists libraryDirectory] && \
+          [string length $libraryDirectory] > 0 && \
+          [info exists buildReferenceSubDirectory] && \
+          [string length $buildReferenceSubDirectory] > 0} then {
+        if {[string length $packageVersion] > 0} then {
+          set assemblyDirectory [file normalize \
+              [file join $libraryDirectory $packageVersion \
+              $buildReferenceSubDirectory]]
+
+          if {[file exists $assemblyDirectory]} then {
+            csharpLog [appendArgs \
+                "selected .NET Standard reference assembly (1): " \
+                $assemblyDirectory]
+
+            return $assemblyDirectory
+          }
+        } else {
+          #
+          # HACK: For (later) versions of the .NET runtime, the library
+          #       directory may already include the version number.  In
+          #       that case, just use it verbatim, i.e. joined with the
+          #       build reference (assembly) sub-directory.
+          #
+          set maybeVersions(1) $buildReferenceSubDirectory
+          set maybeVersions(2) [file tail $libraryDirectory]
+
+          if {[info exists ::compileCSharp(noSuffixedVersions)]} then {
+            if {[string is version -strict $maybeVersions(1)] || \
+                [string is version -strict $maybeVersions(2)]} then {
+              set assemblyDirectory [file normalize [file join \
+                  $libraryDirectory $buildReferenceSubDirectory]]
+
+              if {[file exists $assemblyDirectory]} then {
+                csharpLog [appendArgs \
+                    "selected .NET Standard reference assembly (2): " \
+                    $assemblyDirectory]
+
+                return $assemblyDirectory
+              }
+            }
+          } else {
+            if {[tryParseDotNetCoreVersion $maybeVersions(1)] || \
+                [tryParseDotNetCoreVersion $maybeVersions(2)]} then {
+              set assemblyDirectory [file normalize [file join \
+                  $libraryDirectory $buildReferenceSubDirectory]]
+
+              if {[file exists $assemblyDirectory]} then {
+                csharpLog [appendArgs \
+                    "selected .NET Standard reference assembly (3): " \
+                    $assemblyDirectory]
+
+                return $assemblyDirectory
+              }
+            }
+          }
+
+          unset -nocomplain maybeVersions
+
+          if {[info exists ::compileCSharp(compareCommand)]} then {
+            set compareCommand $::compileCSharp(compareCommand)
+          } else {
+            #
+            # NOTE: These version suffix names must be listed in increasing
+            #       order of release "stability" for the algorithm to work.
+            #
+            if {[info exists ::compileCSharp(versionSuffixNames)]} then {
+              set versionSuffixNames $::compileCSharp(versionSuffixNames)
+            } else {
+              set versionSuffixNames [list \
+                  unknown alpha beta preview rc final rtm ga servicing lts]
+            }
+
+            #
+            # NOTE: This pattern indicates that a suffix "version string" is
+            #       correctly formed.
+            #
+            if {[info exists ::compileCSharp(versionSuffixPattern)]} then {
+              set versionSuffixPattern $::compileCSharp(versionSuffixPattern)
+            } else {
+              set versionSuffixPattern {^\d+(?:[\.\-]\d+)*$}
+            }
+
+            #
+            # NOTE: This is the command (prefix) used to compare two values
+            #       that are correctly formatted System.Version strings.
+            #
+            if {[info exists ::compileCSharp(versionCompareCommand)]} then {
+              set versionCommand $::compileCSharp(versionCompareCommand)
+            } else {
+              set versionCommand [list package vcompare]
+            }
+
+            #
+            # NOTE: This is the command (prefix) used to compare two values
+            #       that are arbitrary strings.
+            #
+            if {[info exists ::compileCSharp(stringCompareCommand)]} then {
+              set stringCommand $::compileCSharp(stringCompareCommand)
+            } else {
+              set stringCommand [list string compare]
+            }
+
+            #
+            # NOTE: This is the command (prefix) used to compare two values
+            #       that are correctly formatted integer strings.
+            #
+            if {[info exists ::compileCSharp(integerCompareCommand)]} then {
+              set integerCommand $::compileCSharp(integerCompareCommand)
+            } else {
+              set integerCommand [list apply [list [list value1 value2] {
+                if {$value1 < $value2} then {
+                  return -1
+                } elseif {$value1 == $value2} then {
+                  return 0
+                } else {
+                  return 1
+                }
+              }]]
+            }
+
+            #
+            # NOTE: This is the command (prefix) used to compare two values
+            #       that are correctly formatted full .NET (Core?) runtime
+            #       version strings.
+            #
+            set compareCommand [list apply [list \
+                    [list versionCommand stringCommand integerCommand \
+                    versionSuffixNames versionSuffixPattern value1 value2] {
+              set versionOk1 [tryParseDotNetCoreVersion $value1 \
+                  version1 suffixName1 suffixVersion1 suffixMetadata1]
+
+              if {$versionOk1 && [info exists suffixVersion1] && \
+                  [string length $suffixVersion1] > 0 && \
+                  [regexp -- $versionSuffixPattern $suffixVersion1]} then {
+                set suffixVersion1 [string map [list - .] $suffixVersion1]
+              }
+
+              set versionOk2 [tryParseDotNetCoreVersion $value2 \
+                  version2 suffixName2 suffixVersion2 suffixMetadata2]
+
+              if {$versionOk2 && [info exists suffixVersion2] && \
+                  [string length $suffixVersion2] > 0 && \
+                  [regexp -- $versionSuffixPattern $suffixVersion2]} then {
+                set suffixVersion2 [string map [list - .] $suffixVersion2]
+              }
+
+              if {$versionOk1 && $versionOk2} then {
+                set compare [eval \
+                    $versionCommand [list $version1] [list $version2]]
+
+                if {$compare != 0} then {
+                  return $compare
+                }
+              } else {
+                if {$versionOk1} then {
+                  return 1; # NOTE: Valid is *greater* than invalid.
+                } elseif {$versionOk2} then {
+                  return -1; # NOTE: Invalid is *less* than valid.
+                }
+
+                return [eval \
+                    $stringCommand [list $value1] [list $value2]]
+              }
+
+              set anySuffix1 [expr {
+                 [info exists suffixName1] && \
+                 [info exists suffixVersion1] && \
+                 [info exists suffixMetadata1] && \
+                ([string length $suffixName1] > 0 || \
+                 [string length $suffixVersion1] > 0 || \
+                 [string length $suffixMetadata1] > 0)
+              }]
+
+              set anySuffix2 [expr {
+                 [info exists suffixName2] && \
+                 [info exists suffixVersion2] && \
+                 [info exists suffixMetadata2] && \
+                ([string length $suffixName2] > 0 || \
+                 [string length $suffixVersion2] > 0 || \
+                 [string length $suffixMetadata2] > 0)
+              }]
+
+              if {$anySuffix1 && $anySuffix2} then {
+                #
+                # NOTE: The suffix index values will be either the
+                #       actual index within the suffix names list,
+                #       negative one for "not found", or negative
+                #       two for "missing".  When the suffix is not
+                #       present (i.e. "missing"), the version will
+                #       be assumed to be the "most stable".
+                #
+                set suffixNameIndex1 -2
+                set suffixNameIndex2 -2
+
+                if {[string length $suffixName1] > 0} then {
+                  set suffixNameIndex1 [lsearch \
+                      -exact -nocase -- $versionSuffixNames $suffixName1]
+                }
+
+                if {[string length $suffixName2] > 0} then {
+                  set suffixNameIndex2 [lsearch \
+                      -exact -nocase -- $versionSuffixNames $suffixName2]
+                }
+
+                #
+                # HACK: If either of the suffix names were present
+                #       in the list, reset both of them to be their
+                #       associated integer rank values now.
+                #
+                if {$suffixNameIndex1 >= 0 || \
+                    $suffixNameIndex2 >= 0} then {
+                  set suffixNameCount [llength $versionSuffixNames]
+
+                  if {$suffixNameIndex1 == -2} then {
+                    set suffixNameIndex1 $suffixNameCount
+                  }
+
+                  set suffixName1 $suffixNameIndex1
+
+                  if {$suffixNameIndex2 == -2} then {
+                    set suffixNameIndex2 $suffixNameCount
+                  }
+
+                  set suffixName2 $suffixNameIndex2
+                }
+
+                foreach suffixPart1 [list \
+                    $suffixName1 $suffixVersion1 $suffixMetadata1] \
+                    suffixPart2 [list \
+                    $suffixName2 $suffixVersion2 $suffixMetadata2] {
+                  set versionOk1 [string is version -strict $suffixPart1]
+                  set versionOk2 [string is version -strict $suffixPart2]
+
+                  if {$versionOk1 && $versionOk2} then {
+                    set compareCommand $versionCommand
+                  } else {
+                    set integerOk1 [string is integer -strict $suffixPart1]
+                    set integerOk2 [string is integer -strict $suffixPart2]
+
+                    if {$integerOk1 && $integerOk2} then {
+                      set compareCommand $integerCommand
+                    } else {
+                      set compareCommand $stringCommand
+                    }
+                  }
+
+                  lappend compareCommand $suffixPart1 $suffixPart2
+                  set compare [eval $compareCommand]
+
+                  if {$compare != 0} then {
+                    return $compare
+                  }
+                }
+
+                return 0
+              }
+
+              if {!$anySuffix1 && !$anySuffix2} then {
+                return 0
+              }
+
+              return [expr {!$anySuffix1 ? 1 : -1}]
+            }] $versionCommand $stringCommand $integerCommand \
+                $versionSuffixNames $versionSuffixPattern]
+          }
+
+          if {[info exists ::compileCSharp(filterSubPathsCommand)]} then {
+            set filterCommand $::compileCSharp(filterSubPathsCommand)
+          } else {
+            #
+            # NOTE: This filter command is designed to omit any candidate
+            #       sub-path that cannot be parsed as a suffixed full .NET
+            #       runtime version -OR- properly formatted System.Version
+            #       value if the (optional) version suffix support has been
+            #       explicitly disabled by the user.
+            #
+            set filterCommand [list apply [list \
+                    [list noSuffixes maybeVersions] {
+              set result [list]
+
+              foreach maybeVersion $maybeVersions {
+                if {$noSuffixes} then {
+                  #
+                  # NOTE: Only properly formatted System.Version values are
+                  #       allowed.
+                  #
+                  if {[string is not version -strict $maybeVersion]} then {
+                    csharpLog [appendArgs \
+                        "filtered non-version sub-directory candidate (1): " \
+                        $maybeVersion]
+
+                    continue
+                  }
+                } else {
+                  #
+                  # NOTE: Only properly formatted full .NET runtime versions
+                  #       are allowed.  It should be noted that a particular
+                  #       candidate may or may not actually have a suffix.
+                  #
+                  if {![tryParseDotNetCoreVersion $maybeVersion]} then {
+                    csharpLog [appendArgs \
+                        "filtered non-version sub-directory candidate (2): " \
+                        $maybeVersion]
+
+                    continue
+                  }
+                }
+
+                lappend result $maybeVersion
+              }
+
+              return $result
+            }] [info exists ::compileCSharp(noSuffixedVersions)]]
+          }
+
+          set globPathPattern [file join $libraryDirectory *]
+
+          set maybeVersions [lsort \
+              -decreasing -command $compareCommand [eval \
+              $filterCommand [list [lmap directory [glob \
+              -nocomplain -types {d} $globPathPattern] {
+                file tail $directory
+              }]]]]
+
+          csharpLog [appendArgs \
+              "final list of filtered version sub-directory candidates: " \
+              $maybeVersions]
+
+          catch {object removecallback $compareCommand}
+
+          foreach maybeVersion $maybeVersions {
+            #
+            # NOTE: *FAIL-SAFE* Do not allow any version sub-directory
+            #       candidate if it cannot be parsed successfully as a
+            #       properly formatted full .NET runtime version, even
+            #       if the filter command (wrongly?) included them.
+            #
+            if {[tryParseDotNetCoreVersion $maybeVersion]} then {
+              set assemblyDirectory [file normalize \
+                  [file join $libraryDirectory $maybeVersion \
+                  $buildReferenceSubDirectory]]
+
+              if {[file exists $assemblyDirectory]} then {
+                csharpLog [appendArgs \
+                    "selected .NET Standard reference assembly (4): " \
+                    $assemblyDirectory]
+
+                return $assemblyDirectory
+              }
+            } else {
+              csharpLog [appendArgs \
+                  "skipped non-version sub-directory candidate: " \
+                  $maybeVersion]
+            }
+          }
+        }
+      }
+    }
+
+    return ""
+  }
+
+  #
+  # NOTE: This procedure is used to obtain a test program for use with the
+  #       C# compiler.  Upon success, the return value will be a list with
+  #       two elements.  The first element will be the name of the C# class
+  #       to be compiled.  The second element will be the C# program text.
+  #       Upon failure, the return value will be an empty list.
+  #
+  proc getCSharpTestProgram { {name ""} } {
+    # <help>
+    # This procedure produces a minimal, self-contained C# test program that
+    # can be fed to the compiler to verify that compilation works end to end.
+    # It exists so that [doesCompileCSharpWork] (and similar callers) have a
+    # trivially correct program to compile and run, one whose class name is
+    # unique enough that repeated compilations do not collide.
+    #
+    # How it works: it builds a unique identifier and a fully qualified class
+    # name, then uses [subst] to assemble a small C# source file consisting of
+    # a namespace containing a public static class with a public static Int32
+    # Main method that simply returns zero.  When the object command is
+    # available, the unique id comes from the active interpreter's NextId and
+    # the namespace/class delimiter comes from the .NET Type delimiter;
+    # otherwise it falls back to a pseudo-random number (with any leading minus
+    # sign trimmed) and a literal "." delimiter.  The generated namespace and
+    # class names embed the id so each generated program is distinct.
+    #
+    # Tricky details: within the [subst] template the square brackets of the
+    # "String[] args" parameter are backslash-escaped so they are emitted
+    # literally rather than being treated as command substitution; only the
+    # prefix and id variable references (each spelled as a dollar sign followed
+    # by the brace-delimited variable name) are meant to be substituted.  The
+    # name argument is currently accepted but not otherwise used to influence
+    # the generated source.
+    #
+    # Arguments:
+    #   name -- An optional caller-supplied name; accepted for interface
+    #           consistency with callers but not used to alter the generated
+    #           program.  Defaults to the empty string.
+    #
+    # Results:
+    #   A two element list whose first element is the fully qualified name of
+    #   the C# class to be compiled and whose second element is the C# program
+    #   text.  (On the failure paths described for callers, an empty list would
+    #   be expected, but this procedure normally always succeeds.)
+    # </help>
+
+    set prefix Test
+
+    if {[llength [info commands object]] > 0} then {
+      set id [object invoke Interpreter.GetActive NextId]
+
+      set className [appendArgs \
+          $prefix Namespace $id [object invoke Type Delimiter] \
+          $prefix Class $id]
+    } else {
+      set id [string trimleft [expr {random()}] -]
+
+      set className [appendArgs \
+          $prefix Namespace $id . $prefix Class $id]
+    }
+
+    return [list $className [subst {
+      using System;
+
+      namespace ${prefix}Namespace${id}
+      {
+        public static class ${prefix}Class${id}
+        {
+          public static Int32 Main(String\[\] args)
+          {
+            return 0;
+          }
+        }
+      }
+    }]]
+  }
+
+  #
+  # NOTE: This procedure is used to determine whether the C# compiler appears
+  #       to work when invoked via the interfaces defined in this script file.
+  #       Non-zero is returned to indicate success.  This procedure should not
+  #       raise script errors.
+  #
+  proc doesCompileCSharpWork {
+          {name ""} {errorsVarName ""} {memory true} args } {
+    # <help>
+    # This procedure performs an end-to-end self-test of the C# compilation
+    # facilities provided by this package: it generates a trivial program,
+    # compiles it, and then either invokes or executes the result, reporting
+    # whether the whole pipeline succeeded.  It exists so that callers (and the
+    # test suite) can decide at runtime whether C# compilation is actually
+    # available and functioning in the current environment before relying on
+    # it, since that depends on the presence of an SDK, reference assemblies,
+    # and a working object/exec capability.
+    #
+    # How it works: it first builds a small helper (an [apply] lambda) for
+    # formatting an error list, using [formatList] when available and a plain
+    # [join] otherwise, and binds the caller's error variable via [upvar] when
+    # errorsVarName is non-empty.  It obtains a test program from
+    # [getCSharpTestProgram], failing (and recording an error) if that raises
+    # an error or returns fewer than two elements.  When the memory argument is
+    # false it appends GenerateExecutable true to the per-call argument list so
+    # an on-disk executable is produced.  It then calls [compileCSharp] inside
+    # a try/finally, requesting in-memory or on-disk compilation accordingly,
+    # and inspects the result code, returning false (after logging) on any
+    # caught error or non-"Ok" code.  On success, in the memory case it
+    # requires the object command and invokes the program's static Main method
+    # (expecting exit code 0); in the on-disk case, on .NET Core it first
+    # copies the current process's .runtimeconfig.json alongside the output
+    # assembly (because even a trivial compiled executable needs one and the
+    # compiler will not emit it), then runs the assembly via [exec] using the
+    # command line from [getRuntimeCommandLine] (expecting exit status
+    # Success).  The finally block deletes the copied runtime config file and
+    # the output file unless deletion is suppressed.  A mismatch between the
+    # actual and expected exit code is reported as an error and yields false.
+    #
+    # Tricky details: the expected exit code differs by mode (the integer 0 for
+    # in-memory invocation versus the symbolic Success for on-disk execution),
+    # because the two paths detect success differently.  Cleanup of temporary
+    # files is governed by the global array element
+    # ::no(deleteCompileCSharpFiles).  The .NET Core runtime configuration copy
+    # is a workaround for the compiler's inability to generate one directly.
+    # Every failure path also emits a [csharpLog] diagnostic, and the procedure
+    # is designed not to raise script errors itself (errors are reported via
+    # the return value and the error list).
+    #
+    # Arguments:
+    #   name          -- An optional name forwarded to [getCSharpTestProgram]
+    #                    and used in diagnostic messages; defaults to empty.
+    #   errorsVarName -- The optional name of a caller variable that receives
+    #                    the list of human-readable error messages describing
+    #                    why the test failed; empty disables this output.
+    #   memory        -- A boolean selecting in-memory compilation and method
+    #                    invocation (true, the default) versus on-disk
+    #                    executable generation and external execution (false).
+    #   args          -- Zero or more additional name/value compiler settings
+    #                    passed through to [compileCSharp]; in the on-disk case
+    #                    GenerateExecutable true is appended automatically.
+    #
+    # Results:
+    #   Non-zero (true) when the test program compiled and ran with the expected
+    #   exit code, otherwise zero (false) with details available through the
+    #   caller's error variable.
+    # </help>
+
+    #
+    # HACK: The [formatList] procedure will almost always be available
+    #       at this point; however, we do not want to require it.
+    #
+    set formatErrors [list apply [list [list errors] {
+      if {[llength [info commands formatList]] > 0} then {
+        return [formatList $errors <none>]
+      } else {
+        if {[llength $errors] > 0} then {
+          return [join $errors \n]
+        } else {
+          return <none>
+        }
+      }
+    }]]
+
+    if {[string length $errorsVarName] > 0} then {
+      upvar 1 $errorsVarName errors
+    }
+
+    if {[catch {getCSharpTestProgram $name} program]} then {
+      set errors [list [appendArgs \
+          "caught error while getting \"" $name "\" test program: " \
+          $program]]
+
+      csharpLog [appendArgs \
+          "doesCompileCSharpWork error: " \
+          [eval $formatErrors [list $errors]]]
+
+      return false
+    }
+
+    if {[llength $program] < 2} then {
+      set errors [list [appendArgs \
+          "command \[getCSharpTestProgram\] returned malformed \"" \
+          $name "\" test program: " $program]]
+
+      csharpLog [appendArgs \
+          "doesCompileCSharpWork error: " \
+          [eval $formatErrors [list $errors]]]
+
+      return false
+    }
+
+    set local_args $args
+
+    if {!$memory} then {
+      lappend local_args GenerateExecutable true
+      # lappend local_args MainClass [lindex $program 0]
+    }
+
+    unset -nocomplain results local_errors
+
+    try {
+      if {[catch {
+        eval compileCSharp [list [lindex $program 1]] \
+            $memory false true results local_errors $local_args
+      } result]} then {
+        set errors [list [appendArgs \
+            "caught error while compiling \"" $name \
+            "\" test program: " $result]]
+
+        csharpLog [appendArgs \
+            "doesCompileCSharpWork error: " \
+            [eval $formatErrors [list $errors]]]
+
+        return false
+      }
+
+      if {$memory} then {
+        set code $result
+      } else {
+        set code [lindex $result 0]
+        set outputFileName [lindex $result 1]
+      }
+
+      if {$code ne "Ok"} then {
+        set errors [list [appendArgs \
+            "errors from compilation of \"" $name "\" test program: " \
+            [expr {[info exists local_errors] ? $local_errors : $code}]]]
+
+        csharpLog [appendArgs \
+            "doesCompileCSharpWork error: " \
+            [eval $formatErrors [list $errors]]]
+
+        return false
+      }
+
+      if {$memory} then {
+        if {[llength [info commands object]] == 0} then {
+          set errors [list [appendArgs "cannot invoke \"" $name \
+              "\" test program, missing \"object\" command"]]
+
+          csharpLog [appendArgs \
+              "doesCompileCSharpWork error: " \
+              [eval $formatErrors [list $errors]]]
+
+          return false
+        }
+
+        if {[catch {
+          object invoke [lindex $program 0] Main null
+        } haveExitCode]} then {
+          set errors [list [appendArgs "caught error while invoking \"" \
+              $name "\" test program: " $haveExitCode]]
+
+          csharpLog [appendArgs \
+              "doesCompileCSharpWork error: " \
+              [eval $formatErrors [list $errors]]]
+
+          return false
+        }
+
+        set wantExitCode 0
+      } else {
+        if {[isDotNetCore]} then {
+          #
+          # NOTE: What is the fully qualified file name of the .NET Core
+          #       runtime configuration file for this (managed) process?
+          #
+          set sourceRuntimeConfigFileName [appendArgs [file rootname \
+              [getShellExecutableName]] .runtimeconfig.json]
+        }
+
+        if {[catch {
+          #
+          # HACK: Apparently, running even a trivial compiled executable
+          #       using the .NET Core runtime requires the presence of a
+          #       runtime configuration file and there is no (easy?) way
+          #       to directly instruct the C# compiler to generate one;
+          #       therefore, copy the one being used for this process,
+          #       which is presumably running on the .NET Core runtime.
+          #
+          if {[info exists sourceRuntimeConfigFileName] && \
+              [file exists $sourceRuntimeConfigFileName]} then {
+            set targetRuntimeConfigFileName [appendArgs [file rootname \
+                $outputFileName] .runtimeconfig.json]
+
+            if {![file exists $targetRuntimeConfigFileName]} then {
+              file copy $sourceRuntimeConfigFileName \
+                  $targetRuntimeConfigFileName
+            }
+          }
+
+          set command [list exec -exitcode haveExitCode --]
+          eval lappend command [getRuntimeCommandLine $outputFileName]
+          eval $command
+        } error]} then {
+          set errors [list [appendArgs \
+              "caught error while executing \"" $name "\" test program: " \
+              $error]]
+
+          csharpLog [appendArgs \
+              "doesCompileCSharpWork error: " \
+              [eval $formatErrors [list $errors]]]
+
+          return false
+        }
+
+        set wantExitCode Success
+      }
+    } finally {
+      if {![info exists ::no(deleteCompileCSharpFiles)]} then {
+        if {[info exists targetRuntimeConfigFileName] && \
+            [file exists $targetRuntimeConfigFileName]} then {
+          catch {file delete $targetRuntimeConfigFileName}
+        }
+
+        if {[info exists outputFileName] && \
+            [file exists $outputFileName]} then {
+          catch {file delete $outputFileName}
+        }
+      }
+    }
+
+    if {$haveExitCode ne $wantExitCode} then {
+      set errors [list [appendArgs \
+          "bad exit code from \"" $name \
+          "\" test program: " $haveExitCode]]
+
+      csharpLog [appendArgs \
+          "doesCompileCSharpWork error: " \
+          [eval $formatErrors [list $errors]]]
+
+      return false
+    }
+
+    csharpLog "doesCompileCSharpWork ok"
+    return true
+  }
+
+  #
+  # NOTE: This procedure is used to determine the command line arguments that
+  #       are required to invoke the .NET Core SDK compiler for C#.  An empty
+  #       list will be returned if the arguments cannot be determined for some
+  #       reason -OR- the C# compiler cannot be found.  This procedure should
+  #       not raise script errors.
+  #
+  proc getDotNetCoreCSharpCommandArgs {} {
+    # <help>
+    # This procedure builds the leading command line fragment needed to invoke
+    # the .NET Core SDK's command line C# compiler (the Roslyn csc.dll).  It
+    # exists because that compiler is not a standalone executable but a managed
+    # assembly that must be launched through the "dotnet exec" host; this
+    # procedure assembles the correct host invocation and the path to the
+    # compiler assembly so that callers can simply append their own compiler
+    # arguments.
+    #
+    # How it works: it locates the SDK base path via [getDotNetCoreSdkPath] and
+    # forms the expected compiler path by joining that with Roslyn/bincore and
+    # csc.dll.  Only if that file exists does it construct a result list
+    # beginning with "dotnet exec".  It then optionally inserts extra arguments
+    # for the host, taken from ::compileCSharp(dotNetCoreExecArgs), splicing
+    # them in as list elements when that value is itself a valid list and
+    # appending it as a single element otherwise.  Next it appends the
+    # quoted, native form of the compiler file name.  Finally it optionally
+    # appends arguments from ::compileCSharp(execFileArgs) using the same
+    # list-versus-single-element logic.
+    #
+    # Tricky details: the compiler file name is wrapped in literal double
+    # quotes and converted with [file nativename] so that paths containing
+    # spaces survive being passed through the command line.  The two optional
+    # override array elements are checked indirectly (the variable name is
+    # built up and tested with [info exists]) and each is spliced or appended
+    # depending on whether [string is list] reports it as a well-formed list.
+    # This procedure does not raise script errors.
+    #
+    # Arguments:
+    #   (none)
+    #
+    # Results:
+    #   A list of command words suitable to be used as the prefix of an
+    #   [exec]-style C# compiler invocation, or the empty list when the SDK or
+    #   the compiler assembly could not be found.
+    # </help>
+
+    set path [getDotNetCoreSdkPath]
+
+    if {[string length $path] > 0} then {
+      set compilerFileName [file normalize [file join \
+          $path Roslyn bincore csc.dll]]
+
+      if {[file exists $compilerFileName]} then {
+        set result [list dotnet exec]; # EXEMPT
+        set varName ::compileCSharp(dotNetCoreExecArgs)
+
+        if {[info exists varName] && [info exists $varName]} then {
+          set execArgs [set $varName]
+
+          if {[string is list -strict $execArgs]} then {
+            eval lappend result $execArgs
+          } else {
+            lappend result $execArgs
+          }
+        }
+
+        lappend result \
+            [appendArgs \" [file nativename $compilerFileName] \"]
+
+        set varName ::compileCSharp(execFileArgs)
+
+        if {[info exists varName] && [info exists $varName]} then {
+          set execArgs [set $varName]
+
+          if {[string is list -strict $execArgs]} then {
+            eval lappend result $execArgs
+          } else {
+            lappend result $execArgs
+          }
+        }
+
+        return $result
+      }
+    }
+
+    return [list]
+  }
+
+  #
+  # NOTE: This procedure is used to format an option to the C# compiler.  It
+  #       may have a name and/or a value.  This procedure should not raise
+  #       script errors.
+  #
+  proc formatCompilerArgument { name value } {
+    # <help>
+    # This procedure formats a single C# compiler command line option from a
+    # name and/or a value, applying quoting when needed.  It exists to
+    # centralize the small but error-prone task of turning option pieces into a
+    # correctly formed "name:value" (or bare name, or bare value) token,
+    # including the decision about when to wrap the token in double quotes.
+    #
+    # How it works: if either the name or the value contains any whitespace
+    # (detected with a regular expression), a double-quote wrapping character
+    # is selected; otherwise no wrapping is used.  It then assembles the
+    # result: a non-empty name with a non-empty value becomes name, a colon,
+    # and the value (optionally quote-wrapped); a non-empty name with an empty
+    # value becomes just the name; an empty name with a non-empty value becomes
+    # just the value; and both empty yields the empty string.
+    #
+    # Tricky details: the quote wrapping is applied around the whole token
+    # rather than around the individual name or value, and it is triggered if
+    # whitespace appears in either part.  This procedure does not raise script
+    # errors.
+    #
+    # Arguments:
+    #   name  -- The option name (for example "-reference"), or empty for a
+    #            value-only token such as a source or response file argument.
+    #   value -- The option value, or empty for a flag-only option.
+    #
+    # Results:
+    #   The formatted, possibly quoted compiler argument string, or the empty
+    #   string when both the name and value are empty.
+    # </help>
+
+    set wrap ""
+
+    if {[regexp -- {\s} $name] || [regexp -- {\s} $value]} then {
+      set wrap \"
+    }
+
+    if {[string length $name] > 0} then {
+      if {[string length $value] > 0} then {
+        return [appendArgs $wrap $name : $value $wrap]
+      } else {
+        return [appendArgs $wrap $name $wrap]
+      }
+    } else {
+      if {[string length $value] > 0} then {
+        return [appendArgs $wrap $value $wrap]
+      } else {
+        return ""
+      }
+    }
+  }
+
+  #
+  # NOTE: This procedure is used to translate a name/value pair into zero or
+  #       more options to the C# compiler.  This procedure should not raise
+  #       script errors.
+  #
+  proc compilerParameterToArguments {
+          name {value ""} {outputAssemblyVarName ""} } {
+    # <help>
+    # This procedure translates a single CodeDom-style CompilerParameters
+    # name/value pair into zero or more command line options for the command
+    # line .NET Core C# compiler.  It exists so that callers can express
+    # compiler settings using the same high-level property names accepted by
+    # the older CSharpCodeProvider path (for example WarningLevel,
+    # GenerateExecutable, ReferencedAssemblies.Add) and have them mapped onto
+    # the equivalent csc command line switches, keeping the two compilation
+    # back-ends interface-compatible.
+    #
+    # How it works: a case-insensitive [switch] maps recognized property names
+    # onto compiler switches and, where appropriate, transforms the value:
+    # WarningLevel becomes -warn; TreatWarningsAsErrors becomes -warnaserror;
+    # GenerateExecutable becomes -target with the value normalized to "exe" for
+    # a true value or "library" otherwise; MainClass, MainEntryPoint, and
+    # StartupObject all become -main; and ReferencedAssemblies.Add becomes
+    # -reference, with a non-absolute path resolved relative to the directory
+    # returned by [getDotNetStandardReferencePath] and converted to native
+    # form.  OutputAssembly is special: when the caller passed the name of an
+    # output-assembly variable, that variable is updated via [upvar] to the
+    # supplied value and the name and value are then both cleared so the
+    # parameter is not emitted again (the caller is responsible for the actual
+    # -out option); when no such variable name was passed, it is translated to
+    # -out directly.  Any unrecognized name falls through unchanged.  Finally
+    # the resulting name and value are formatted with [formatCompilerArgument].
+    #
+    # Tricky details: the OutputAssembly handling relies on the convention,
+    # noted in the body, that callers such as [compileViaDotNetCoreCSharp]
+    # always pass an output assembly variable name; the bare -out fallback is
+    # flagged as potentially not interacting correctly with how a caller
+    # manages its own output file name.  Because a parameter may be consumed
+    # entirely (OutputAssembly with a variable name) or be unrecognized but
+    # produce no token, the procedure can legitimately return zero options.
+    # This procedure does not raise script errors.
+    #
+    # Arguments:
+    #   name                  -- The compiler parameter (property) name to
+    #                            translate; matching is case-insensitive.
+    #   value                 -- The associated value; its meaning depends on
+    #                            the name and may be transformed.  Defaults to
+    #                            empty.
+    #   outputAssemblyVarName -- The optional name of a caller variable that, for
+    #                            the OutputAssembly parameter, receives the
+    #                            requested output file name (and suppresses
+    #                            emission of an option here); empty causes
+    #                            OutputAssembly to be translated to -out
+    #                            directly.
+    #
+    # Results:
+    #   A list containing the single formatted compiler argument produced, or an
+    #   empty list when the parameter yields no command line option.
+    # </help>
+
+    switch -exact -nocase -- $name {
+      WarningLevel {
+        set name -warn
+      }
+      TreatWarningsAsErrors {
+        set name -warnaserror
+      }
+      GenerateExecutable {
+        set name -target
+
+        if {[string is true -strict $value]} then {
+          set value exe
+        } else {
+          set value library
+        }
+      }
+      MainClass -
+      MainEntryPoint -
+      StartupObject {
+        set name -main
+      }
+      OutputAssembly {
+        if {[string length $outputAssemblyVarName] > 0} then {
+          #
+          # HACK: This compiler parameter is handled by our caller; however,
+          #       we want to honor the value specified via the OutputAssembly
+          #       property.  Therefore, reset the specified variable from the
+          #       caller to the new value.
+          #
+          upvar 1 $outputAssemblyVarName outputAssembly
+
+          #
+          # NOTE: Use the file name value specified by the caller verbatim.
+          #
+          set outputAssembly $value
+
+          #
+          # HACK: Also, make sure that we do not handle this parameter again,
+          #       below.
+          #
+          set name ""; set value ""
+        } else {
+          #
+          # BUGBUG: Translate the compiler parameter; however, this may not
+          #         actually work, depending on how our caller handles its
+          #         output assembly file name.  At the time this block was
+          #         originally written (2018-04-09), the only caller (i.e.
+          #         [compileViaDotNetCoreCSharp]) always passed the output
+          #         assembly variable name, making this a non-issue.  This
+          #         convention should also be followed by future callers of
+          #         this procedure.
+          #
+          set name -out
+        }
+      }
+      ReferencedAssemblies.Add {
+        set name -reference
+
+        if {[file pathtype $value] ne "absolute"} then {
+          set value [file nativename [file normalize \
+              [file join [getDotNetStandardReferencePath] \
+              $value]]]
+        }
+      }
+    }
+
+    set formatted [formatCompilerArgument $name $value]
+
+    if {[string length $formatted] > 0} then {
+      return [list $formatted]
+    } else {
+      return [list]
+    }
+  }
+
+  #
+  # NOTE: This procedure is used to obtain the base command line options for
+  #       the C# compiler, including those that may be enabled by default.
+  #       An empty string may be returned.  This procedure should not raise
+  #       script errors.
+  #
+  proc getCSharpCompilerOptions { parameters library csharp prefix } {
+    # <help>
+    # This procedure assembles the base set of C# compiler options that should
+    # be applied to a compilation, including any pre-existing options carried
+    # on a CompilerParameters object, the preprocessor defines that match how
+    # the TclTk core library itself was built, and any extra options the user
+    # has configured.  It exists so that dynamically compiled C# code is
+    # compiled under conditions consistent with the running TclTk assembly (for
+    # example with the DEBUG and TRACE defines when appropriate), which matters
+    # when that code interoperates with the core library.
+    #
+    # How it works: it starts from an empty result list.  When the library flag
+    # is set and the platform array element ::tcltk_platform(compileOptions)
+    # exists, those options are captured as the library options; similarly,
+    # when the csharp flag is set and ::tcltk_platform(csharpOptions) exists,
+    # those are captured as extra C# options.  If the parameters argument is a
+    # non-null object handle, its current CompilerOptions string is retrieved
+    # and, when it is a valid list, its elements are spliced into the result;
+    # if it is not a valid list, the whole string is appended as one element
+    # (and the anomaly is logged).  It then appends a define option (formed by
+    # concatenating the prefix with "define:DEBUG" or "define:TRACE") for each
+    # of DEBUG and TRACE that appears in the library options.  Finally it
+    # appends each configured extra C# option, each prefixed by the supplied
+    # prefix.
+    #
+    # Tricky details: the prefix argument lets the same routine serve both
+    # back-ends, which spell options differently (the CSharpCodeProvider path
+    # passes a slash while the command line path passes a dash).  Both the
+    # platform defines and the extra C# options are individually opt-out: the
+    # caller disables the platform defines by passing a false library flag (or
+    # by the array element being absent) and disables the extra options by
+    # passing a false csharp flag.  Passing an invalid object handle for the
+    # parameters argument is a deliberate way to skip merging any pre-existing
+    # compiler options.  This procedure does not raise script errors.
+    #
+    # Arguments:
+    #   parameters -- An opaque CompilerParameters object handle whose existing
+    #                 CompilerOptions are merged in, or an invalid/non-object
+    #                 handle to skip that merging.
+    #   library    -- A boolean; when true, the platform's library build options
+    #                 are consulted to add matching DEBUG/TRACE defines.
+    #   csharp     -- A boolean; when true, the user's extra C# options from
+    #                 ::tcltk_platform(csharpOptions) are appended.
+    #   prefix     -- The option prefix character appropriate to the target
+    #                 compiler back-end (for example "/" or "-").
+    #
+    # Results:
+    #   A list of base compiler option strings (which may be empty).
+    # </help>
+
+    #
+    # NOTE: Make sure that the "standard" preprocessor defines match those
+    #       for the platform (i.e. the ones used to compile the TclTk core
+    #       library assembly).  This caller may disable this handling.
+    #
+    if {$library && [info exists ::tcltk_platform(compileOptions)]} then {
+      set libraryOptions $::tcltk_platform(compileOptions)
+    } else {
+      set libraryOptions [list]
+    }
+
+    #
+    # NOTE: Permit extra C# compiler options to be passed via the global
+    #       array element "csharpOptions", if it exists.  This caller may
+    #       disable this handling.
+    #
+    if {$csharp && [info exists ::tcltk_platform(csharpOptions)]} then {
+      set csharpOptions $::tcltk_platform(csharpOptions)
+    } else {
+      set csharpOptions [list]
+    }
+
+    #
+    # NOTE: Start out with no compiler options.
+    #
+    set result [list]
+
+    #
+    # NOTE: Grab the existing compiler options, if any.  This caller may
+    #       disable this handling (e.g. by specifying an invalid opaque
+    #       object handle for the "parameters" argument).
+    #
+    if {[isNonNullObjectHandle $parameters]} then {
+      set compilerOptions [$parameters CompilerOptions]
+
+      if {[string is list -strict $compilerOptions]} then {
+        #
+        # NOTE: Append all of the existing compiler options as elements
+        #       to the final list of compiler options.  This should be
+        #       100% "safe" since we know both are valid lists.
+        #
+        eval lappend result $compilerOptions
+      } else {
+        #
+        # HACK: This may not be exactly 100% optimal for this situation;
+        #       i.e. we do not know _why_ the compiler options are not a
+        #       valid list and we have no other "nice" options except
+        #       appending the entire thing, verbatim, to the final list
+        #       of compiler options.
+        #
+        csharpLog [appendArgs \
+            "getCSharpCompilerOptions: compiler options not valid list: " \
+            $compilerOptions]
+
+        lappend result $compilerOptions
+      }
+    }
+
+    #
+    # NOTE: Was the TclTk core library built in the Debug configuration?
+    #
+    if {"DEBUG" in $libraryOptions} then {
+      lappend result [appendArgs $prefix define:DEBUG]
+    }
+
+    #
+    # NOTE: Was the TclTk core library built with tracing enabled (i.e.
+    #       this allows for use of System.Diagnostics.Trace, etc)?
+    #
+    if {"TRACE" in $libraryOptions} then {
+      lappend result [appendArgs $prefix define:TRACE]
+    }
+
+    #
+    # NOTE: Append the configured extra C# compiler options configured
+    #       via the global array element "csharpOptions", if any.
+    #
+    foreach csharpOption $csharpOptions {
+      lappend result [appendArgs $prefix $csharpOption]
+    }
+
+    return $result
+  }
+
+  #
+  # NOTE: This procedure is used to escape all characters in the specified
+  #       string for use inside of a regular expression.  An empty string
+  #       may be returned.  This procedure should not raise script errors.
+  #
+  proc regexpEscapeAll { value } {
+    # <help>
+    # This procedure escapes every character of a string so that the result can
+    # be embedded literally inside a regular expression with no character
+    # retaining any special meaning.  It exists because the error and warning
+    # extraction routines build patterns that include a compiler-supplied file
+    # name, and that file name may contain characters (such as backslashes,
+    # dots, or parentheses) that would otherwise be interpreted by the regular
+    # expression engine.
+    #
+    # How it works: it iterates over the individual characters of the input
+    # (via [split] with an empty separator) and, for each, appends a Unicode
+    # escape of the form backslash-u followed by the character's code point
+    # formatted as four uppercase hexadecimal digits.  Because every character
+    # is rewritten this way, no character can act as a metacharacter in the
+    # resulting pattern fragment.
+    #
+    # Tricky details: the per-character code point is obtained with [string
+    # ordinal], and the fixed four-digit hexadecimal width assumes characters
+    # in the Basic Multilingual Plane.  This procedure does not raise script
+    # errors.
+    #
+    # Arguments:
+    #   value -- The string to escape for literal use within a regular
+    #            expression; an empty value yields an empty result.
+    #
+    # Results:
+    #   A string of backslash-u escape sequences that matches the input value
+    #   literally when used inside a regular expression (possibly empty).
+    # </help>
+
+    set result ""
+
+    foreach char [split $value ""] {
+      append result \\u [format %04X [string ordinal $char 0]]
+    }
+
+    return $result
+  }
+
+  #
+  # NOTE: This procedure is used to execute the C# compiler and returns its
+  #       platform normalized results.
+  #
+  proc runDotNetCSharpCommand { command } {
+    # <help>
+    # This procedure executes an already-constructed C# compiler command and
+    # returns its output with line endings normalized.  It exists as a thin,
+    # single-purpose wrapper so that the act of running the compiler is logged
+    # consistently and its textual output is in a predictable, platform-neutral
+    # form before the caller scans it for errors and warnings.
+    #
+    # How it works: it logs the command via [csharpLog], evaluates the command
+    # in the caller's variable context using [uplevel 1], and maps any carriage
+    # return / line feed sequences in the captured output to bare line feeds
+    # before returning it.
+    #
+    # Tricky details: the command is expected to be a complete [exec]-style
+    # invocation built by the caller; running it via [uplevel 1] means any
+    # caller-frame variables it references resolve correctly and that an
+    # execution failure propagates as a normal script error to the caller
+    # rather than being suppressed here.  Only CR/LF pairs are translated, so
+    # the returned text uses line feeds for line separation regardless of
+    # platform.
+    #
+    # Arguments:
+    #   command -- The fully formed command (typically an [exec ...] command
+    #              line) to evaluate in the caller's frame.
+    #
+    # Results:
+    #   The command's output as a string with line endings normalized to line
+    #   feeds.
+    # </help>
+
+    #
+    # NOTE: Evaluate the [exec] command constructed by our caller, in their
+    #       context, and return the results, with line-endings normalized.
+    #
+    csharpLog [appendArgs "running C# command: " $command]
+    return [string map [list \r\n \n] [uplevel 1 $command]]
+  }
+
+  #
+  # NOTE: This procedure is used to extract the C# compiler error messages
+  #       from its results.  An empty list will be returned if the errors
+  #       cannot be determined for some reason.  This procedure should not
+  #       raise script errors.
+  #
+  proc extractCSharpErrors { fileName results } {
+    # <help>
+    # This procedure scans the textual output of the command line C# compiler
+    # and returns the list of error messages it contains.  It exists because
+    # the command line compiler, unlike the CodeDom provider, reports its
+    # diagnostics only as text; this procedure recovers the structured list of
+    # errors that the rest of the pipeline expects.
+    #
+    # How it works: it builds a line-anchored regular expression that matches a
+    # compiler error line, optionally preceded by the source file name (escaped
+    # for literal matching via [regexpEscapeAll]) and a line/column location in
+    # parentheses, followed by the literal text "error CS" then a four-digit
+    # error code and the message.  It applies that pattern across the entire
+    # results text with [regexp -all -line -inline], iterating the returned
+    # match pairs and collecting each matched error line into the result list.
+    #
+    # Tricky details: the file name is woven into the pattern but made optional,
+    # so both file-qualified and bare error lines are matched; escaping it with
+    # [regexpEscapeAll] prevents path characters from being misinterpreted as
+    # regular expression syntax.  The four-digit code requirement and the
+    # "error CS" prefix are what distinguish error lines from warnings and
+    # other output.  This procedure does not raise script errors.
+    #
+    # Arguments:
+    #   fileName -- The source file name the compiler was given, used to anchor
+    #               the (optional) leading portion of each diagnostic line.
+    #   results  -- The (line-ending normalized) compiler output text to scan.
+    #
+    # Results:
+    #   A list of the matched error message lines, or the empty list when none
+    #   were found.
+    # </help>
+
+    set list [list]
+
+    foreach {dummy match} [regexp -all -line -inline -- \
+        [appendArgs (^(?: [regexpEscapeAll $fileName] \
+        {\(\d+,\d+\): )?error CS\d{4}: [^\n]+$)}] $results] {
+      lappend list $match
+    }
+
+    return $list
+  }
+
+  #
+  # NOTE: This procedure is used to extract the C# compiler warning messages
+  #       from its results.  An empty list will be returned if the warnings
+  #       cannot be determined for some reason.  This procedure should not
+  #       raise script errors.
+  #
+  proc extractCSharpWarnings { fileName results } {
+    # <help>
+    # This procedure scans the textual output of the command line C# compiler
+    # and returns the list of warning messages it contains.  It is the warning
+    # counterpart to [extractCSharpErrors] and exists for the same reason: the
+    # command line compiler reports diagnostics only as text, and strict-mode
+    # compilation needs the warnings recovered as a structured list so they can
+    # be treated as failures when requested.
+    #
+    # How it works: it builds a line-anchored regular expression that matches a
+    # compiler warning line, optionally preceded by the source file name
+    # (escaped for literal matching via [regexpEscapeAll]) and a line/column
+    # location in parentheses, followed by the literal text "warning CS" then a
+    # four-digit warning code and the message.  It applies that pattern across
+    # the entire results text with [regexp -all -line -inline], iterating the
+    # returned match pairs and collecting each matched warning line into the
+    # result list.
+    #
+    # Tricky details: as with the error extractor, the file name portion is
+    # optional so both file-qualified and bare warning lines match, and
+    # escaping it prevents path characters from acting as regular expression
+    # metacharacters.  The "warning CS" prefix and four-digit code distinguish
+    # warning lines from errors and other output.  This procedure does not
+    # raise script errors.
+    #
+    # Arguments:
+    #   fileName -- The source file name the compiler was given, used to anchor
+    #               the (optional) leading portion of each diagnostic line.
+    #   results  -- The (line-ending normalized) compiler output text to scan.
+    #
+    # Results:
+    #   A list of the matched warning message lines, or the empty list when none
+    #   were found.
+    # </help>
+
+    set list [list]
+
+    foreach {dummy match} [regexp -all -line -inline -- \
+        [appendArgs (^(?: [regexpEscapeAll $fileName] \
+        {\(\d+,\d+\): )?warning CS\d{4}: [^\n]+$)}] $results] {
+      lappend list $match
+    }
+
+    return $list
+  }
+
+  #
+  # NOTE: This procedure is used to dynamically compile arbitrary C# code
+  #       from within a script using the CSharpCodeProvider class present
+  #       in the desktop .NET Framework.  It may work on some versions of
+  #       Mono as well.  This procedure was originally designed to be used
+  #       by the test suite; however, it can be quite useful in non-test
+  #       scripts as well.
+  #
+  proc compileViaCSharpCodeProvider {
+          string memory symbols strict resultsVarName errorsVarName args } {
+    # <help>
+    # This procedure dynamically compiles arbitrary C# source code using the
+    # Microsoft.CSharp.CSharpCodeProvider class available in the desktop .NET
+    # Framework (and, sometimes, Mono).  It is one of the two compilation
+    # back-ends in this package -- the one used when not running on .NET Core --
+    # and exists to let scripts generate and load .NET code at runtime, a
+    # capability originally built for the test suite but useful generally.
+    #
+    # How it works: it requires the object command and fails early (returning a
+    # one element Error list and recording an error) if it is missing.  It
+    # creates a CSharpCodeProvider and a CompilerParameters object, pre-scans
+    # the extra arguments to decide whether the output should be an executable
+    # or a library (choosing the file extension accordingly via the
+    # CodeBrix.Platform.TclTk._Constants.FileExtension values), and sets the OutputAssembly to a
+    # deterministic temporary file name derived from [file tempname] so it can
+    # be cleaned up later.  In-memory generation and debug-symbol generation
+    # are enabled per the corresponding arguments.  The compiler options begin
+    # with the base set from [getCSharpCompilerOptions] (with a slash prefix),
+    # optionally adding -noconfig when ::compileCSharp(noResponseFile) is set,
+    # and are joined into the parameters' CompilerOptions; the caller's extra
+    # name/value arguments are then applied case-insensitively to the
+    # parameters object.  The caller's results variable is bound via [upvar]
+    # before compilation so the results object survives this call frame.
+    # Compilation runs CompileAssemblyFromSource (wrapped by optional preProcess
+    # and postProcess hooks), after which the provider is disposed.  The errors
+    # collection is examined: if it has errors, or strict mode is on and it has
+    # warnings, the code is Error and each error object's string form is
+    # appended to the caller's error list; otherwise the code is Ok.  The
+    # errors collection is disposed.
+    #
+    # Tricky details: the entire body runs inside a try/finally so that the
+    # temporary files (the dummy file plus, in memory mode, the associated .dll
+    # and .pdb located by a glob on the temp name) are deleted on exit unless
+    # ::no(deleteCompileCSharpFiles) is set.  Object handles (the provider, the
+    # errors collection, and each individual error) are explicitly unset to
+    # dispose them, since they are real .NET objects.  The return shape is a
+    # documented breaking-change behavior: when not in memory mode and an
+    # output file name exists, a two element list is returned.  Error reporting
+    # is done through the caller's variables and the return value rather than by
+    # raising script errors.
+    #
+    # Arguments:
+    #   string         -- The C# source code text to compile.
+    #   memory         -- A boolean; when true the assembly is generated in
+    #                     memory rather than persisted as a usable output file.
+    #   symbols        -- A boolean; when true debug symbol information is
+    #                     generated for the assembly.
+    #   strict         -- A boolean; when true compiler warnings are treated as
+    #                     failures in addition to errors.
+    #   resultsVarName -- The name of a caller variable that receives the
+    #                     CompilerResults object handle; empty disables this
+    #                     output.
+    #   errorsVarName  -- The name of a caller variable that receives the list
+    #                     of error (and, in strict mode, warning) message
+    #                     strings; empty disables this output.
+    #   args           -- Zero or more name/value pairs applied as additional
+    #                     CompilerParameters settings (for example
+    #                     GenerateExecutable true, ReferencedAssemblies.Add).
+    #
+    # Results:
+    #   A list whose first element is the overall result code ("Ok" or "Error");
+    #   when not in memory mode and an output file was produced, a second
+    #   element holds that output file name.
+    # </help>
+
+    #
+    # NOTE: The [object] command is required by this procedure.  If it
+    #       is not available, bail out now.
+    #
+    if {[llength [info commands object]] == 0} then {
+      #
+      # NOTE: We cannot even attempt to compile anything, fail.
+      #
+      set code Error
+
+      #
+      # NOTE: Prepare to transfer error messages to the caller.
+      #
+      if {[string length $errorsVarName] > 0} then {
+        upvar 1 $errorsVarName local_errors
+      }
+
+      #
+      # NOTE: Append to the list of errors.
+      #
+      lappend local_errors "cannot compile, missing \"object\" command"
+
+      #
+      # NOTE: Return the overall result to the caller.
+      #
+      return [list $code]
+    }
+
+    #
+    # NOTE: Create the C# code provider object (i.e. the compiler).
+    #
+    set provider [object create -alias Microsoft.CSharp.CSharpCodeProvider]
+
+    #
+    # NOTE: Create the object that provides various parameters to the C#
+    #       code provider (i.e. the compiler options).
+    #
+    set parameters [object create -alias \
+        System.CodeDom.Compiler.CompilerParameters]
+
+    #
+    # HACK: Pre-check the list of extra parameters now.  If it will change
+    #       the assembly to an executable, use that file extension instead.
+    #
+    set outputExtension [object invoke \
+        CodeBrix.Platform.TclTk._Constants.FileExtension Library]
+
+    foreach {name value} $args {
+      if {[string equal $name GenerateExecutable] && \
+          [string is true -strict $value]} then {
+        set outputExtension [object invoke \
+            CodeBrix.Platform.TclTk._Constants.FileExtension Executable]
+
+        break
+      }
+    }
+
+    #
+    # NOTE: Do we not want to persist the generated assembly to disk?
+    #       Either way, we must make sure the temporary file names used
+    #       are determinstic (i.e. from our perspective, so that we can
+    #       delete them later).
+    #
+    $parameters OutputAssembly [set outputFileName [appendArgs [set \
+        tempName(1) [file tempname]] $outputExtension]]
+
+    if {$memory} then {
+      $parameters GenerateInMemory true
+    }
+
+    #
+    # NOTE: Use a try/finally block to cleanup temporary files.
+    #
+    try {
+      #
+      # NOTE: Do we want symbols to be generated for the generated assembly?
+      #
+      if {$symbols} then {
+        $parameters IncludeDebugInformation true
+      }
+
+      #
+      # NOTE: Start out the compiler options with the pre-existing defaults
+      #       for the compiler followed by those necessary for the platform.
+      #
+      set compilerOptions [getCSharpCompilerOptions $parameters true true /]
+
+      #
+      # NOTE: Should we include the "CSC.RSP" file?  By default, we will;
+      #       however, that behavior can be disabled by the user.
+      #
+      if {[info exists ::compileCSharp(noResponseFile)]} then {
+        lappend compilerOptions -noconfig
+      }
+
+      $parameters CompilerOptions [join $compilerOptions " "]
+
+      #
+      # NOTE: Process extra compiler settings the caller may have provided.
+      #
+      foreach {name value} $args {
+        $parameters -nocase $name $value
+      }
+
+      #
+      # NOTE: Prepare to transfer the object reference to the caller.  We
+      #       must use [upvar] here because otherwise the object is lost
+      #       when the procedure call frame is cleaned up.
+      #
+      if {[string length $resultsVarName] > 0} then {
+        upvar 1 $resultsVarName results
+      }
+
+      #
+      # NOTE: Attempt to compile the specified string as C# and capture the
+      #       results into the variable provided by the caller.
+      #
+      csharpLog "compileViaCSharpCodeProvider parameters: " $parameters
+
+      try {
+        if {[info exists ::compileCSharp(preProcess)]} then {
+          eval $::compileCSharp(preProcess); # pre-compilation HOOK
+        }
+
+        set results [$provider \
+            -alias CompileAssemblyFromSource $parameters $string]
+      } finally {
+        if {[info exists ::compileCSharp(postProcess)]} then {
+          eval $::compileCSharp(postProcess); # post-compilation HOOK
+        }
+      }
+
+      #
+      # NOTE: We no longer need the C# code provider object (i.e. the
+      #       compiler); therefore, dispose it now.
+      #
+      unset provider; # dispose
+
+      #
+      # NOTE: Fetch the collection of compiler errors (which may be empty).
+      #
+      set errors [$results -alias Errors]
+
+      #
+      # NOTE: It is assumed that no assembly was generated if there were
+      #       any compiler errors.  Ignore all compiler warnings unless
+      #       we are in strict mode.
+      #
+      if {[$errors HasErrors] || \
+          ($strict && [$errors HasWarnings])} then {
+        #
+        # NOTE: Compilation of the assembly failed.
+        #
+        set code Error
+
+        #
+        # NOTE: Prepare to transfer error messages to the caller.
+        #
+        if {[string length $errorsVarName] > 0} then {
+          upvar 1 $errorsVarName local_errors
+        }
+
+        #
+        # NOTE: Grab each error object and append the string itself to
+        #       the overall list of errors.
+        #
+        for {set index 0} {$index < [$errors Count]} {incr index} {
+          #
+          # NOTE: Get the compiler error object at this index.
+          #
+          set error [$errors -alias Item $index]
+
+          #
+          # NOTE: Convert it to a string and append it to the list of
+          #       errors.
+          #
+          lappend local_errors [getStringFromObjectHandle $error]
+
+          #
+          # NOTE: Since the error itself is actually an object, we must
+          #       dispose it.
+          #
+          unset error; # dispose
+        }
+      } else {
+        #
+        # NOTE: Compilation of the assembly succeeded.
+        #
+        set code Ok
+      }
+
+      #
+      # NOTE: We no longer need the compiler errors collection; therefore,
+      #       dispose it now.
+      #
+      unset errors; # dispose
+
+      #
+      # HACK: *BREAKING CHANGE* If there is an output file name, return it
+      #       as well; otherwise, just return success.
+      #
+      if {!$memory && [string length $outputFileName] > 0} then {
+        #
+        # NOTE: Return a two element list: the first element is the overall
+        #       result and the second element is the output file name.
+        #
+        return [list $code $outputFileName]
+      } else {
+        #
+        # NOTE: Return the overall result to the caller.
+        #
+        return [list $code]
+      }
+    } finally {
+      #
+      # NOTE: Make sure the created temporary files are cleaned up unless we
+      #       are forbidden from doing so.
+      #
+      if {![info exists ::no(deleteCompileCSharpFiles)]} then {
+        #
+        # NOTE: Make sure the dummy temporary files are cleaned up.
+        #
+        if {[array exists tempName]} then {
+          foreach tempFileName [array values tempName] {
+            if {[string length $tempFileName] > 0} then {
+              if {$memory} then {
+                #
+                # NOTE: When operating in in-memory generation mode, delete
+                #       all the temporary files associated with the original
+                #       allocated temporary name.  This includes the ".dll",
+                #       the ".pdb" (if any), and the empty "dummy" file that
+                #       contains nothing.
+                #
+                foreach deleteFileName [glob -nocomplain \
+                    [appendArgs [file normalize $tempFileName] *]] {
+                  if {[file exists $deleteFileName]} then {
+                    catch {file delete $deleteFileName}
+                  }
+                }
+              } else {
+                #
+                # NOTE: Delete the empty "dummy" file that contains nothing.
+                #       The actual compiled assembly has a ".dll" suffix and
+                #       its symbols, if any, have a ".pdb" suffix.
+                #
+                if {[file exists $tempFileName]} then {
+                  catch {file delete $tempFileName}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  #
+  # NOTE: This procedure is used to dynamically compile arbitrary C# code
+  #       from within a script using the command line C# compiler provided
+  #       by the .NET Core SDK.  This procedure was originally designed to
+  #       be used by the test suite; however, it can be quite useful in
+  #       non-test scripts as well.
+  #
+  proc compileViaDotNetCoreCSharp {
+          string memory symbols strict resultsVarName errorsVarName args } {
+    # <help>
+    # This procedure dynamically compiles arbitrary C# source code using the
+    # command line C# compiler (csc) shipped with the .NET Core SDK.  It is the
+    # second of the two compilation back-ends in this package -- the one used
+    # when running on .NET Core -- and exists to provide the same
+    # runtime-compilation capability as the CodeDom-based path where that
+    # provider is unavailable.
+    #
+    # How it works: it obtains the compiler invocation prefix from
+    # [getDotNetCoreCSharpCommandArgs] and fails early (returning a one element
+    # Error list and recording an error) if the compiler cannot be found.  It
+    # prepends an "exec --" so output is captured rather than success being
+    # auto-checked, then appends the base options from [getCSharpCompilerOptions]
+    # (with a dash prefix).  Two deterministic temporary files are allocated via
+    # [file tempname]: one (with a .cs extension) for the source and one (with a
+    # .dll extension, since .NET Core output is always a DLL) for the assembly.
+    # Inside a try/finally it translates each caller name/value argument through
+    # [compilerParameterToArguments] (passing the output file name variable so
+    # OutputAssembly is honored), then appends a series of switches: -nologo for
+    # quieter output, optionally -noconfig and -nostdlib+ (gated by various
+    # ::compileCSharp options), a -target:library default when no target was
+    # supplied (so no static Main is required), and -debug when symbols are
+    # requested.  It locates the .NET Standard reference assembly (default
+    # netstandard.dll, overridable) under [getDotNetStandardReferencePath] and
+    # adds it as a -reference.  Depending on whether the reference path is a
+    # "ref" style directory, it either adds every matching *.dll there (honoring
+    # numerous per-file and per-assembly skip options and hooks) or, otherwise,
+    # adds a user-provided, minimal, or empty set of reference assemblies; in
+    # both cases the references are written to a response file whose name is
+    # passed to the compiler with an "@" prefix.  It writes the source string to
+    # the .cs file, then runs the compiler via [runDotNetCSharpCommand] (wrapped
+    # by optional preProcess/postProcess hooks), extracts errors and warnings
+    # from the text output via [extractCSharpErrors] and [extractCSharpWarnings],
+    # and binds the caller's results variable to a synthetic CompilerResults-like
+    # object handle for backward compatibility.  If there are errors (or, in
+    # strict mode, warnings) the code is Error and the messages are appended to
+    # the caller's error list; otherwise, in memory mode it loads the output
+    # assembly from a FileStream via [object load] (requiring the object
+    # command, and optionally calling GetTypes to force full loading) and sets
+    # the code to Ok, or reports an Error if the object command or output file
+    # is missing; in non-memory mode it simply reports Ok.
+    #
+    # Tricky details: the synthetic results handle exists purely so the result
+    # shape matches the CodeDom back-end.  Numerous behaviors are tunable
+    # through ::compileCSharp array elements (noResponseFile, noReferenceAssemblies,
+    # standardReferenceAssembly, noAutomaticReferences, referencePattern,
+    # noExtraReferences, referenceAssemblies, noMinimalReferences, noConfig,
+    # noStdLib, noNoConfig, noNoStdLib, per-file no$name flags) and hooks
+    # (afterReferenceLines, afterReferenceAssemblies, preProcess, postProcess).
+    # The body intentionally adds or refrains from adding -noconfig / -nostdlib+
+    # in several places, with comments stressing those element names are
+    # correct.  A try/finally deletes the source file and (in memory mode, via a
+    # glob on the temp names) the generated .dll/.pdb/dummy files unless
+    # ::no(deleteCompileCSharpFiles) is set.  Reference-loading object handles
+    # (stream, assembly) are unset to dispose them.  Error reporting is via the
+    # caller's variables and the return value, not script errors.
+    #
+    # Arguments:
+    #   string         -- The C# source code text to compile.
+    #   memory         -- A boolean; when true the compiled assembly is loaded
+    #                     into memory rather than left as a usable output file.
+    #   symbols        -- A boolean; when true debug symbols (-debug) are
+    #                     generated.
+    #   strict         -- A boolean; when true compiler warnings are treated as
+    #                     failures in addition to errors.
+    #   resultsVarName -- The name of a caller variable that receives the
+    #                     synthetic results object handle; empty disables this
+    #                     output.
+    #   errorsVarName  -- The name of a caller variable that receives the list
+    #                     of error (and, in strict mode, warning) message
+    #                     strings; empty disables this output.
+    #   args           -- Zero or more name/value pairs translated into compiler
+    #                     command line arguments via [compilerParameterToArguments].
+    #
+    # Results:
+    #   A list whose first element is the overall result code ("Ok" or "Error");
+    #   when not in memory mode and an output file was produced, a second
+    #   element holds that output file name.
+    # </help>
+
+    #
+    # NOTE: Get the initial command line arguments needed to invoke the C#
+    #       compiler on .NET Core.  If this ends up being invalid, nothing
+    #       else can be done.
+    #
+    set command [getDotNetCoreCSharpCommandArgs]
+
+    if {[llength $command] == 0} then {
+      #
+      # NOTE: We cannot even attempt to compile anything, fail.
+      #
+      set code Error
+
+      #
+      # NOTE: Prepare to transfer error messages to the caller.
+      #
+      if {[string length $errorsVarName] > 0} then {
+        upvar 1 $errorsVarName local_errors
+      }
+
+      #
+      # NOTE: Append to the list of errors.
+      #
+      lappend local_errors "cannot compile, C# compiler was not found"
+
+      #
+      # NOTE: Return the overall result to the caller.
+      #
+      return [list $code]
+    }
+
+    #
+    # NOTE: Insert the [exec] command before the command line arguments.
+    #       The -success option is not used here because we want to handle
+    #       errors (only) by processing the compiler output.
+    #
+    set command [linsert $command 0 exec --]
+
+    #
+    # NOTE: Start out the compiler options with the pre-existing defaults
+    #       for the compiler followed by those necessary for the platform.
+    #
+    eval lappend command [getCSharpCompilerOptions "" true true -]
+
+    #
+    # NOTE: Allocate a couple temporary file names, one to hold the source
+    #       code to compile and one to hold the generated assembly.
+    #
+    set sourceFileName [appendArgs [set tempName(1) [file tempname]] .cs]
+
+    #
+    # HACK: Pre-check the list of extra parameters now.  If it will change
+    #       the assembly to an executable, use that file extension instead.
+    #
+    set outputExtension .dll; # HACK: Always DLL on .NET Core.
+
+    set outputFileName [appendArgs \
+        [set tempName(2) [file tempname]] $outputExtension]
+
+    #
+    # NOTE: Use a try/finally block to cleanup temporary files.
+    #
+    try {
+      #
+      # NOTE: Process extra compiler settings the caller may have provided.
+      #
+      foreach {name value} $args {
+        set nameValueArguments \
+            [compilerParameterToArguments $name $value outputFileName]
+
+        if {[llength $nameValueArguments] > 0} then {
+          eval lappend command $nameValueArguments
+        }
+      }
+
+      #
+      # NOTE: Make the compiler output a little quieter.  This is needed
+      #       to maintain compatibility with the results generated by the
+      #       [compileViaCSharpCodeProvider] procedure.
+      #
+      lappend command -nologo
+
+      #
+      # NOTE: Should we include the "CSC.RSP" file?  By default, we will;
+      #       however, that behavior can be disabled by the user.
+      #
+      if {[info exists ::compileCSharp(noResponseFile)] && \
+          [lsearch -exact -- $command -noconfig] == -1} then {
+        lappend command -noconfig
+      }
+
+      if {[info exists ::compileCSharp(noReferenceAssemblies)] && \
+          [lsearch -exact -- $command -nostdlib+] == -1} then {
+        lappend command -nostdlib+
+      }
+
+      #
+      # NOTE: Always build as a library so that we do not require a static
+      #       Main method.
+      #
+      if {[lsearch -glob -- $command -target:*] == -1} then {
+        lappend command -target:library
+      }
+
+      #
+      # NOTE: If symbols are enabled, add the necessary command line
+      #       argument.
+      #
+      if {$symbols} then {lappend command -debug}
+
+      #
+      # NOTE: As of this writing (2019-10-26), the current versions of the
+      #       .NET Core SDK (2.x / 3.x) use the "netstandard.dll" assembly
+      #       to enable use of the .NET Standard 2.x reference library.
+      #
+      if {[info exists ::compileCSharp(standardReferenceAssembly)]} then {
+        set standardReferenceAssembly \
+            $::compileCSharp(standardReferenceAssembly)
+      } else {
+        set standardReferenceAssembly netstandard.dll
+      }
+
+      set referencePath [getDotNetStandardReferencePath]
+
+      set referenceFileName [file normalize \
+          [file join $referencePath $standardReferenceAssembly]]
+
+      if {[file exists $referenceFileName]} then {
+        lappend command [formatCompilerArgument \
+            -reference [file nativename $referenceFileName]]
+      }
+
+      #
+      # HACK: The [formatList] procedure will almost always be available
+      #       at this point; however, we do not want to require it.
+      #
+      set formatReferences [list apply [list [list fileName] {
+        if {[llength [info commands formatList]] > 0} then {
+          return [formatList [split [readFile $fileName] \n] <none>]
+        } else {
+          set data [readFile $fileName]
+
+          if {[string length [string trim $data]] > 0} then {
+            return $data
+          } else {
+            return <none>
+          }
+        }
+      }]]
+
+      #
+      # HACK: Apparently, these reference assemblies are also (possibly)
+      #       required, depending on the location of the "primary" .NET
+      #       Standard reference assembly was located.
+      #
+      # HACK: For reference paths that include "ref", all "*.dll" files
+      #       will be added as reference assemblies.  Hopefully, this is
+      #       relatively safe.
+      #
+      if {![info exists ::compileCSharp(noAutomaticReferences)] && \
+          [regexp -- {(?:^|[\\/])ref(?:[\\/]|$)} $referencePath]} then {
+        if {[info exists ::compileCSharp(referencePattern)]} then {
+          set referencePattern $::compileCSharp(referencePattern)
+        } else {
+          set referencePattern *.dll
+        }
+
+        set lines [list]
+
+        foreach referenceFileName [lsort [glob -nocomplain \
+            [file join $referencePath $referencePattern]]] {
+          if {[info exists ::compileCSharp(no$referenceFileName)]} then {
+            csharpLog [appendArgs \
+                "explicitly skipped reference file name (1): " \
+                $referenceFileName]
+
+            continue
+          }
+
+          set referenceAssembly [file tail $referenceFileName]
+
+          if {[info exists ::compileCSharp(no$referenceAssembly)]} then {
+            csharpLog [appendArgs \
+                "explicitly skipped reference assembly (1): " \
+                $referenceAssembly]
+
+            continue
+          }
+
+          if {[file tail \
+              $referenceFileName] ne $standardReferenceAssembly} then {
+            lappend lines [formatCompilerArgument -reference \
+                [file nativename $referenceFileName]]
+          }
+        }
+
+        if {[info exists ::compileCSharp(afterReferenceLines)]} then {
+          eval $::compileCSharp(afterReferenceLines); # HOOK
+        }
+
+        if {[llength $lines] > 0} then {
+          writeFile [set tempName(3) [file tempname]] [join $lines \n]
+
+          csharpLog [appendArgs \
+              "list of assembly references matching glob pattern \"" \
+              $referencePattern "\": " [eval $formatReferences [list \
+              $tempName(3)]]]
+
+          #
+          # HACK: This is not a bug.  The element is named correctly.
+          #       We are possibly forcibly opting-out of adding the
+          #       "-noconfig" command line argument.
+          #
+          if {![info exists ::compileCSharp(noNoConfig)] && \
+              [lsearch -exact -- $command -noconfig] == -1} then {
+            lappend command -noconfig
+          }
+
+          #
+          # HACK: This is not a bug.  The element is named correctly.
+          #       We are possibly forcibly opting-out of adding the
+          #       "-nostdlib" command line argument.
+          #
+          if {![info exists ::compileCSharp(noNoStdLib)] && \
+              [lsearch -exact -- $command -nostdlib+] == -1} then {
+            lappend command -nostdlib+
+          }
+
+          lappend command \
+              [formatCompilerArgument "" [appendArgs @ $tempName(3)]]
+        }
+      } elseif {![info exists ::compileCSharp(noExtraReferences)]} then {
+        if {[info exists ::compileCSharp(referenceAssemblies)]} then {
+          #
+          # NOTE: The user has provided a list of reference assemblies,
+          #       juse use them.
+          #
+          set referenceAssemblies $::compileCSharp(referenceAssemblies)
+          set referenceType overridden
+        } else {
+          if {![info exists ::compileCSharp(noMinimalReferences)]} then {
+            #
+            # TODO: Keep this list updated.  It should consist of .NET
+            #       reference assemblies, file names only, with and/or
+            #       without file extensions (".dll" will be assumed).
+            #       This is not actually intended to be an "exhaustive"
+            #       list, it should be a reasonably universal, minimal
+            #       subset of all possible reference assemblies.
+            #
+            set referenceAssemblies [list \
+                mscorlib.dll System.dll System.Private.CoreLib.dll \
+                System.Runtime.dll]
+
+            set referenceType minimal
+          } else {
+            #
+            # NOTE: The user has spoken.  Do nothing and be happy.
+            #
+            set referenceAssemblies [list]
+            set referenceType no
+          }
+        }
+
+        if {[info exists ::compileCSharp(afterReferenceAssemblies)]} then {
+          eval $::compileCSharp(afterReferenceAssemblies); # HOOK
+        }
+
+        set lines [list]
+
+        foreach referenceAssembly [lsort $referenceAssemblies] {
+          if {[string length \
+              [file extension $referenceAssembly]] == 0} then {
+            append referenceAssembly .dll
+          }
+
+          if {[info exists ::compileCSharp(no$referenceAssembly)]} then {
+            csharpLog [appendArgs \
+                "explicitly skipped reference assembly (2): " \
+                $referenceAssembly]
+
+            continue
+          }
+
+          set referenceFileName [file normalize \
+              [file join $referencePath $referenceAssembly]]
+
+          if {[info exists ::compileCSharp(no$referenceFileName)]} then {
+            csharpLog [appendArgs \
+                "explicitly skipped reference file name (2): " \
+                $referenceFileName]
+
+            continue
+          }
+
+          if {[file exists $referenceFileName]} then {
+            if {[file tail \
+                $referenceFileName] ne $standardReferenceAssembly} then {
+              lappend lines [formatCompilerArgument -reference \
+                  [file nativename $referenceFileName]]
+            }
+          }
+        }
+
+        if {[info exists ::compileCSharp(afterReferenceLines)]} then {
+          eval $::compileCSharp(afterReferenceLines); # HOOK
+        }
+
+        if {[llength $lines] > 0} then {
+          writeFile [set tempName(3) [file tempname]] [join $lines \n]
+
+          csharpLog [appendArgs \
+              "list of " $referenceType " assembly references: " \
+              [eval $formatReferences [list $tempName(3)]]]
+
+          #
+          # HACK: This is not a bug.  The element is named correctly.
+          #       We are possibly forcibly opting-into adding the
+          #       "-noconfig" command line argument.
+          #
+          if {[info exists ::compileCSharp(noConfig)] && \
+              [lsearch -exact -- $command -noconfig] == -1} then {
+            lappend command -noconfig
+          }
+
+          #
+          # HACK: This is not a bug.  The element is named correctly.
+          #       We are possibly forcibly opting-into adding the
+          #       "-nostdlib" command line argument.
+          #
+          if {[info exists ::compileCSharp(noStdLib)] && \
+              [lsearch -exact -- $command -nostdlib+] == -1} then {
+            lappend command -nostdlib+
+          }
+
+          lappend command \
+              [formatCompilerArgument "" [appendArgs @ $tempName(3)]]
+        }
+      }
+
+      #
+      # NOTE: Set the output assembly file name to the temporary output
+      #       file name we obtained from [file tempname] above.
+      #
+      lappend command [formatCompilerArgument -out [file nativename [file \
+          normalize $outputFileName]]]
+
+      #
+      # NOTE: Set the source code file name to the temporary source code
+      #       file name we obtained from [file tempname] above.
+      #
+      lappend command [formatCompilerArgument "" [file nativename [file \
+          normalize $sourceFileName]]]
+
+      #
+      # NOTE: First, write the specified string (containing C# code) to
+      #       the temporary source code file.
+      #
+      writeFile $sourceFileName $string
+
+      #
+      # NOTE: Attempt to compile the temporary file as C# and capture the
+      #       results into the variable provided by the caller.  Since the
+      #       results are text, normalize line endings before extracting
+      #       the compiler errors and/or warnings.
+      #
+      try {
+        if {[info exists ::compileCSharp(preProcess)]} then {
+          eval $::compileCSharp(preProcess); # pre-compilation HOOK
+        }
+
+        set local_results [runDotNetCSharpCommand $command]
+      } finally {
+        if {[info exists ::compileCSharp(postProcess)]} then {
+          eval $::compileCSharp(postProcess); # post-compilation HOOK
+        }
+      }
+
+      #
+      # NOTE: Extract the compiler errors (which may be empty).
+      #
+      set errors [extractCSharpErrors $sourceFileName $local_results]
+
+      #
+      # NOTE: Extract the compiler warnings (which may be empty).
+      #
+      set warnings [extractCSharpWarnings $sourceFileName $local_results]
+
+      #
+      # NOTE: Prepare to transfer the "results" to the caller.
+      #
+      if {[string length $resultsVarName] > 0} then {
+        upvar 1 $resultsVarName results
+      }
+
+      #
+      # HACK: For backward compatibility with the results generated by
+      #       the [compileViaCSharpCodeProvider] procedure, we must now
+      #       set the results to an obviously fake opaque object handle
+      #       that still matches the normal pattern.
+      #
+      set results System#CodeDom#Compiler#CompilerResults#0
+
+      #
+      # NOTE: It is assumed that no assembly was generated if there were
+      #       any compiler errors.  Ignore all compiler warnings unless
+      #       we are in strict mode.
+      #
+      if {[llength $errors] > 0 || \
+          ($strict && [llength $warnings] > 0)} then {
+        #
+        # NOTE: Compilation of the assembly failed.
+        #
+        set code Error
+
+        #
+        # NOTE: Prepare to transfer error messages to the caller.
+        #
+        if {[string length $errorsVarName] > 0} then {
+          upvar 1 $errorsVarName local_errors
+        }
+
+        #
+        # NOTE: If there are compiler errors, add them to the list now.
+        #
+        if {[llength $errors] > 0} then {
+          eval lappend local_errors $errors
+        }
+
+        #
+        # NOTE: If there are compiler warnings, add them to the list now.
+        #
+        if {[llength $warnings] > 0} then {
+          eval lappend local_errors $warnings
+        }
+      } else {
+        #
+        # NOTE: If the generated assembly was supposed to be loaded into
+        #       memory, try to do that now.
+        #
+        if {$memory} then {
+          #
+          # HACK: In order to load the newly compiled assembly into memory,
+          #       the [object] command is required.  Generally, this is not
+          #       an issue; however, if the [object] command is not present
+          #       in the current interpreter (i.e. because it was explicitly
+          #       removed, etc), we cannot succeed.
+          #
+          if {[llength [info commands object]] > 0} then {
+            #
+            # NOTE: At this point, the output file must exist.  If not,
+            #       something is very wrong (i.e. C# compilation failed
+            #       and we somehow did not detect it).
+            #
+            if {[string length $outputFileName] > 0 && \
+                [file exists $outputFileName]} then {
+              try {
+                set stream [object create \
+                    System.IO.FileStream $outputFileName Open Read None]
+
+                set assembly [object load -alias -loadtype Stream $stream]
+
+                if {![info exists ::compileCSharp(noGetTypes)]} then {
+                  $assembly GetTypes; # BUGFIX: Make sure it is fully loaded?
+                }
+              } finally {
+                if {[info exists assembly]} then {
+                  unset -nocomplain assembly
+                }
+
+                if {[info exists stream]} then {
+                  unset -nocomplain stream
+                }
+              }
+
+              #
+              # NOTE: Compilation and loading of the assembly succeeded.
+              #
+              set code Ok
+            } else {
+              #
+              # NOTE: Compilation of the assembly may not have succeeded
+              #       because the output file is missing.
+              #
+              set code Error
+
+              #
+              # NOTE: Prepare to transfer error messages to the caller.
+              #
+              if {[string length $errorsVarName] > 0} then {
+                upvar 1 $errorsVarName local_errors
+              }
+
+              #
+              # NOTE: Inform caller why we could not load the compiled
+              #       assembly into memory.
+              #
+              lappend local_errors [appendArgs \
+                  "cannot load compiled assembly \"" $outputFileName \
+                  "\" into memory, compiled assembly file is missing"]
+            }
+          } else {
+            #
+            # NOTE: Compilation of the assembly succeeded; however, it
+            #       cannot be loaded, due to the [object] command being
+            #       missing.
+            #
+            set code Error
+
+            #
+            # NOTE: Prepare to transfer error messages to the caller.
+            #
+            if {[string length $errorsVarName] > 0} then {
+              upvar 1 $errorsVarName local_errors
+            }
+
+            #
+            # NOTE: Inform caller why we could not load the compiled
+            #       assembly into memory.
+            #
+            lappend local_errors [appendArgs \
+                "cannot load compiled assembly \"" $outputFileName \
+                "\" into memory, missing \"object\" command"]
+          }
+        } else {
+          #
+          # NOTE: Compilation of the assembly succeeded -AND- there is
+          #       no need to load it into memory.
+          #
+          set code Ok
+        }
+      }
+    } finally {
+      #
+      # NOTE: Make sure the created temporary files are cleaned up unless we
+      #       are forbidden from doing so.
+      #
+      if {![info exists ::no(deleteCompileCSharpFiles)]} then {
+        #
+        # NOTE: Delete the temporary file name used to hold the source code.
+        #
+        if {[string length $sourceFileName] > 0 && \
+            [file exists $sourceFileName]} then {
+          catch {file delete $sourceFileName}
+        }
+
+        #
+        # NOTE: Make sure the dummy temporary files are cleaned up.  This is
+        #       done only if the caller requested in-memory generation.
+        #
+        if {[array exists tempName]} then {
+          foreach tempFileName [array values tempName] {
+            if {[string length $tempFileName] > 0} then {
+              if {$memory} then {
+                #
+                # NOTE: When operating in in-memory generation mode, delete
+                #       all the temporary files associated with the original
+                #       allocated temporary name.  This includes the ".dll",
+                #       the ".pdb" (if any), and the empty "dummy" file that
+                #       contains nothing.
+                #
+                foreach deleteFileName [glob -nocomplain \
+                    [appendArgs [file normalize $tempFileName] *]] {
+                  if {[file exists $deleteFileName]} then {
+                    catch {file delete $deleteFileName}
+                  }
+                }
+              } else {
+                #
+                # NOTE: Delete the empty "dummy" file that contains nothing.
+                #       The actual compiled assembly has a ".dll" suffix and
+                #       its symbols, if any, have a ".pdb" suffix.
+                #
+                if {[file exists $tempFileName]} then {
+                  catch {file delete $tempFileName}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    #
+    # HACK: *BREAKING CHANGE* If there is an output file name, return it
+    #       as well; otherwise, just return success.
+    #
+    if {!$memory && [string length $outputFileName] > 0} then {
+      #
+      # NOTE: Return a two element list: the first element is the overall
+      #       result and the second element is the output file name.
+      #
+      return [list $code $outputFileName]
+    } else {
+      #
+      # NOTE: Return the overall result to the caller.
+      #
+      return [list $code]
+    }
+  }
+
+  #
+  # NOTE: This procedure is used to dynamically compile arbitrary C# code
+  #       from within a script.  This procedure was originally designed to
+  #       be used by the test suite; however, it can be quite useful in
+  #       non-test scripts as well.
+  #
+  proc compileCSharp {
+          string memory symbols strict resultsVarName errorsVarName args } {
+    # <help>
+    # This procedure dynamically compiles arbitrary C# source code, dispatching
+    # to whichever compilation back-end is appropriate for the current runtime.
+    # It is the public entry point most callers should use; it exists so that
+    # scripts need not know or care whether the desktop CodeDom provider or the
+    # .NET Core command line compiler is in play, and so the rest of the package
+    # can share a single uniform compilation interface.
+    #
+    # How it works: it tests the runtime with [isDotNetCore].  On .NET Core it
+    # forwards to [compileViaDotNetCoreCSharp]; otherwise it forwards to
+    # [compileViaCSharpCodeProvider].  In both cases the call is made with
+    # [uplevel 1] so the chosen back-end runs in the caller's variable context,
+    # which is essential because the back-ends use [upvar] to write the results
+    # and errors variables named by the caller; the fixed arguments are passed
+    # as a [list] and the variadic args are appended after it.
+    #
+    # Tricky details: the use of [uplevel 1] together with [list]-quoting of the
+    # fixed arguments ensures the results and errors variable names resolve in
+    # the original caller's frame rather than in this dispatcher's frame, and
+    # that the variadic args reach the back-end as separate words.  The result
+    # shape, error-reporting conventions, and side effects are entirely those of
+    # the selected back-end.
+    #
+    # Arguments:
+    #   string         -- The C# source code text to compile.
+    #   memory         -- A boolean selecting in-memory generation/loading
+    #                     versus an on-disk output file.
+    #   symbols        -- A boolean enabling debug symbol generation.
+    #   strict         -- A boolean causing warnings to be treated as failures.
+    #   resultsVarName -- The name of a caller variable to receive the results
+    #                     object handle; empty disables this output.
+    #   errorsVarName  -- The name of a caller variable to receive the error
+    #                     message list; empty disables this output.
+    #   args           -- Zero or more name/value compiler settings forwarded to
+    #                     the selected back-end.
+    #
+    # Results:
+    #   The result of the selected back-end: a list whose first element is the
+    #   overall result code ("Ok" or "Error"), optionally followed by the output
+    #   file name when not in memory mode.
+    # </help>
+
+    if {[isDotNetCore]} then {
+      return [uplevel 1 [list \
+          compileViaDotNetCoreCSharp $string $memory $symbols $strict \
+          $resultsVarName $errorsVarName] $args]
+    } else {
+      return [uplevel 1 [list \
+          compileViaCSharpCodeProvider $string $memory $symbols $strict \
+          $resultsVarName $errorsVarName] $args]
+    }
+  }
+
+  #
+  # NOTE: Provide the TclTk "C#" package to the interpreter.
+  #
+  package provide TclTk.CSharp \
+    [expr {[isTclTk] ? [info engine PatchLevel] : "1.0"}]
+}
+

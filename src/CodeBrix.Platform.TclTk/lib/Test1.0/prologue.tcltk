@@ -1,0 +1,4233 @@
+###############################################################################
+#
+# prologue.tcltk --
+#
+# Extensible Adaptable Generalized Logic Engine (TclTk)
+# Test Prologue File
+#
+# Copyright (c) 2007-2012 by Joe Mistachkin.  All rights reserved.
+#
+# See the file "license.terms" for information on usage and redistribution of
+# this file, and for a DISCLAIMER OF ALL WARRANTIES.
+#
+# RCS: @(#) $Id: $
+#
+###############################################################################
+
+if {![info exists no([file tail [info script]])]} then {
+  if {![info exists no(hookForStartPrologue)] && \
+      [llength [info commands ::hookForStartPrologue]] > 0} then {
+    catch {::hookForStartPrologue}
+  }
+
+  if {[info level] > 0} then {
+    error "cannot run, current level is not global"
+  }
+
+  #
+  # NOTE: Make sure all global variables that may be set / used by
+  #       this prologue (and the associated epilogue) are initially
+  #       unset.
+  #
+  unset -nocomplain expr pkg_dir bin_dir hostsFile frameName \
+      scriptLocations directory dummy exec pattern loaded \
+      old_test_run_id ppid encoding host cpu memory stack \
+      levels drive tags checkout password user timeout database \
+      server multiplier percent timeStamp haveStartSentry \
+      operationCount milliseconds usageKind usageData usageType \
+      dictionary error code pair key value cmdType usage exitCode
+
+  #
+  # NOTE: Remove stale test suite error messages from prior runs.
+  #
+  unset -nocomplain test_suite_errors
+
+  #
+  # NOTE: Indicate that the test suite is currently running.  This
+  #       will only be unset when there is an error -AND- it will
+  #       (eventually) be set to false by the test suite epilogue.
+  #
+  if {![info exists test_suite_running] || !$test_suite_running} then {
+    set test_suite_running true
+  }
+
+  if {![info exists test_all_path]} then {
+    set test_all_path [file normalize [file dirname [info script]]]
+  }
+
+  if {![info exists test_suite_file]} then {
+    set test_suite_file [file normalize [info script]]
+  }
+
+  #
+  # NOTE: Attempt to figure out the location of the primary test suite
+  #       files now, if needed.
+  #
+  if {![info exists test_path]} then {
+    #
+    # NOTE: Build a reusable expression that can be used to verify the
+    #       candidate paths.  This is done to avoid duplication of this
+    #       (quite complex) expression several times (just below).
+    #
+    set expr {![info exists test_path] || ![file exists $test_path] || \
+        ![file isdirectory $test_path] || ([llength [info commands \
+        glob]] > 0 && [llength [glob -directory $test_path -types {f r} \
+        -nocomplain -- *]] == 0)}
+
+    #
+    # NOTE: Search for the "Library/Tests" -OR- "Tests" sub-directories
+    #       within the sub-directory one level up and then two levels up
+    #       from the sub-directory containing the "all.tcltk" file from
+    #       the test suite package.
+    #
+    set test_path [file normalize \
+        [file join [file dirname $test_all_path] Library Tests]]
+
+    if {[expr $expr]} then {
+      set test_path [file normalize \
+          [file join [file dirname [file dirname $test_all_path]] \
+          Library Tests]]
+    }
+
+    if {[expr $expr]} then {
+      set test_path [file normalize \
+          [file join [file dirname $test_all_path] Tests]]
+    }
+
+    if {[expr $expr]} then {
+      set test_path [file normalize \
+          [file join [file dirname [file dirname $test_all_path]] \
+          Tests]]
+    }
+
+    unset expr
+  }
+
+  if {![info exists test_extra_paths]} then {
+    set test_extra_paths [list]
+  }
+
+  if {![info exists test_home_path]} then {
+    set test_home_path [file normalize ~]
+  }
+
+  if {![info exists test_data_path]} then {
+    set test_data_path [file join $test_path data]
+  }
+
+  if {![info exists base_path]} then {
+    #
+    # NOTE: Start out going up one level and check for a "lib"
+    #       sub-directory.  If not found, go up another level
+    #       because we will always be two levels down from the
+    #       base directory when running inside the source tree.
+    #
+    set base_path [file normalize [file dirname $test_path]]
+
+    #
+    # HACK: We must verify that the "init.tcltk" file can eventually
+    #       be found under the "lib" directory since Visual Studio
+    #       insists on creating a superfluous (and empty) "lib\TclTk1.0"
+    #       sub-directory inside of the "Library" project directory
+    #       simply due to the links contained in the project file that
+    #       actually point to the "lib\TclTk1.0" sub-directory under the
+    #       solution directory.
+    #
+    # WARNING: The TclTk package name and version are hard-coded here.
+    #
+    set pkg_dir TclTk1.0; # TODO: Change me.
+
+    if {![file exists [file join $base_path lib]] || \
+        ![file isdirectory [file join $base_path lib]] || \
+        ![file exists [file join $base_path lib $pkg_dir]] || \
+        ![file isdirectory [file join $base_path lib $pkg_dir]] || \
+        ![file exists [file join $base_path lib $pkg_dir init.tcltk]] || \
+        ![file isfile [file join $base_path lib $pkg_dir init.tcltk]]} then {
+      #
+      # NOTE: We do not bother to check if the "lib" sub-directory actually
+      #       exists as a child of this one.  This is the previous (legacy)
+      #       behavior (i.e. where we always went up two levels to the base
+      #       directory).
+      #
+      set base_path [file dirname $base_path]
+    }
+
+    unset pkg_dir
+  }
+
+  #############################################################################
+
+  #
+  # NOTE: Set the location of the native Tcl library directory (i.e. should
+  #       contain the "TclTk.Tools.Common" package, etc), if necessary.
+  #
+  if {![info exists native_lib_path]} then {
+    #
+    # NOTE: Normally, there should be a "Native/Common/Tools" sub-directory
+    #       within the base directory, e.g. if we are within an actual copy
+    #       of a source checkout.
+    #
+    set native_lib_path [file join $base_path Native Common Tools]
+  }
+
+  #############################################################################
+
+  #
+  # NOTE: Set the location of the TclTk main strong name keys directory,
+  #       if necessary.
+  #
+  if {![info exists key_path]} then {
+    #
+    # NOTE: Normally, there should be a "Keys" sub-directory just within
+    #       the base directory.
+    #
+    set key_path [file join $base_path Keys]
+  }
+
+  #############################################################################
+
+  if {![info exists bin_file]} then {
+    #
+    # HACK: This does not use the [getShellExecutableName]
+    #       script library procedure because it must always
+    #       refer to the name of the file that started the
+    #       current process.
+    #
+    set bin_file [info nameofexecutable]; # EXEMPT
+  }
+
+  #
+  # NOTE: Set the location of the directory containing the
+  #       executable file for the process, if necessary.
+  #
+  if {![info exists bin_path]} then {
+    set bin_path [file normalize [file dirname $bin_file]]
+  }
+
+  #
+  # NOTE: Set the location of the [non-script] library directory
+  #       (i.e. the directory where the plugins are located), if
+  #       necessary.  This variant is based on where the process
+  #       executable is located.
+  #
+  if {![info exists lib_path]} then {
+    #
+    # NOTE: This should go one directory up from the directory
+    #       containing the executable file for the process (e.g.
+    #       the shell) and then into the "lib" directory just
+    #       beneath that.
+    #
+    set lib_path [file normalize [file join [file dirname $bin_path] lib]]
+  }
+
+  #
+  # NOTE: Set the location of the TclTk core library -OR- Tcl core
+  #       library file is located.  This may be different than the
+  #       location of the (shell?) executable file.
+  #
+  if {![info exists core_bin_path]} then {
+    #
+    # NOTE: Attempt to obtain the information for the TclTk core
+    #       library assembly.  This will not work for native Tcl.
+    #
+    if {[catch {info assembly} bin_dir] == 0} then {
+      #
+      # NOTE: Grab the directory for the core library assembly.
+      #
+      set core_bin_path [file dirname [lindex $bin_dir end]]
+    } else {
+      #
+      # NOTE: This is native Tcl.  There is no way to query the
+      #       path for the Tcl core library itself (e.g. "tcl*.dll",
+      #       "libtcl*.so", etc); however, using [info library] is
+      #       close enough.
+      #
+      set core_bin_path [file dirname [info library]]
+    }
+
+    unset bin_dir
+  }
+
+  #
+  # NOTE: Set the location of the [non-script] library directory
+  #       (i.e. the directory where the plugins are located), if
+  #       necessary.  This variant is based on where the TclTk
+  #       core library -OR- Tcl core library file is located.
+  #
+  if {![info exists core_lib_path]} then {
+    #
+    # NOTE: Start with directory for the core library assembly.
+    #
+    set core_lib_path $core_bin_path
+
+    #
+    # NOTE: Perform a check for the .NET Core output directories
+    #       (e.g. "netcoreapp2.0", etc), which must be removed
+    #       if present, prior to further checks.
+    #
+    if {![info exists no(dotNetCoreLibPath)] && \
+        [string match net* [file tail $core_lib_path]]} then {
+      #
+      # NOTE: Remove the .NET Core output directory name.
+      #
+      set core_lib_path [file dirname $core_lib_path]
+    }
+
+    #
+    # NOTE: Go up one level, to remove the "bin" directory and
+    #       then append the "lib" directory.  This gives us the
+    #       final path we need.
+    #
+    set core_lib_path [file normalize \
+        [file join [file dirname $core_lib_path] lib]]
+  }
+
+  #
+  # NOTE: Set the port to use for server sockets, if necessary.
+  #
+  if {![info exists test_port]} then {
+    set test_port 12346; # IANA, 12346-12752 Unassigned
+  }
+
+  #
+  # NOTE: Set the timeout, if necessary.  This is a "short" timeout
+  #       that has historically been used for network related calls.
+  #
+  if {![info exists test_timeout]} then {
+    if {[catch {
+      info engine NetworkTimeout
+    } test_timeout]} then {
+      set test_timeout 2000; # in milliseconds (COMPAT: TclTk beta).
+    }
+  }
+
+  #
+  # NOTE: Set the default number of iterations for stress tests.
+  #
+  if {![info exists test_stress_count]} then {
+    set test_stress_count 10000; # in iterations.
+  }
+
+  if {![info exists test_channel]} then {
+    set test_channel stdout
+  }
+
+  if {![info exists test_package_path]} then {
+    set test_package_path [file join $base_path lib]
+  }
+
+  if {![info exists test_name_prefix]} then {
+    set test_name_prefix ""
+  }
+
+  #############################################################################
+
+  #
+  # NOTE: Make sure test package(s) path is part of the auto-path.
+  #
+  if {[info exists auto_path] && \
+      [lsearch -exact $auto_path $test_package_path] == -1} then {
+    lappend auto_path $test_package_path
+  }
+
+  #
+  # NOTE: Make sure the test suite package is part of the auto-path.
+  #
+  if {[info exists auto_path] && \
+      [lsearch -exact $auto_path $test_all_path] == -1} then {
+    lappend auto_path $test_all_path
+  }
+
+  #
+  # NOTE: Make sure the test suite is part of the auto-path.  This
+  #       is now done for legacy compatibility only.
+  #
+  if {[info exists auto_path] && \
+      [lsearch -exact $auto_path $test_path] == -1} then {
+    lappend auto_path $test_path
+  }
+
+  #############################################################################
+
+  if {[catch {package present TclTk.Library}]} then {
+    package require TclTk.Library
+  }
+
+  if {[catch {package present TclTk.Test}]} then {
+    package require TclTk.Test
+  }
+
+  if {[catch {package present TclTk.Test.Constraints}]} then {
+    package require TclTk.Test.Constraints
+  }
+
+  #############################################################################
+
+  #
+  # NOTE: Set the web hosts to test TLS (1.2, etc) against, if
+  #       necessary.
+  #
+  if {![info exists test_hosts]} then {
+    set hostsFile [file join $test_data_path hosts.txt]
+
+    if {[file exists $hostsFile]} then {
+      set test_hosts [split [readSharedFile $hostsFile] \n]
+    } else {
+      set test_hosts [list]
+    }
+
+    unset -nocomplain hostsFile
+  }
+
+  if {![info exists test_host]} then {
+    if {[llength $test_hosts] > 0} then {
+      set test_host [lindex $test_hosts 0]
+    } else {
+      set test_host tcltk.to; # COMPAT: TclTk beta.
+    }
+  }
+
+  #############################################################################
+
+  #
+  # NOTE: *SPECIAL* This test constraint must be checked first as it can
+  #       determine if subsequent ones will emit warnings.  This is only
+  #       applicable to TclTk.  This block requires the "TclTk.Test" and
+  #       "TclTk.Test.Constraints" packages.
+  #
+  if {[isTclTk]} then {
+    if {![info exists no(preQuiet)]} then {
+      #
+      # NOTE: There are checks for the "quiet" test constraint prior to
+      #       the real test constraints being initialized.  Prepare for
+      #       those checks now.  This will have to be repeated later,
+      #       after the real test constraints are initialized.
+      #
+      checkForQuiet $test_channel true
+    }
+  }
+
+  #############################################################################
+
+  #
+  # NOTE: If command line arguments were supplied, process them now, right
+  #       after setting up the initial system defaults.  This will require
+  #       use of the "TclTk.Test" package.
+  #
+  makeUseOfTestDefaults test_flags
+
+  if {[info exists argv]} then {
+    set test_flags(-bad) [eval \
+        processTestArguments test_flags false $argv]
+
+    makeUseOfTestArguments test_flags
+  }
+
+  #############################################################################
+
+  #
+  # NOTE: Verify that the current call frame is correct and that the
+  #       interpreter call stack has not been imbalanced by previous
+  #       tests or other errors.  This check only applies to TclTk.
+  #       This block requires the "TclTk.Library" package.
+  #
+  if {[isTclTk] && [llength [info commands object]] > 0} then {
+    #
+    # NOTE: Check the name of the current call frame against the one
+    #       that SHOULD be used for evaluating this script file.
+    #
+    if {![info exists no(currentFrameName)]} then {
+      #
+      # HACK: This [object invoke] cannot be inside of a [catch] block
+      #       because that would alter the current call frame.  Do not
+      #       change this code without fully understanding what it is.
+      #
+      set frameName [object invoke -flags +NonPublic \
+          Interpreter.GetActive.CurrentFrame Name]
+
+      if {[file pathtype [info script]] eq "absolute"} then {
+        if {$frameName ne [list \
+              source [file normalize [info script]]]} then {
+          unset -nocomplain frameName test_suite_running
+          error "cannot run prologue, current frame not absolute script"
+        }
+      } else {
+        if {$frameName ne [list \
+              source [info script]]} then {
+          unset -nocomplain frameName test_suite_running
+          error "cannot run prologue, current frame not relative script"
+        }
+      }
+    }
+
+    unset -nocomplain frameName
+
+    #
+    # NOTE: Attempt to determine if the this script file being run as
+    #       part of the overall test suite script file itself.  If not,
+    #       issue a warning about the inability to detect "leaks" from
+    #       the tests.
+    #
+    if {[catch {
+      object invoke -flags +NonPublic \
+          Interpreter.GetActive ScriptLocations.ToString
+    } scriptLocations] == 0 && [lsearch -glob -index 0 \
+        -- $scriptLocations {*[/\]all.tcltk}] == -1} then {
+      #
+      # NOTE: Check if the warning should actually be emitted.  If this
+      #       warning has specifically been disabled or we are in quiet
+      #       mode, do nothing.
+      #
+      if {![info exists no(warningForAllTclTk)] && \
+          ![haveConstraint quiet]} then {
+        tputs $test_channel [appendArgs \
+            "==== WARNING: tests are not being run via suite script file " \
+            "\"all.tcltk\", resource leaks will probably not be reported.\n"]
+      }
+    }
+
+    unset -nocomplain scriptLocations
+  }
+
+  #############################################################################
+
+  #
+  # NOTE: Set the local root directory of the source checkout (i.e. of TclTk
+  #       or whatever project the TclTk binaries are being used by) using a
+  #       Fossil binary in the PATH, if available.  This block now requires
+  #       the "TclTk.Test.Constraints" package.
+  #
+  if {![info exists root_path]} then {
+    #
+    # NOTE: Is the use of Fossil by the test suite allowed?
+    #
+    if {[canExecFossil]} then {
+      set pattern {^local-root:\s+(.*?)$}
+
+      if {[catch {
+        execFossilCommand \
+            [expr {[info exists path] ? $path : $test_path}] info
+      } exec] || ![regexp -line -- $pattern $exec dummy directory]} then {
+        #
+        # NOTE: We could not query local root directory of the source
+        #       checkout from Fossil; therefore, attempt to make an
+        #       educated guess.  This value will probably be wrong for
+        #       any project(s) other than TclTk.  In that case, this
+        #       value should be overridden by that project to reflect
+        #       the actual local root directory of the source checkout
+        #       for that project.
+        #
+        set root_path $base_path
+      } else {
+        #
+        # NOTE: We extracted the local root directory of the source
+        #       checkout from Fossil.  Now, make sure it is fully
+        #       normalized and has no trailing slashes.  Also, make
+        #       sure and remove any trailing newline "just in case"
+        #       the regular expression engine included it.
+        #
+        set root_path [file normalize [string trim $directory]]
+      }
+
+      unset -nocomplain directory dummy exec pattern
+    } else {
+      #
+      # NOTE: Use of Fossil by the test suite is forbidden.  Fallback
+      #       to using the base path.
+      #
+      set root_path $base_path
+    }
+  }
+
+  #############################################################################
+
+  #
+  # NOTE: Setup (various) auxiliary test suite variables that require
+  #       helper procedures within the "TclTk.Test" package.
+  #
+  if {![info exists test_suite]} then {
+    set test_suite [getTestSuite]
+  }
+
+  if {![info exists test_machine]} then {
+    set test_machine [getTestMachine]
+  }
+
+  if {![info exists test_platform]} then {
+    set test_platform [getTestPlatform]
+  }
+
+  if {![info exists test_configuration]} then {
+    set test_configuration [getPlatformInfo configuration Release]
+  }
+
+  #############################################################################
+
+  #
+  # NOTE: Setup the test log (file) now unless that has been explicitly
+  #       forbidden.
+  #
+  if {![info exists no(logFileName)]} then {
+    if {![info exists test_log]} then {
+      set test_log [getDefaultTestLog]
+    }
+  }
+
+  #############################################################################
+
+  if {![info exists no(tclsh)]} then {
+    #
+    # NOTE: By default, disable raw output when using the native Tcl
+    #       shell within the test suite.
+    #
+    if {![info exists test_tclsh_raw]} then {
+      set test_tclsh_raw false
+    }
+
+    #
+    # NOTE: By default, disable verbose output when using the native
+    #       Tcl shell within the test suite.
+    #
+    if {![info exists test_tclsh_verbose]} then {
+      set test_tclsh_verbose 0
+    }
+
+    #
+    # NOTE: Set the Tcl shell executable to use for those specialized
+    #       tests that may require it, if necessary.
+    #
+    if {![info exists test_tclsh]} then {
+      #
+      # NOTE: When running in TclTk, more complex logic is required to
+      #       determine the native Tcl shell to use for the various tests
+      #       that require it.  Also, this same logic is used with Tcl
+      #       when it is not running from an instance of the Tcl shell
+      #       executable.
+      #
+      if {[isTclTk] || ![string match tclsh* $bin_file]} then {
+        if {[info exists test_flags(-tclsh)] && \
+            [string length $test_flags(-tclsh)] > 0} then {
+          #
+          # NOTE: Use the native Tcl shell specified via the command line.
+          #
+          set test_tclsh $test_flags(-tclsh)
+        } else {
+          if {[canExecTclShell] && \
+              ![info exists no(getTclShellFileName)]} then {
+            #
+            # NOTE: Attempt to automatically select the native Tcl shell
+            #       to use.
+            #
+            if {![info exists no(warningForTclShell)] && \
+                ![info exists no(automaticTclShell)] && \
+                ![haveConstraint quiet]} then {
+              tputs $test_channel \
+                  "==== WARNING: attempting automatic Tcl shell selection...\n"
+            }
+
+            set test_tclsh [getTclShellFileName \
+                [expr {![info exists no(automaticTclShell)]}] \
+                [expr {![info exists no(tclKit)]}] \
+                [expr {[info exists test_machine] ? $test_machine : ""}]]
+          } else {
+            #
+            # NOTE: Skip detection and use the fallback default.
+            #
+            set test_tclsh tclsh
+          }
+        }
+      } else {
+        set test_tclsh $bin_file
+      }
+    }
+  }
+
+  #
+  # NOTE: When running in TclTk, check for any non-core plugins loaded into
+  #       the interpreter and issue warnings if any are found.  The warning
+  #       may be used to explain subsequent test failures due to the extra
+  #       plugins being loaded (i.e. there are some tests are sensitive to
+  #       having "unexpected" plugins loaded).
+  #
+  if {[isTclTk] && \
+      ![info exists no(warningForPlugin)] && \
+      ![haveConstraint quiet]} then {
+    foreach loaded [info loaded] {
+      #
+      # HACK: This code assumes that all plugins in the "CodeBrix.Platform.TclTk._Plugins"
+      #       namespace belong to the TclTk core library itself.
+      #
+      if {![string match CodeBrix.Platform.TclTk._Plugins.* [lindex $loaded 1]]} then {
+        tputs $test_channel [appendArgs \
+            "==== WARNING: extra plugin found: " $loaded \n]
+      }
+    }
+
+    unset -nocomplain loaded
+  }
+
+  #
+  # NOTE: Show both the pre-test and post-test scripts now, prior to actually
+  #       evaluating either of them (even if their use has been disabled).
+  #
+  tputs $test_channel [appendArgs "---- pre-test script: " \
+      [expr {[info exists test_script(pre)] && \
+      [string length $test_script(pre)] > 0 ? \
+      [appendArgs \" $test_script(pre) \"] : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- post-test script: " \
+      [expr {[info exists test_script(post)] && \
+      [string length $test_script(post)] > 0 ? \
+      [appendArgs \" $test_script(post) \"] : "<none>"}] \n]
+
+  #
+  # NOTE: Show both the pre-test and post-test waits now, prior to actually
+  #       using either of them (even if their use has been disabled).
+  #
+  tputs $test_channel [appendArgs "---- pre-test wait: " \
+      [expr {[info exists test_wait(pre)] && \
+      [string is integer -strict $test_wait(pre)] ? \
+      [appendArgs $test_wait(pre) " milliseconds"] : \
+      "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- post-test wait: " \
+      [expr {[info exists test_wait(post)] && \
+      [string is integer -strict $test_wait(post)] ? \
+      [appendArgs $test_wait(post) " milliseconds"] : \
+      "<none>"}] \n]
+
+  if {![info exists no(preTest)]} then {
+    #
+    # NOTE: Evaluate the specified pre-test script now, if any.
+    #
+    if {[info exists test_script(pre)] && \
+        [string length $test_script(pre)] > 0} then {
+      #
+      # TODO: Perhaps use [uplevel] here instead of [eval].  For now, it does
+      #       not matter since we enforce this file being evaluated at the
+      #       top-level.
+      #
+      if {[catch $test_script(pre) test_script(pre,result)]} then {
+        #
+        # NOTE: Make 100% sure, even in "quiet" mode, that this script error
+        #       gets into the test log file.
+        #
+        tputs $test_channel [appendArgs "---- pre-test script error: " \
+            $test_script(pre,result) \n]
+
+        #
+        # NOTE: The pre-test script failed in some way.  This is considered
+        #       to be an overall failure of the test suite; therefore, raise
+        #       the error now that we are sure it has been recorded in the
+        #       test log file.
+        #
+        unset -nocomplain test_suite_running
+        error $test_script(pre,result)
+      }
+    }
+  }
+
+  #
+  # NOTE: Check for and process any custom test prologue script that may
+  #       be set in the environment.  This must be done after the TclTk
+  #       test package has been made available and after the log file has
+  #       been setup.
+  #
+  sourceIfValid prologue [getEnvironmentVariable testPrologue]
+
+  #
+  # NOTE: If there is an existing test log file, make sure it contains a
+  #       test log start sentry -AND- that its contained test log start
+  #       sentry matches the current (in-memory) test log start sentry.
+  #
+  if {[info exists test_log] && [file exists $test_log]} then {
+    set old_test_run_id [readTestLogStartSentry $test_log]
+
+    if {[string length $old_test_run_id] > 0} then {
+      #
+      # NOTE: At this point, everything MAY be fine, i.e. if the test log
+      #       sentry was read from the test log file -AND- it matches the
+      #       one currently in-memory; otherwise, we have a problem.
+      #
+      if {![info exists test_run_id] || \
+          $test_run_id ne $old_test_run_id} then {
+        #
+        # HACK: Generally, this is a fairly serious warning.  It probably
+        #       means the operating system (re?)used a process identifier
+        #       and that there was already existed an associated test log
+        #       file from a previous test run.  This has been observed to
+        #       occur on fully patched Windows 7.
+        #
+        if {[info exists test_run_id]} then {
+          tputs $test_channel [appendArgs \
+              "==== WARNING: read mismatched test log start sentry, " \
+              "was \"" $old_test_run_id "\", now \"" $test_run_id \"\n]
+        } else {
+          tputs $test_channel [appendArgs \
+              "==== WARNING: read stale test log start sentry \"" \
+              $old_test_run_id \"\n]
+        }
+      }
+    } else {
+      #
+      # NOTE: There is an existing test log file without any start
+      #       sentry?  Eventually, this will cause the test run to
+      #       fail.
+      #
+      tputs $test_channel \
+          "==== WARNING: could not read test log start sentry\n"
+    }
+
+    unset -nocomplain old_test_run_id
+  }
+
+  #
+  # NOTE: Show the name of the executable and the command line arguments,
+  #       if any.  This must be done after the log file has been setup;
+  #       otherwise, this information will not be visible in the log file.
+  #
+  if {![info exists test_run_id]} then {
+    set test_run_id [getNewTestRunId]
+  }
+
+  tputs $test_channel [appendArgs "---- testRunId: " \
+      [expr {[info exists test_run_id] ? \
+          $test_run_id : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- testRunBucket: " \
+      [expr {[info exists test_run_bucket] ? \
+          $test_run_bucket : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- processId: " \
+      [pid] \n]
+
+  set ppid(0) [catch {info ppid} ppid(1)]
+
+  tputs $test_channel [appendArgs "---- parentProcessId: " \
+      [expr {$ppid(0) == 0 ? \
+          $ppid(1) : "<none>"}] \n]
+
+  unset ppid
+
+  tputs $test_channel [appendArgs "---- test suite: " \
+      [expr {[info exists test_suite] ? \
+          $test_suite : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- test channel: " \
+      $test_channel \n]
+
+  tputs $test_channel [appendArgs "---- test host: " \
+      [expr {[info exists test_host] ? \
+          $test_host : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- test port: " \
+      [expr {[info exists test_port] ? \
+          $test_port : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- test short timeout: " \
+      [expr {[info exists test_timeout] ? \
+          $test_timeout : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- test join timeout: " \
+      [expr {[info exists test_join_timeout] ? \
+          $test_join_timeout : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- test stress count: " \
+      [expr {[info exists test_stress_count] ? \
+          $test_stress_count : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- test machine: " \
+      [expr {[info exists test_machine] ? \
+          $test_machine : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- test platform: " \
+      [expr {[info exists test_platform] ? \
+          $test_platform : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- test configuration: " \
+      [expr {[info exists test_configuration] ? \
+          $test_configuration : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- test name prefix: " \
+      [expr {[info exists test_name_prefix] ? \
+          $test_name_prefix : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- test suffix: " \
+      [expr {[info exists test_suffix] ? \
+          $test_suffix : "<none>"}] \n]
+
+  if {[isTclTk]} then {
+    tputs $test_channel [appendArgs "---- original command line: " \
+        [info cmdline] \n]
+
+    tputs $test_channel [appendArgs "---- threadId: " \
+        [info tid] \n]
+
+    tputs $test_channel [appendArgs "---- processors: " \
+        [info processors] \n]
+
+    if {[llength [info commands object]] > 0} then {
+      set encoding(0) [catch {
+        object invoke Console.InputEncoding WebName
+      } encoding(1)]
+    } else {
+      set encoding(0) 0; set encoding(1) unavailable
+    }
+
+    tputs $test_channel [appendArgs "---- input encoding: " \
+        [expr {$encoding(0) == 0 ? $encoding(1) : "<none>"}] \n]
+
+    if {[llength [info commands object]] > 0} then {
+      set encoding(0) [catch {
+        object invoke Console.OutputEncoding WebName
+      } encoding(1)]
+    } else {
+      set encoding(0) 0; set encoding(1) unavailable
+    }
+
+    tputs $test_channel [appendArgs "---- output encoding: " \
+        [expr {$encoding(0) == 0 ? $encoding(1) : "<none>"}] \n]
+
+    unset encoding
+
+    if {![info exists no(showHostQuery)]} then {
+      set host(0) [catch {host query} host(1)]
+
+      tputs $test_channel [appendArgs "---- host query: " \
+          [formatListAsDict [expr {$host(0) == 0 ? $host(1) : ""}] \
+          <none>] \n]
+
+      unset host
+    }
+
+    if {![info exists no(showStartingCpu)]} then {
+      set cpu(0) [catch {getCpuStatus} cpu(1)]
+
+      tputs $test_channel [appendArgs "---- starting cpu: " \
+          [formatListAsDict [expr {$cpu(0) == 0 ? $cpu(1) : ""}] \
+          <none>] \n]
+
+      unset cpu
+    }
+
+    if {![info exists no(showStartingMemory)]} then {
+      set memory(0) [catch {debug memory} memory(1)]
+
+      tputs $test_channel [appendArgs "---- starting memory: " \
+          [formatListAsDict [expr {$memory(0) == 0 ? $memory(1) : ""}] \
+          <none>] \n]
+
+      unset memory
+    }
+
+    if {![info exists no(showStartingStack)]} then {
+      set stack(0) [catch {debug stack true} stack(1)]
+
+      tputs $test_channel [appendArgs "---- starting stack: " \
+          [formatListAsDict [expr {$stack(0) == 0 ? $stack(1) : ""}] \
+          <none>] \n]
+
+      unset stack
+    }
+
+    if {![info exists no(showStartingLevels)]} then {
+      set levels(0) [catch {debug levels} levels(1)]
+
+      tputs $test_channel [appendArgs "---- starting levels: " \
+          [formatListAsDict [expr {$levels(0) == 0 ? $levels(1) : ""}] \
+          <none>] \n]
+
+      unset levels
+    }
+
+    if {![info exists no(showSystemDrive)]} then {
+      set drive(0) [catch {file drive} drive(1)]
+
+      tputs $test_channel [appendArgs "---- system drive: " \
+          [formatListAsDict [expr {$drive(0) == 0 ? $drive(1) : ""}] \
+          <none>] \n]
+
+      unset drive
+    }
+  }
+
+  tputs $test_channel [appendArgs "---- executable: \"" \
+      $bin_file \"\n]
+
+  tputs $test_channel [appendArgs "---- command line: " \
+      [expr {[info exists argv] && [string length $argv] > 0 ? \
+          $argv : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- unrecognized arguments: " \
+      [expr {[info exists test_flags(-bad)] && \
+          [string length $test_flags(-bad)] > 0 ? \
+              $test_flags(-bad) : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- extra paths: " \
+      [expr {[info exists test_extra_paths] && \
+          [llength $test_extra_paths] > 0 ? \
+              $test_extra_paths : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- logging path: " \
+      [expr {[info exists test_log_path] && \
+          [string length $test_log_path] > 0 ? \
+              [appendArgs \" $test_log_path \"] : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- logging identifier: " \
+      [expr {[info exists test_log_id] && \
+          [string length $test_log_id] > 0 ? \
+              [appendArgs \" $test_log_id \"] : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- logging to: " \
+      [expr {[info exists test_log] && [string length $test_log] > 0 ? \
+          [appendArgs \" $test_log \"] : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- pass threshold: " \
+      [expr {[info exists test_threshold] && \
+          [string is integer -strict $test_threshold] ? \
+              [appendArgs $test_threshold %] : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- random order: " \
+      [expr {[info exists test_random_order] && \
+          [string is boolean -strict $test_random_order] ? \
+              $test_random_order : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- uncounted leaks: " \
+      [expr {[info exists test_uncounted_leaks] && \
+          [string length $test_uncounted_leaks] > 0 ? \
+              $test_uncounted_leaks : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- listed leaks: " \
+      [expr {[info exists test_listed_leaks] && \
+          [string length $test_listed_leaks] > 0 ? \
+              $test_listed_leaks : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- break on leak: " \
+      [expr {[info exists test_break_on_leak] && \
+          [string is boolean -strict $test_break_on_leak] ? \
+              $test_break_on_leak : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- stop on failure: " \
+      [expr {[info exists test_stop_on_failure] && \
+          [string is boolean -strict $test_stop_on_failure] ? \
+              $test_stop_on_failure : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- stop on leak: " \
+      [expr {[info exists test_stop_on_leak] && \
+          [string is boolean -strict $test_stop_on_leak] ? \
+              $test_stop_on_leak : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- exit on complete: " \
+      [expr {[info exists test_exit_on_complete] && \
+          [string is boolean -strict $test_exit_on_complete] ? \
+              $test_exit_on_complete : "<none>"}] \n]
+
+  #
+  # NOTE: Show the information about which tests and files are being run
+  #       and/or skipped (COMPAT: Tcl).
+  #
+  tputs $test_channel [appendArgs "---- running test files that match: " \
+      [expr {[info exists test_flags(-file)] && \
+          [llength $test_flags(-file)] > 0 ? \
+              $test_flags(-file) : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- skipping test files that match: " \
+      [expr {[info exists test_flags(-notFile)] && \
+          [llength $test_flags(-notFile)] > 0 ? \
+              $test_flags(-notFile) : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs \
+      "---- starting with test files that match: " \
+      [expr {[info exists test_flags(-startFile)] && \
+          [llength $test_flags(-startFile)] > 0 ? \
+              $test_flags(-startFile) : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs \
+      "---- stopping after test files that match: " \
+      [expr {[info exists test_flags(-stopFile)] && \
+          [llength $test_flags(-stopFile)] > 0 ? \
+              $test_flags(-stopFile) : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- running tests that match: " \
+      [expr {[info exists test_flags(-match)] && \
+          [llength $test_flags(-match)] > 0 ? \
+              $test_flags(-match) : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- skipping tests that match: " \
+      [expr {[info exists test_flags(-skip)] && \
+          [llength $test_flags(-skip)] > 0 ? \
+              $test_flags(-skip) : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- verbosity level for tests: " \
+      [expr {[info exists test_flags(-verbose)] && \
+          [string length $test_flags(-verbose)] > 0 ? \
+              $test_flags(-verbose) : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- path: " \
+      [expr {[info exists path] && [string length $path] > 0 ? \
+          [appendArgs \" $path \"] : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- base path: \"" \
+      $base_path \"\n]
+
+  tputs $test_channel [appendArgs "---- key path: \"" \
+      $key_path \"\n]
+
+  tputs $test_channel [appendArgs "---- root path: \"" \
+      $root_path \"\n]
+
+  tputs $test_channel [appendArgs "---- binary path: \"" \
+      $bin_path \"\n]
+
+  tputs $test_channel [appendArgs "---- library path: \"" \
+      $lib_path \"\n]
+
+  tputs $test_channel [appendArgs "---- core binary path: \"" \
+      $core_bin_path \"\n]
+
+  tputs $test_channel [appendArgs "---- core library path: \"" \
+      $core_lib_path \"\n]
+
+  tputs $test_channel [appendArgs "---- test home path: \"" \
+      $test_home_path \"\n]
+
+  tputs $test_channel [appendArgs "---- test package files located in: \"" \
+      $test_package_path \"\n]
+
+  tputs $test_channel [appendArgs "---- test suite files located in: \"" \
+      $test_all_path \"\n]
+
+  tputs $test_channel [appendArgs "---- test script files located in: \"" \
+      $test_path \"\n]
+
+  tputs $test_channel [appendArgs "---- test data files located in: \"" \
+      $test_data_path \"\n]
+
+  tputs $test_channel [appendArgs "---- running in: \"" \
+      [pwd] \"\n]
+
+  tputs $test_channel [appendArgs "---- temporary files stored in: \"" \
+      [getTemporaryPath] \"\n]
+
+  tputs $test_channel [appendArgs "---- native Tcl shell: " \
+      [expr {[info exists test_tclsh] && [string length $test_tclsh] > 0 ? \
+          [appendArgs \" $test_tclsh \"] : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs \
+      "---- raw mode for native Tcl shell: " [expr {[info exists \
+          test_tclsh_raw] && [string length $test_tclsh_raw] > 0 ? \
+          $test_tclsh_raw : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs \
+      "---- verbosity level for native Tcl shell: " [expr {[info exists \
+          test_tclsh_verbose] && [string length $test_tclsh_verbose] > 0 ? \
+          $test_tclsh_verbose : "<none>"}] \n]
+
+  if {![info exists no(showDisabledOptions)]} then {
+    tputs $test_channel [appendArgs "---- disabled options: " \
+        [formatList [lsort [array names no]] <none>] \n]
+  }
+
+  if {![info exists no(showRuntimeOptions)]} then {
+    if {[isTclTk]} then {
+      tputs $test_channel [appendArgs "---- runtime options: " \
+          [formatList [lsort [info engine RuntimeOptions]] <none>] \n]
+    } else {
+      tputs $test_channel [appendArgs "---- runtime options: " \
+          [formatList [lsort [expr {[info exists \
+          tcltk_platform(runtimeOptions)] ? \
+          $tcltk_platform(runtimeOptions) : [list]}]] <none>] \n]
+    }
+  }
+
+  if {[canExecFossil]} then {
+    #
+    # NOTE: Get the source checkout and tags (i.e. of TclTk or whatever
+    #       project the TclTk binaries are being used by) using a Fossil
+    #       binary in the PATH, if available.
+    #
+    if {[catch {
+      execFossilCommand \
+          [expr {[info exists path] ? $path : $test_path}] info
+    } exec] == 0} then {
+      set pattern {^checkout:\s+(.*?)$}
+
+      if {[regexp -line -- $pattern $exec dummy checkout]} then {
+        set checkout [string trim $checkout]
+
+        if {![info exists no(setRepositoryCheckout)]} then {
+          set test_repository_checkout $checkout
+        }
+      } else {
+        set checkout <none>
+
+        if {![info exists no(setRepositoryCheckout)]} then {
+          set test_repository_checkout ""
+        }
+      }
+
+      set pattern {^tags:\s+(.*?)$}
+
+      if {[regexp -line -- $pattern $exec dummy tags]} then {
+        set tags [string trim $tags]
+
+        if {![info exists no(setRepositoryTags)]} then {
+          set test_repository_tags $tags
+        }
+      } else {
+        set tags <none>
+
+        if {![info exists no(setRepositoryTags)]} then {
+          set test_repository_tags ""
+        }
+      }
+    } else {
+      set checkout <none>
+
+      if {![info exists no(setRepositoryCheckout)]} then {
+        set test_repository_checkout $checkout
+      }
+
+      set tags <none>
+
+      if {![info exists no(setRepositoryTags)]} then {
+        set test_repository_tags ""
+      }
+    }
+
+    unset -nocomplain dummy exec pattern
+  } else {
+    set checkout <none>
+    set tags <none>
+  }
+
+  tputs $test_channel [appendArgs "---- checkout: " \
+      $checkout \n]
+
+  tputs $test_channel [appendArgs "---- tags: " \
+      $tags \n]
+
+  unset tags checkout
+
+  #
+  # NOTE: Initialize the TclTk test constraints.
+  #
+  if {[isTclTk]} then {
+    #
+    # NOTE: *WARNING* This will have a "side-effect" of removing any
+    #       constraints that may have been added prior to this point.
+    #
+    initializeTests
+    configureTcltest "" [list] [list] [list] [list] false
+
+    #
+    # NOTE: If the "no(mono)" variable is set (to anything) then any
+    #       special test suite hacks for Mono will be disabled. This
+    #       does not control or change any hacks for Mono that may
+    #       be present in the library itself.
+    #
+    # if {[isMono]} then {
+    #   set no(mono) true
+    # }
+
+    ###########################################################################
+    ######################### BEGIN TclTk Constraints #########################
+    ###########################################################################
+
+    tputs $test_channel \
+        "---- start of TclTk specific test constraints...\n"
+
+    #
+    # NOTE: Check various Unicode character categories against
+    #       the official standard (and the non-standard values
+    #       that were used in previous versions of .NET).
+    #
+    if {![info exists no(unicodeCategory)]} then {
+      checkForUnicodeCategory $test_channel \u0009 Cc; # "HT"
+      checkForUnicodeCategory $test_channel \u00A7 So; # "SECT"
+      checkForUnicodeCategory $test_channel \u00A7 Po; # "SECT"
+      checkForUnicodeCategory $test_channel \u00AA Ll; # "ORDF"
+      checkForUnicodeCategory $test_channel \u00AA Lo; # "ORDF"
+      checkForUnicodeCategory $test_channel \u00AD Pd; # "SHY"
+      checkForUnicodeCategory $test_channel \u00AD Cf; # "SHY"
+      checkForUnicodeCategory $test_channel \u00B6 So; # "PARA"
+      checkForUnicodeCategory $test_channel \u00B6 Po; # "PARA"
+      checkForUnicodeCategory $test_channel \u00BA Ll; # "ORDM"
+      checkForUnicodeCategory $test_channel \u00BA Lo; # "ORDM"
+    }
+
+    #
+    # NOTE: Do [interp cancel] and [interp resetcancel] support
+    #       the -global option?
+    #
+    if {![info exists no(globalTip285)]} then {
+      checkForGlobalTip285 $test_channel
+    }
+
+    #
+    # NOTE: *WARNING* Has quiet testing support been disabled?
+    #       Please do not move this "quietness" test constraint
+    #       check as subsequent test constraints may rely on it
+    #       when determining if a warning should be emitted.
+    #
+    if {![info exists no(quiet)]} then {
+      #
+      # NOTE: For tests "basic-1.36", "benchmark-1.*", "debug-1.3",
+      #       "debug-1.4.*", "glob-99.*", "object-10.*", "perf-2.2",
+      #       and various other places within the test suite code
+      #       itself.
+      #
+      checkForQuiet $test_channel false
+    }
+
+    #
+    # NOTE: Has administrator detection support been disabled?  We do
+    #       this check [nearly] first as it may [eventually] be used
+    #       to help determine if other constraints should be skipped.
+    #
+    if {![info exists no(administrator)]} then {
+      checkForAdministrator $test_channel
+    }
+
+    if {![info exists no(host)]} then {
+      checkForHost $test_channel
+    }
+
+    if {![info exists no(hostType)]} then {
+      checkForHostType $test_channel
+    }
+
+    #
+    # NOTE: Has primary thread detection support been disabled?  We do
+    #       this check [nearly] first as it may [eventually] be used
+    #       to help determine if other constraints should be skipped.
+    #
+    if {![info exists no(primaryThread)]} then {
+      checkForPrimaryThread $test_channel
+    }
+
+    #
+    # NOTE: Has default application domain detection support been
+    #       disabled?  We do this check [nearly] first as it may
+    #       [eventually] be used to help determine if other
+    #       constraints should be skipped.
+    #
+    if {![info exists no(defaultAppDomain)]} then {
+      checkForDefaultAppDomain $test_channel
+    }
+
+    #
+    # NOTE: Has runtime detection support been disabled?  We do this
+    #       checking [nearly] first as it may skip other constraints.
+    #
+    if {![info exists no(runtime)]} then {
+      checkForRuntime $test_channel
+    }
+
+    #
+    # NOTE: Check the variant and/or version of the CLR that we are
+    #       currently running on.
+    #
+    if {![info exists no(checkForRuntimeVersion)]} then {
+      checkForRuntimeVersion $test_channel
+    }
+
+    #
+    # NOTE: Check the variant and/or build of the CLR that we are
+    #       currently running on.
+    #
+    if {![info exists no(checkForRuntimeBuild)]} then {
+      checkForRuntimeBuild $test_channel
+    }
+
+    #
+    # NOTE: Check the framework version (i.e. regardless of runtime)
+    #       that we are currently running on.
+    #
+    if {![info exists no(frameworkVersion)]} then {
+      checkForFrameworkVersion $test_channel
+    }
+
+    #
+    # NOTE: Check the image runtime version (i.e. the runtime version
+    #       that this assembly compiled against).
+    #
+    if {![info exists no(imageRuntimeVersion)]} then {
+      checkForImageRuntimeVersion $test_channel
+    }
+
+    #
+    # NOTE: Check if the image runtime version matches the framework.
+    #
+    if {![info exists no(matchingFrameworkVersion)]} then {
+      checkForMatchingFrameworkVersion $test_channel
+    }
+
+    if {![info exists no(processBits)]} then {
+      checkForProcessBits $test_channel
+    }
+
+    if {![info exists no(machine)]} then {
+      checkForMachine $test_channel 32 intel; # (i.e. x86)
+      checkForMachine $test_channel 32 arm;   # (i.e. arm)
+      checkForMachine $test_channel 64 ia64;  # (i.e. itanium)
+      checkForMachine $test_channel 64 amd64; # (i.e. x64)
+      checkForMachine $test_channel 64 arm64; # (i.e. arm64)
+    }
+
+    if {![info exists no(testCallStack)]} then {
+      checkForTestCallStack $test_channel
+    }
+
+    if {![info exists no(culture)]} then {
+      checkForCulture $test_channel
+    }
+
+    if {![info exists no(threadCulture)]} then {
+      checkForThreadCulture $test_channel
+    }
+
+    if {![info exists no(security)]} then {
+      checkForSecurity $test_channel
+    }
+
+    if {![info exists no(guru)]} then {
+      if {![info exists no(checkForGuru)]} then {
+        checkForGuru $test_channel null
+      }
+
+      if {![info exists no(disableGuru)]} then {
+        checkForGuru $test_channel false
+      }
+    }
+
+    if {![info exists no(ieee754r2008)]} then {
+      checkForIeee754r2008 $test_channel
+    }
+
+    if {![info exists no(softwareUpdate)]} then {
+      checkForSoftwareUpdateTrust $test_channel
+    }
+
+    if {![info exists no(libraryAssemblyName)]} then {
+      checkForLibraryAssemblyName $test_channel
+    }
+
+    if {![info exists no(strongName)]} then {
+      checkForStrongName $test_channel
+    }
+
+    if {![info exists no(strongNameKey)]} then {
+      checkForStrongNameKey $test_channel
+    }
+
+    if {![info exists no(certificate)]} then {
+      checkForCertificate $test_channel
+    }
+
+    if {![info exists no(core)] && ![info exists no(database)]} then {
+      if {![info exists server]} then {
+        set server .
+      }
+
+      if {![info exists database]} then {
+        #
+        # NOTE: Please see "https://urn.to/r/mssql_master" for details.
+        #
+        set database master; # COMPAT: Microsoft SQL Server
+      }
+
+      if {![info exists timeout]} then {
+        set timeout [expr {$test_timeout / 1000}]; # milliseconds to seconds.
+      }
+
+      if {![info exists user]} then {
+        set user [getEnvironmentVariable user]
+      }
+
+      if {![info exists password]} then {
+        set password [getEnvironmentVariable password]
+      }
+
+      if {![info exists test_database_type]} then {
+        set test_database_type Sql; # TODO: Good test default?
+      }
+
+      if {![info exists test_database]} then {
+        #
+        # NOTE: Mono does not have support for "trusted connections";
+        #       therefore, we must emit a different connection string
+        #       when running there.
+        #
+        set test_database [subst \
+            {Data Source=${server};Initial Catalog=${database};Connect\
+            Timeout=${timeout};[expr {[isMono] ? [subst \
+            {User Id=${user};Password=${password};}] : {Integrated\
+            Security=SSPI;}}]}]; # NOTE: Microsoft SQL Server specific.
+      } elseif {[info exists test_database_subst]} then {
+        #
+        # NOTE: The test database connection string must be dynamically
+        #       post-processed using [subst], per request.  This allows
+        #       the [custom] test database connection string to contain
+        #       references to the other test database variables setup
+        #       by this test prologue.
+        #
+        set test_database [subst $test_database]
+      }
+
+      if {![info exists test_database_table]} then {
+        set test_database_table tcltk_sql_test_ok_to_delete
+      }
+
+      checkForDatabase $test_channel $test_database_type $test_database
+
+      unset password user timeout database server
+    }
+
+    if {![info exists no(assemblySymbols)]} then {
+      checkForSymbols $test_channel [lindex [info assembly] end] assembly
+    }
+
+    if {![info exists no(referenceCounts)]} then {
+      #
+      # NOTE: For tests "excel-*", "object-2.*", "object-7.1",
+      #        "object-8.*", and "object-98.*".
+      #
+      checkForReferenceCountTracking $test_channel
+    }
+
+    if {![info exists no(buildTypes)]} then {
+      if {![info exists no(knownBuildTypes)]} then {
+        checkForKnownBuildTypes $test_channel
+      } else {
+        #
+        # NOTE: Nothing is currently done here.  All supported build
+        #       types are considered "well-known".
+        #
+      }
+    }
+
+    if {![info exists no(compileOptions)]} then {
+      if {![info exists no(knownCompileOptions)]} then {
+        checkForKnownCompileOptions $test_channel
+      } else {
+        if {![info exists no(compileCallbackQueue)]} then {
+          checkForCompileOption $test_channel CALLBACK_QUEUE
+        }
+
+        if {![info exists no(compileCasPolicy)]} then {
+          #
+          # NOTE: For tests "load-1.6" and "load-1.7".
+          #
+          checkForCompileOption $test_channel CAS_POLICY
+        }
+
+        if {![info exists no(compileConfiguration)]} then {
+          #
+          # NOTE: For tests "debug-1.3", "object-99.1", "object-11.4",
+          #       and "garuda-1.2".
+          #
+          checkForCompileOption $test_channel CONFIGURATION
+        }
+
+        if {![info exists no(compileConsole)]} then {
+          #
+          # NOTE: For test "host-1.2".
+          #
+          checkForCompileOption $test_channel CONSOLE
+        }
+
+        if {![info exists no(compileData)]} then {
+          #
+          # NOTE: For tests "sql-1.1" and "upvar-99.1".
+          #
+          checkForCompileOption $test_channel DATA
+        }
+
+        if {![info exists no(compileDebugger)]} then {
+          #
+          # NOTE: For tests "debug-1.1", "debug-2.1", "debug-3.1",
+          #       "debug-4.1", and "proc-2.1".
+          #
+          checkForCompileOption $test_channel DEBUGGER
+        }
+
+        if {![info exists no(compileDebuggerArguments)]} then {
+          #
+          # NOTE: For tests "object-5.1.*".
+          #
+          checkForCompileOption $test_channel DEBUGGER_ARGUMENTS
+        }
+
+        if {![info exists no(compileScriptArguments)]} then {
+          #
+          # NOTE: For test "debug-2.86".
+          #
+          checkForCompileOption $test_channel SCRIPT_ARGUMENTS
+        }
+
+        if {![info exists no(compileDebuggerBreakpoints)]} then {
+          #
+          # NOTE: For tests "debug-2.35" and "proc-2.1".
+          #
+          checkForCompileOption $test_channel DEBUGGER_BREAKPOINTS
+        }
+
+        if {![info exists no(compileAppDomains)]} then {
+          #
+          # NOTE: For test "interp-1.27".
+          #
+          checkForCompileOption $test_channel APPDOMAINS
+        }
+
+        if {![info exists no(compileIsolatedInterpreters)]} then {
+          #
+          # NOTE: For test "xaml-1.2".
+          #
+          checkForCompileOption $test_channel ISOLATED_INTERPRETERS
+        }
+
+        if {![info exists no(compileExpressionFlags)]} then {
+          #
+          # NOTE: For test "function-2.16".
+          #
+          checkForCompileOption $test_channel EXPRESSION_FLAGS
+        }
+
+        if {![info exists no(compileIsolatedPlugins)]} then {
+          #
+          # NOTE: For test "load-1.1.1".
+          #
+          checkForCompileOption $test_channel ISOLATED_PLUGINS
+        }
+
+        if {![info exists no(compileApprovedVerbs)]} then {
+          #
+          # NOTE: For test "object-4.8".
+          #
+          checkForCompileOption $test_channel APPROVED_VERBS
+        }
+
+        if {![info exists no(compileEmbeddedLibrary)]} then {
+          #
+          # NOTE: For test "interp-1.400".
+          #
+          checkForCompileOption $test_channel EMBEDDED_LIBRARY
+        }
+
+        if {![info exists no(compileEmit)]} then {
+          #
+          # NOTE: For tests "commands-1.1.*", "debug-9.1", "library-*",
+          #       "object-4.10", "object-4.11", "object-4.12",
+          #       "object-8.1??", and "perf-101.0".
+          #
+          checkForCompileOption $test_channel EMIT
+        }
+
+        if {![info exists no(compileNetStandard20)]} then {
+          #
+          # NOTE: For tests "basic-1.29.*", "basic-1.30.*", "host-1.1",
+          #       "interp-1.601", "redefine-6.2", and "sql-1.17".
+          #
+          checkForCompileOption $test_channel NET_STANDARD_20
+        }
+
+        if {![info exists no(compileNetStandard21)]} then {
+          checkForCompileOption $test_channel NET_STANDARD_21
+        }
+
+        if {![info exists no(compileNetCoreReferences)]} then {
+          checkForCompileOption $test_channel NET_CORE_REFERENCES
+        }
+
+        if {![info exists no(compileNetCore20)]} then {
+          checkForCompileOption $test_channel NET_CORE_20
+        }
+
+        if {![info exists no(compileNetCore30)]} then {
+          checkForCompileOption $test_channel NET_CORE_30
+        }
+
+        if {![info exists no(compileNetCore50)]} then {
+          checkForCompileOption $test_channel NET_CORE_50
+        }
+
+        if {![info exists no(compileMono)]} then {
+          #
+          # NOTE: For test "object-4.13".
+          #
+          checkForCompileOption $test_channel MONO
+        }
+
+        if {![info exists no(compileWindows)]} then {
+          #
+          # NOTE: For tests "garuda-1.1" and "garuda-1.2".
+          #
+          checkForCompileOption $test_channel WINDOWS
+        }
+
+        if {![info exists no(compileWinForms)]} then {
+          #
+          # NOTE: For tests "object-10.21", "tclLoad-1.2", "winForms-*.*".
+          #
+          checkForCompileOption $test_channel WINFORMS
+        }
+
+        if {![info exists no(compileLibrary)]} then {
+          #
+          # NOTE: For tests "commands-1.*".
+          #
+          checkForCompileOption $test_channel LIBRARY
+        }
+
+        if {![info exists no(compileNative)]} then {
+          #
+          # NOTE: For tests "debug-3.2", "expr-3.2", and "host-1.1".
+          #
+          checkForCompileOption $test_channel NATIVE
+        }
+
+        if {![info exists no(compileNativePackage)]} then {
+          #
+          # NOTE: For tests "garuda-1.1" and "garuda-1.2".
+          #
+          checkForCompileOption $test_channel NATIVE_PACKAGE
+        }
+
+        if {![info exists no(compileNetwork)]} then {
+          #
+          # NOTE: For tests "commands-1.4", "socket-1.*", "socket-2.1", and
+          #       "socket-3.1".
+          #
+          checkForCompileOption $test_channel NETWORK
+        }
+
+        if {![info exists no(compileNotify)]} then {
+          #
+          # NOTE: For test "basic-1.75".
+          #
+          checkForCompileOption $test_channel NOTIFY
+        }
+
+        if {![info exists no(compileNotifyArguments)]} then {
+          #
+          # NOTE: For test "basic-1.75".
+          #
+          checkForCompileOption $test_channel NOTIFY_ARGUMENTS
+        }
+
+        if {![info exists no(compileTcl)]} then {
+          #
+          # NOTE: For tests "commands-1.1.*", "excel-2.2", "tclCancel-1.1",
+          #       "tclEncoding-1.*", "tclErrorInfo-1.*", "tclLoad-*.*",
+          #       "tclResetCancel-1.1", "tclResetCancel-2.1",
+          #       "tclResetCancel-2.2", "tclResetCancel-3.1",
+          #       "tclResetCancel-4.1", "tclSet-1.1", and "tclSubst-1.1".
+          #
+          checkForCompileOption $test_channel TCL
+        }
+
+        if {![info exists no(compileXml)]} then {
+          #
+          # NOTE: For tests "commands-1.4", "object-7.3" and "xml-1.1.*".
+          #
+          checkForCompileOption $test_channel XML
+        }
+
+        if {![info exists no(compileSerialization)]} then {
+          #
+          # NOTE: For test "interp-1.10".
+          #
+          checkForCompileOption $test_channel SERIALIZATION
+        }
+
+        if {![info exists no(compileRemoting)]} then {
+          #
+          # NOTE: For tests "remotingServer-1.*".
+          #
+          checkForCompileOption $test_channel REMOTING
+        }
+
+        if {![info exists no(compileResultLimits)]} then {
+          #
+          # NOTE: For tests "interp-1.500" and "interp-1.501".
+          #
+          checkForCompileOption $test_channel RESULT_LIMITS
+        }
+
+        if {![info exists no(compileTest)]} then {
+          #
+          # NOTE: For tests "basic-1.20", "basic-1.21", "function-1.1",
+          #       "object-2.1", "object-3.1", "object-4.1", "object-7.1",
+          #       "object-7.2", "object-7.4", "object-14.4", "object-14.5",
+          #       "object-14.6", "remotingServer-1.*", and "debug-5.*".
+          #
+          checkForCompileOption $test_channel TEST
+        }
+
+        if {![info exists no(compileThreading)]} then {
+          #
+          # NOTE: For tests "object-10.2" and "object-10.3".
+          #
+          checkForCompileOption $test_channel THREADING
+        }
+
+        if {![info exists no(compileTclThreaded)]} then {
+          #
+          # NOTE: For tests "tclLoad-3.*".
+          #
+          checkForCompileOption $test_channel TCL_THREADED
+        }
+
+        if {![info exists no(compileTclThreads)]} then {
+          #
+          # NOTE: For tests "tclLoad-3.*".
+          #
+          checkForCompileOption $test_channel TCL_THREADS
+        }
+
+        if {![info exists no(compileDrawing)]} then {
+          checkForCompileOption $test_channel DRAWING
+        }
+
+        if {![info exists no(compileLicensing)]} then {
+          #
+          # NOTE: This is not currently used by core library tests.
+          #
+          checkForCompileOption $test_channel LICENSING
+        }
+
+        #
+        # NOTE: Has runtime "limited edition" checking support been
+        #       disabled (at compile-time)?  This only applies to
+        #       third-party plugins and applications.
+        #
+        if {![info exists no(compileLimitedEdition)]} then {
+          #
+          # NOTE: This is not currently used by core library tests.
+          #
+          checkForCompileOption $test_channel LIMITED_EDITION
+        }
+
+        #
+        # NOTE: Has runtime "demo edition" checking support been
+        #       disabled (at compile-time)?  This only applies to
+        #       third-party plugins and applications.
+        #
+        if {![info exists no(compileDemoEdition)]} then {
+          #
+          # NOTE: This is not currently used by core library tests.
+          #
+          checkForCompileOption $test_channel DEMO_EDITION
+        }
+
+        #
+        # NOTE: Has runtime "demo key pairs" checking support been
+        #       disabled (at compile-time)?  This only applies to
+        #       third-party plugins and applications.
+        #
+        if {![info exists no(compileDemoKeyPairs)]} then {
+          #
+          # NOTE: This is not currently used by core library tests.
+          #
+          checkForCompileOption $test_channel DEMO_KEY_PAIRS
+        }
+      }
+    }
+
+    if {![info exists no(checkForCompileCSharp)]} then {
+      checkForCompileCSharp $test_channel
+    }
+
+    if {![info exists no(dynamic)]} then {
+      #
+      # NOTE: For tests "commands-1.1.*", "library-3.*", and
+      #       "tcl*-*.*".
+      #
+      checkForDynamicLoading $test_channel
+    }
+
+    if {![info exists no(tcl)]} then {
+      if {![info exists no(tclInstalls)]} then {
+        #
+        # NOTE: For tests "commands-1.1.*", "library-3.*", and
+        #       "tcl*-*.*".
+        #
+        checkForTclInstalls $test_channel
+      }
+
+      if {![info exists no(tclReady)]} then {
+        checkForTclReady $test_channel
+      }
+
+      if {![info exists no(tclSelect)]} then {
+        checkForTclSelect $test_channel
+      }
+
+      if {![info exists no(tclShell)]} then {
+        #
+        # NOTE: For test "garuda-1.1".
+        #
+        checkForTclShell $test_channel
+      }
+
+      if {![info exists no(tkPackage)]} then {
+        #
+        # NOTE: For test "tclLoad-1.1".
+        #
+        checkForTkPackage $test_channel
+      }
+    }
+
+    if {![info exists no(core)] && ![info exists no(test)]} then {
+      if {![info exists no(testFailSafeAbort)]} then {
+        #
+        # NOTE: For test "basic-1.108".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestFailSafeAbortWithTrace*
+      }
+
+      if {![info exists no(testRuleSetCommands)]} then {
+        #
+        # NOTE: For test "interp-1.70000".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestAddRuleSetCommands*
+      }
+
+      if {![info exists no(testSimulateKeyboardString)]} then {
+        #
+        # NOTE: For test "basic-1.109".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestStartKeyboardStream*
+      }
+
+      if {![info exists no(testTraceFilterCallback)]} then {
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetTraceFilterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestTraceFilterGetOutput*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestTraceFilterResetOutput*
+      }
+
+      if {![info exists no(testUnknownCallback)]} then {
+        #
+        # NOTE: For tests "unknown-*".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetUnknownSpyCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetUnknownScriptObjectCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetUnknownScriptCommandCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetUnknownObjectInvokeCallback*
+      }
+
+      if {![info exists no(testPackageCallback)]} then {
+        #
+        # NOTE: For test "package-2.1".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetPackageFallbackCallback*
+      }
+
+      if {![info exists no(testExecuteCallback)]} then {
+        #
+        # NOTE: For tests "executeCallback-1.*".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestAddExecuteCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestExecuteCallback1*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestExecuteCallback2*
+      }
+
+      if {![info exists no(testSleepWaitCallback)]} then {
+        #
+        # NOTE: For test "vwait-1.31".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestGetSleepWaitCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetSleepWaitCallback*
+      }
+
+      if {![info exists no(testWriteHeader)]} then {
+        #
+        # NOTE: For test "host-1.5".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestDisposedWriteHeader*
+      }
+
+      if {![info exists no(testOptionalParameter)]} then {
+        #
+        # NOTE: For tests "object-2.81", "object-2.82", "object-2.83",
+        #       and "object-2.84".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestOptionalParameter0*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestOptionalParameter1*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestOptionalParameter2*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestOptionalParameterZ*
+      }
+
+      if {![info exists no(testPluginPolicy)]} then {
+        #
+        # NOTE: For tests "load-2.0" and "load-2.1".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestAddLoadPluginPolicy*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestLoadPluginPolicy*
+      }
+
+      if {![info exists no(testScriptStream)]} then {
+        #
+        # NOTE: For tests "basic-1.46" and "basic-1.47".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestScriptStream*
+      }
+
+      if {![info exists no(testComplain)]} then {
+        #
+        # NOTE: For tests "debug-1.98" and "debug-1.99".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetComplainCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestComplainCallbackThrow*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestComplainCallbackNoThrow*
+      }
+
+      if {![info exists no(testNewInterpreter)]} then {
+        #
+        # NOTE: For tests "interp-1.101" and "interp-1.102".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetNewInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestNewInterpreterCallback*
+      }
+
+      if {![info exists no(testUseInterpreter)]} then {
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetUseInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestUseInterpreterCallback*
+      }
+
+      if {![info exists no(testPrepareInterpreter)]} then {
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetPrepareInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPrepareInterpreterCallback*
+      }
+
+      if {![info exists no(testInitializeInterpreter)]} then {
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetInitializeInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestInitializeInterpreterCallback*
+      }
+
+      if {![info exists no(testFreeInterpreter)]} then {
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetFreeInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestFreeInterpreterCallback*
+      }
+
+      if {![info exists no(testMatchMode)]} then {
+        #
+        # NOTE: For test "stringMatch-101.1".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetMatchCallback*
+      }
+
+      if {![info exists no(testWebClient)]} then {
+        #
+        # NOTE: For test "socket-3.50".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestHasScriptNewWebClientCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestHasErrorNewWebClientCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetScriptNewWebClientCallback*
+      }
+
+      if {![info exists no(testLoad)]} then {
+        #
+        # NOTE: For tests "load-1.6" and "load-1.7".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestLoadPluginViaBytes*
+      }
+
+      if {![info exists no(testPermute)]} then {
+        #
+        # NOTE: For tests "lpermute-1.3" and "lpermute-1.4".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPermute*
+      }
+
+      if {![info exists no(testDynamicCallback)]} then {
+        #
+        # NOTE: For tests "object-8.1??".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestCallDynamicCallback0*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestCallDynamicCallback1*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestCallDynamicCallback2*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestCallDynamicCallback3*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestCallDynamicCallback4*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestGetDynamicCallbacks*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestCallStaticDynamicCallback0*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestCallStaticDynamicCallback1*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestCallStaticDynamicCallback2*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestCallStaticDynamicCallback3*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestCallStaticDynamicCallback4*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestGetStaticDynamicCallbacks*
+      }
+
+      if {![info exists no(testSimpleCallback)]} then {
+        #
+        # NOTE: For test "object-8.201".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPrivateInstanceNewInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPublicInstanceNewInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPrivateStaticNewInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPublicStaticNewInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPrivateInstanceUseInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPublicInstanceUseInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPrivateStaticUseInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPublicStaticUseInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPrivateInstancePrepareInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPublicInstancePrepareInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPrivateStaticPrepareInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPublicStaticPrepareInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPrivateInstanceInitializeInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPublicInstanceInitializeInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPrivateStaticInitializeInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPublicStaticInitializeInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPrivateInstanceFreeInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPublicInstanceFreeInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPrivateStaticFreeInterpreterCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestPublicStaticFreeInterpreterCallback*
+      }
+
+      if {![info exists no(testDateTime)]} then {
+        #
+        # NOTE: For test "vwait-1.11".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetDateTimeNowCallback*
+      }
+
+      if {![info exists no(testRemoting)]} then {
+        #
+        # NOTE: For tests "remotingServer-1.*".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestRemoting*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestRemotingHaveChannel*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestRemotingTryGetChannel*
+      }
+
+      if {![info exists no(testResources)]} then {
+        #
+        # NOTE: For test "interp-1.400".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestGetResourceString*
+      }
+
+      if {![info exists no(testAsynchronous)]} then {
+        #
+        # NOTE: For tests "basic-1.20" and "basic-1.21".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestEvaluateAsync*
+      }
+
+      if {![info exists no(testFunction)]} then {
+        #
+        # NOTE: For test "function-1.1".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestAddFunctions*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestRemoveFunctions*
+
+        #
+        # NOTE: For tests "function-5.*".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestAddNamedFunction*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestRemoveNamedFunction*
+
+        #
+        # NOTE: For test "interp-1.19".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestAddNamedFunction2*
+
+        #
+        # NOTE: For tests "function-5.*".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestAddNamedFunction3*
+      }
+
+      if {![info exists no(testWriteBox)]} then {
+        #
+        # NOTE: For tests "debug-5.*".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestWriteBox*
+      }
+
+      if {![info exists no(testShell)]} then {
+        #
+        # NOTE: For test "debug-1.3".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestShellMainCore*
+      }
+
+      if {![info exists no(testSetQuiet)]} then {
+        #
+        # NOTE: For tests "basic-1.36" and "debug-1.3".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetQuiet*
+      }
+
+      if {![info exists no(testSetComplain)]} then {
+        #
+        # NOTE: This is not currently used by any tests.
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetComplain*
+      }
+
+      if {![info exists no(testSetVariable)]} then {
+        #
+        # NOTE: For test "basic-1.107".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetVariableWithTypedValue*
+      }
+
+      if {![info exists no(testEnumerableVariables)]} then {
+        #
+        # NOTE: For test "basic-1.105".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetupIntArray*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetVariableEnumerable*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestUnsetVariableEnumerable*
+      }
+
+      if {![info exists no(testLinkedVariables)]} then {
+        #
+        # NOTE: For tests "basic-1.39", "basic-1.40", "basic-1.41",
+        #       "basic-1.42", and "basic-1.43".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetVariableLinks*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestUnsetVariableLinks*
+      }
+
+      if {![info exists no(testSystemArrayVariables)]} then {
+        #
+        # NOTE: For tests "basic-1.62", "basic-1.63", "basic-1.64",
+        #       and "basic-1.65".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestIntPtrChangeTypeCallback*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSetVariableSystemArray*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestUnsetVariableSystemArray*
+      }
+
+      if {![info exists no(reparsePoints)]} then {
+        #
+        # NOTE: For tests "fileIO-14.*".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestProcessReparseData*
+      }
+
+      if {![info exists no(testFields)]} then {
+        #
+        # NOTE: For tests "basic-1.39", "basic-1.40", "basic-1.41",
+        #       "basic-1.42", and "basic-1.43".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *privateField*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *objectField*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *intField*
+      }
+
+      if {![info exists no(testProperties)]} then {
+        #
+        # NOTE: For tests "basic-1.39", "basic-1.40", "basic-1.41",
+        #       "basic-1.42", and "basic-1.43".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *get_SimpleIntProperty*
+
+        #
+        # NOTE: For test "object-3.1".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *get_Item*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *set_Item*
+      }
+
+      if {![info exists no(testMarshaller)]} then {
+        #
+        # NOTE: These are not currently used by any tests.
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestSaveObjects*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestRestoreObjects*
+
+        #
+        # NOTE: For test "basic-1.29.*".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestExecuteStaticDelegates*
+
+        #
+        # NOTE: For tests "basic-1.30.*" and "basic-1.31".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestExecuteDelegateCommands*
+
+        #
+        # NOTE: For test "namespace-97.10".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestRenameNamespace*
+
+        #
+        # NOTE: For test "object-2.1".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestComplexMethod*
+
+        #
+        # NOTE: For test "object-2.12".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestMoreComplexMethod*
+
+        #
+        # NOTE: For test "object-2.3".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestToHexadecimalString*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestMulti2Array*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestMulti3Array*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestNestedArray*
+
+        #
+        # NOTE: For test "object-2.11".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestObjectAsArray*
+
+        #
+        # NOTE: For tests "object-3.6" and "object-3.7".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestStringIListReturnValue*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestStringIListIListIListReturnValue*
+
+        #
+        # NOTE: For test "object-3.8".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestByteList*
+
+        #
+        # NOTE: For test "object-3.9".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestIntList*
+
+        #
+        # NOTE: For test "object-3.10".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestLongList*
+
+        #
+        # NOTE: For test "object-3.11".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestDerivedList*
+
+        #
+        # NOTE: For tests "object-3.12" and "object-3.13".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestStringIDictionaryReturnValue*
+
+        #
+        # NOTE: For tests "object-3.14" and "object-3.15".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestReturnOfSelf*
+
+        #
+        # NOTE: For test "object-3.17".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestByRefByteArray*
+
+        #
+        # NOTE: For test "object-4.1".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestExpr*
+
+        #
+        # NOTE: For tests "basic-1.66", "basic-1.67", "basic-1.68",
+        #       and "basic-1.69".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestTakeEventHandler*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestTakeGenericEventHandler*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestTakeResolveEventHandler*
+
+        #
+        # NOTE: For test "array-4.1".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestTwoByteArrays*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestReturnByteArray*
+
+        #
+        # NOTE: For test "object-7.1".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestByRefValueTypeMethod*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestNullableValueTypeMethod*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestByRefNullableValueTypeMethod*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestIntArrayReturnValue*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestStringArrayReturnValue*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestStringListReturnValue*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestStringListArrayReturnValue*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestByRefStringListArray*
+
+        #
+        # NOTE: For tests "object-7.2" and "object-7.4".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestNullArray*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestOutArray*
+
+        #
+        # NOTE: For tests "object-7.6" and "object-7.7".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestByRefArray*
+
+        #
+        # NOTE: For test "object-7.5".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestEnum*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestByRefEnum*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestNullableEnum*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestByRefNullableEnum*
+
+        #
+        # NOTE: For tests "object-14.4" and "object-14.5".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *StaticObjectProperty*
+
+        #
+        # NOTE: For test "object-14.6".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TypeProperty*
+      }
+
+      if {![info exists no(testStrings)]} then {
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestInitializeStrings*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestResetStrings*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestChangeString*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestRemoveString*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestGetString*
+      }
+
+      if {![info exists no(testXml)]} then {
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestGetScriptStreamXmlDataHash*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestGetScriptStreamXmlData*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestGetScriptStreamXmlDataCertificate*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestGetScriptStreamXmlBlock1Signature*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestGetScriptStreamXmlBlock2Signature*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestReadScriptXml*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestScriptStreamXml*
+      }
+
+      if {![info exists no(testDisposable)]} then {
+        #
+        # NOTE: For test "object-2.8".
+        #
+        checkForObjectMember $test_channel \
+            CodeBrix.Platform.TclTk._Tests.Default+Disposable \
+            *ToString* CodeBrix.Platform.TclTk._Tests.Default.Disposable.ToString
+      }
+
+      if {![info exists no(testSubCommand)]} then {
+        #
+        # NOTE: For tests "redefine-2.*".
+        #
+        checkForObjectMember $test_channel \
+            CodeBrix.Platform.TclTk._Tests.Default+SubCommand \
+            *ToString* CodeBrix.Platform.TclTk._Tests.Default.SubCommand.ToString
+      }
+
+      if {![info exists no(testResolve)]} then {
+        #
+        # NOTE: For tests "resolver-1.*".
+        #
+        checkForObjectMember $test_channel \
+            CodeBrix.Platform.TclTk._Tests.Default+Resolve \
+            *ToString* CodeBrix.Platform.TclTk._Tests.Default.Resolve.ToString
+      }
+
+      if {![info exists no(testLimiter)]} then {
+        #
+        # NOTE: For tests "interp-1.90?".
+        #
+        checkForObjectMember $test_channel \
+            CodeBrix.Platform.TclTk._Tests.Default+ScriptLimiter *ToString* \
+            CodeBrix.Platform.TclTk._Tests.Default.ScriptLimiter.ToString
+      }
+
+      if {![info exists no(testTraceListener)]} then {
+        #
+        # NOTE: For test "basic-1.74".
+        #
+        checkForObjectMember $test_channel \
+            CodeBrix.Platform.TclTk._Tests.Default+Listener \
+            *WriteLine* CodeBrix.Platform.TclTk._Tests.Default.Listener.WriteLine
+
+        checkForObjectMember $test_channel \
+            CodeBrix.Platform.TclTk._Tests.Default+Listener \
+            *Flush* CodeBrix.Platform.TclTk._Tests.Default.Listener.Flush
+
+        #
+        # NOTE: For test "basic-1.75".
+        #
+        checkForObjectMember $test_channel \
+            CodeBrix.Platform.TclTk._Tests.Default+Listener \
+            * CodeBrix.Platform.TclTk._Tests.Default.Listener
+      }
+
+      if {![info exists no(testScriptEventThread)]} then {
+        #
+        # NOTE: For test "interp-1.801".
+        #
+        checkForObjectMember $test_channel \
+            CodeBrix.Platform.TclTk._Tests.Default+ScriptEventState \
+            *ToString* CodeBrix.Platform.TclTk._Tests.Default.ScriptEventState.ToString
+
+        checkForObjectMember $test_channel \
+            CodeBrix.Platform.TclTk._Tests.Default+ScriptEventThread \
+            *ToString* CodeBrix.Platform.TclTk._Tests.Default.ScriptEventThread.ToString
+
+        checkForObjectMember $test_channel \
+            CodeBrix.Platform.TclTk._Tests.Default+ScriptThreadClientData \
+            *ToString* CodeBrix.Platform.TclTk._Tests.Default.ScriptThreadClientData.ToString
+
+        checkForObjectMember $test_channel \
+            CodeBrix.Platform.TclTk._Tests.Default+ScriptTimeoutThread \
+            *ToString* CodeBrix.Platform.TclTk._Tests.Default.ScriptTimeoutThread.ToString
+      }
+
+      if {![info exists no(testChannels)]} then {
+        #
+        # NOTE: For test "channelBuffer-1.1".
+        #
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestAddListStreamChannel*
+      }
+
+      if {![info exists no(testShellArguments)]} then {
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestMayEnterInteractiveLoop*
+
+        checkForObjectMember $test_channel CodeBrix.Platform.TclTk._Tests.Default \
+            *TestShellGetProcessedArguments*
+      }
+    }
+
+    if {![info exists no(msBuild)]} then {
+      if {![info exists no(checkForAssembly)]} then {
+        #
+        # NOTE: For test "object-4.13".
+        #
+        checkForAssembly $test_channel Microsoft.Build.Framework
+
+        #
+        # NOTE: For test "object-6.1".
+        #
+        checkForAssembly $test_channel Microsoft.Build.Engine
+      }
+    }
+
+    if {![info exists no(excel)]} then {
+      if {![info exists no(checkForAssembly)]} then {
+        #
+        # NOTE: For tests "excel-*.*".
+        #
+        checkForAssembly $test_channel Microsoft.Office.Interop.Excel
+      }
+
+      if {![info exists no(excelUsable)]} then {
+        #
+        # NOTE: For tests "excel-*.*".
+        #
+        checkForExcelUsable $test_channel
+      }
+    }
+
+    if {![info exists no(speech)]} then {
+      if {![info exists test_volume]} then {
+        set test_volume 0; # in percent, 0 is silent.
+      }
+
+      if {![info exists no(checkForAssembly)]} then {
+        #
+        # NOTE: For test "object-4.5".
+        #
+        checkForAssembly $test_channel System.Speech
+      }
+    }
+
+    if {![info exists no(winForms)]} then {
+      #
+      # NOTE: For tests "object-13.1.*", "object-13.2.*", and
+      #       "winForms-*.*".
+      #
+      checkForWindowsForms $test_channel
+    }
+
+    if {![info exists no(noWindowsTerminal)]} then {
+      #
+      # NOTE: For tests "debug-10.1" and "host-1.1".
+      #
+      checkForWindowsTerminal $test_channel
+    }
+
+    #
+    # NOTE: Are we running in a WoW64 process?
+    #
+    if {![info exists no(wow64)]} then {
+      #
+      # NOTE: This is not currently used by any tests.
+      #
+      checkForWoW64 $test_channel
+    }
+
+    #
+    # NOTE: Are we running in an STA thread?
+    #
+    if {![info exists no(staThread)]} then {
+      #
+      # NOTE: For tests "xaml-1.*".
+      #
+      checkForStaThread $test_channel
+    }
+
+    if {![info exists no(wpf)]} then {
+      #
+      # NOTE: For tests "xaml-1.*".
+      #
+      checkForWindowsPresentationFoundation $test_channel
+    }
+
+    if {![info exists no(powerShell)]} then {
+      #
+      # NOTE: For tests "object-4.7", "object-4.8", and "object-4.9".
+      #
+      checkForPowerShell $test_channel
+    }
+
+    if {![info exists no(netFx20Sp)]} then {
+      #
+      # NOTE: For test "hash-1.1".
+      #
+      checkForNetFx20ServicePack $test_channel
+    }
+
+    if {![info exists no(netFx40)]} then {
+      #
+      # NOTE: For test "object-12.1.*".
+      #
+      checkForNetFx40 $test_channel
+    }
+
+    if {![info exists no(netFx45)]} then {
+      #
+      # NOTE: For test "object-12.1.*".
+      #
+      checkForNetFx45 $test_channel
+    }
+
+    if {![info exists no(targetFramework)]} then {
+      checkForTargetFramework $test_channel
+    }
+
+    if {![info exists no(nativeUtility)]} then {
+      checkForNativeUtility $test_channel
+    }
+
+    if {![info exists no(visualStudio)]} then {
+      checkForVisualStudioViaRegistry $test_channel
+    }
+
+    if {![info exists no(wix)]} then {
+      #
+      # NOTE: For test "object-4.10".
+      #
+      checkForWix $test_channel
+    }
+
+    if {![info exists no(nativeDebugger)]} then {
+      checkForNativeDebugger $test_channel
+    }
+
+    if {![info exists no(managedDebugger)]} then {
+      checkForManagedDebugger $test_channel
+    }
+
+    if {![info exists no(managedDebuggingAssistants)]} then {
+      checkForManagedDebuggingAssistants $test_channel
+    }
+
+    if {![info exists no(scriptDebugger)]} then {
+      #
+      # NOTE: For tests "debug-1.1", "debug-2.1", "debug-3.1", and
+      #       "debug-4.1".
+      #
+      checkForScriptDebugger $test_channel
+    }
+
+    if {![info exists no(scriptDebuggerInterpreter)]} then {
+      #
+      # NOTE: For test "debug-2.1".
+      #
+      checkForScriptDebuggerInterpreter $test_channel
+    }
+
+    #
+    # NOTE: Are we running under the Mono debugger?  If so, several
+    #       tests need to be disabled because they do not appear to
+    #       work there.
+    #
+    if {![info exists no(monoDebugger)]} then {
+      tputs $test_channel "---- checking for Mono debugger... "
+
+      if {[haveConstraint mono] && [haveConstraint managedDebugger]} then {
+        #
+        # NOTE: Add a special test constraint to simplify the Mono
+        #       debugger test constraint checking for the tests that
+        #       need it.
+        #
+        addConstraint monoDebugger
+
+        tputs $test_channel yes\n
+      } else {
+        tputs $test_channel no\n
+      }
+    }
+
+    if {![info exists no(garudaDll)]} then {
+      #
+      # NOTE: For tests "garuda-1.1" and "garuda-1.2".
+      #
+      checkForGarudaDll $test_channel
+    }
+
+    ###########################################################################
+    ########################## END TclTk Constraints ##########################
+    ###########################################################################
+  } else {
+    #
+    # NOTE: Make sure that Tcl honors the TclTk test constraints.
+    #
+    configureTcltest \
+        [expr {[info exists test_flags(-verbose)] ? \
+            $test_flags(-verbose) : ""}] \
+        [expr {[info exists test_flags(-match)] ? \
+            $test_flags(-match) : [list]}] \
+        [expr {[info exists test_flags(-skip)] ? \
+            $test_flags(-skip) : [list]}] \
+        [expr {[info exists test_flags(-constraints)] ? \
+            $test_flags(-constraints) : [list]}] \
+        [list] false
+
+    #
+    # HACK: Reset the test counts for tcltest.
+    #
+    set ::tcltest::numTests(Total) 0
+    set ::tcltest::numTests(Skipped) 0
+    set ::tcltest::numTests(Passed) 0
+    set ::tcltest::numTests(Failed) 0
+
+    #
+    # HACK: Reset the list of failed files.
+    #
+    set ::tcltest::failFiles [list]
+
+    ###########################################################################
+    ########################## BEGIN Tcl Constraints ##########################
+    ###########################################################################
+
+    tputs $test_channel \
+        "---- start of Tcl specific test constraints...\n"
+
+    if {![info exists no(buildTypes)]} then {
+      if {![info exists no(knownBuildTypes)]} then {
+        #
+        # NOTE: Check for all "known" compile options.
+        #
+        checkForKnownBuildTypes $test_channel
+      } else {
+        #
+        # NOTE: Nothing is currently done here.  All supported build
+        #       types are considered "well-known".
+        #
+      }
+    }
+
+    if {![info exists no(compileOptions)]} then {
+      if {![info exists no(knownCompileOptions)]} then {
+        #
+        # NOTE: Check for all "known" compile options.
+        #
+        checkForKnownCompileOptions $test_channel
+      } else {
+        if {![info exists no(compileTest)]} then {
+          #
+          # NOTE: For tests "tclLoad-13.1.1" and "tclLoad-13.1.2".
+          #
+          checkForCompileOption $test_channel TEST
+        }
+      }
+    }
+
+    ###########################################################################
+    ########################### END Tcl Constraints ###########################
+    ###########################################################################
+  }
+
+  #############################################################################
+  ####################### BEGIN Tcl & TclTk Constraints #######################
+  #############################################################################
+
+  tputs $test_channel \
+      "---- start of common (Tcl & TclTk) test constraints...\n"
+
+  #
+  # NOTE: Force tests normally blocked by Mono issues to run?
+  #
+  if {[info exists no(monoHacks)]} then {
+    addKnownMonoConstraints true
+    addKnownMonoConstraints false
+
+    tputs $test_channel \
+        "---- added all known Mono test constraints (forced)\n"
+  }
+
+  if {![info exists no(visualStudio)]} then {
+    checkForVisualStudioViaVsWhere $test_channel
+  }
+
+  #
+  # NOTE: Check for TclTk core library (static) package names...
+  #
+  if {![info exists no(corePackageNames)]} then {
+    checkForPackage $test_channel {^TclTk\._Plugins\.Core, .*$}
+    checkForPackage $test_channel {^TclTk\._Plugins\.Object, .*$}
+    checkForPackage $test_channel {^TclTk\._Plugins\.Test, .*$}
+    checkForPackage $test_channel {^TclTk\._Plugins\.Monitor, .*$}
+  }
+
+  #
+  # NOTE: Check for TclTk Enterprise Edition package names...
+  #
+  if {![info exists no(enterprisePackageNames)]} then {
+    #
+    # NOTE: These are from various SKUs of the Harpy plugin.
+    #
+    checkForPackage $test_channel {^Licensing\.Core, .*$}
+    checkForPackage $test_channel {^Licensing\.Standard, .*$}
+    checkForPackage $test_channel {^Licensing\.Enterprise, .*$}
+    checkForPackage $test_channel {^Security\.Core, .*$}
+
+    #
+    # NOTE: These are from various SKUs of the Badge plugin.
+    #
+    checkForPackage $test_channel {^Badge\.Enterprise, .*$}
+    checkForPackage $test_channel {^Security\.Certificates, .*$}
+  }
+
+  #
+  # NOTE: Check for the test suite infrastructure files...
+  #
+  if {![info exists no(testSuiteFiles)]} then {
+    checkForTestSuiteFiles $test_channel
+  }
+
+  if {![info exists no(checkForTestExec)]} then {
+    checkForTestExec $test_channel [haveConstraint quiet]
+  }
+
+  if {![info exists no(testMachine)]} then {
+    checkForTestMachine $test_channel
+  }
+
+  if {![info exists no(testPlatform)]} then {
+    checkForTestPlatform $test_channel
+  }
+
+  if {![info exists no(testConfiguration)]} then {
+    checkForTestConfiguration $test_channel
+  }
+
+  if {![info exists no(testNamePrefix)]} then {
+    checkForTestNamePrefix $test_channel
+  }
+
+  if {![info exists no(testSuffix)]} then {
+    checkForTestSuffix $test_channel
+  }
+
+  #
+  # NOTE: Are we likely running on a terminal using GNU Screen?
+  #
+  if {![info exists no(gnuScreen)]} then {
+    checkForGnuScreen $test_channel
+  }
+
+  if {![info exists no(core)] && ![info exists no(checkForFile)]} then {
+    #
+    # NOTE: For tests "benchmark-1.3[89]" and "benchmark-1.40".
+    #
+    if {![info exists no(benchmark.txt)]} then {
+      checkForFile $test_channel [file join $test_data_path benchmark.txt]
+    }
+
+    #
+    # NOTE: For test "benchmark-1.42".
+    #
+    if {![info exists no(pngDump.txt)]} then {
+      checkForFile $test_channel [file join $test_data_path pngDump.txt]
+    }
+
+    #
+    # NOTE: For test "file3-1.1".
+    #
+    if {![info exists no(TclTk.csproj)]} then {
+      checkForFile $test_channel \
+          [file join $base_path Library TclTk.csproj]
+    }
+
+    if {![info exists no(file3_1_1_expected_cmd.txt)]} then {
+      checkForFile $test_channel \
+          [file join $test_data_path file3_1_1_expected_cmd.txt]
+    }
+
+    if {![info exists no(file3_1_1_expected_glob.txt)]} then {
+      checkForFile $test_channel \
+          [file join $test_data_path file3_1_1_expected_glob.txt]
+    }
+
+    if {![info exists no(file3_1_1_expected_mixed.txt)]} then {
+      checkForFile $test_channel \
+          [file join $test_data_path file3_1_1_expected_mixed.txt]
+    }
+
+    #
+    # NOTE: For tests "object-3.2?".
+    #
+    if {[info exists tcl_platform(engine)] && \
+        ![info exists no($tcl_platform(engine))]} then {
+      checkForFile $test_channel [file join \
+          $core_bin_path [appendArgs $tcl_platform(engine) .xml]]
+    }
+
+    #
+    # NOTE: For test "garuda-1.1".
+    #
+    if {![info exists no(pkgAll.tcl)]} then {
+      checkForFile $test_channel [file join $base_path Native Package \
+          Tests all.tcl] pkgAll.tcl
+    }
+
+    #
+    # NOTE: For tests "subst-1.*".
+    #
+    if {![info exists no(bad_subst.txt)]} then {
+      checkForFile $test_channel [file join $test_data_path bad_subst.txt]
+    }
+
+    #
+    # NOTE: This is not currently used by any tests.  However, it is
+    #       used later in this file.
+    #
+    if {![info exists no(hosts.txt)]} then {
+      checkForFile $test_channel [file join $test_data_path hosts.txt]
+    }
+
+    #
+    # NOTE: For test "exec-2.1".
+    #
+    if {![info exists no(big_exec.txt)]} then {
+      checkForFile $test_channel [file join $test_data_path big_exec.txt]
+    }
+
+    if {![info exists no(big_exec_raw.txt)]} then {
+      checkForFile $test_channel [file join $test_data_path big_exec_raw.txt]
+    }
+
+    #
+    # NOTE: For test "processIsolation-1.1".
+    #
+    if {![info exists no(isolated.tcltk)]} then {
+      checkForFile $test_channel [file join $test_data_path isolated.tcltk]
+    }
+
+    #
+    # NOTE: For test "basic-1.73".
+    #
+    if {![info exists no(callStack.tcltk)]} then {
+      checkForFile $test_channel [file join $test_data_path callStack.tcltk]
+    }
+
+    #
+    # NOTE: This is not currently used by any tests.  However, it is
+    #       used by the sample targets file "TclTk.Sample.targets".
+    #
+    if {![info exists no(evaluate.tcltk)]} then {
+      checkForFile $test_channel [file join $test_data_path evaluate.tcltk]
+    }
+
+    #
+    # NOTE: For test "interp-1.50000".
+    #
+    if {![info exists no(showArgv.tcltk)]} then {
+      checkForFile $test_channel [file join $test_data_path showArgv.tcltk]
+    }
+
+    #
+    # NOTE: This is not currently used by any tests.  However, it is
+    #       used by the sample targets file "TclTk.Sample.targets".
+    #
+    if {![info exists no(substitute.tcltk)]} then {
+      checkForFile $test_channel [file join $test_data_path substitute.tcltk]
+    }
+
+    #
+    # NOTE: This is not currently used by any tests.
+    #
+    if {![info exists no(unicode_bom.txt)]} then {
+      checkForFile $test_channel [file join $test_data_path unicode_bom.txt]
+    }
+
+    #
+    # NOTE: This is not currently used by any tests.
+    #
+    if {![info exists no(unicode_no_bom.txt)]} then {
+      checkForFile $test_channel [file join $test_data_path unicode_no_bom.txt]
+    }
+
+    #
+    # NOTE: This is not currently used by any tests.
+    #
+    if {![info exists no(utf8.txt)]} then {
+      checkForFile $test_channel [file join $test_data_path utf8.txt]
+    }
+
+    #
+    # NOTE: For tests "fileIO-1.*".
+    #
+    if {![info exists no(file.dat)]} then {
+      checkForFile $test_channel [file join $test_data_path file.dat]
+    }
+
+    #
+    # NOTE: For tests "fileIO-5.6.*".
+    #
+    if {![info exists no(HomeDocuments)]} then {
+      checkForFile $test_channel [file join \
+          $test_home_path Documents] HomeDocuments
+    }
+
+    #
+    # NOTE: For test "garbage-1.1".
+    #
+    if {![info exists no(garbage.txt)]} then {
+      checkForFile $test_channel [file join $test_data_path garbage.txt]
+    }
+
+    #
+    # NOTE: For tests "xaml-1.*".
+    #
+    if {![info exists no(test.png)]} then {
+      checkForFile $test_channel [file join $test_data_path test.png]
+    }
+
+    #
+    # NOTE: For test "socket-1.2".
+    #
+    if {![info exists no(client.tcl)]} then {
+      checkForFile $test_channel [file join $test_data_path client.tcl]
+    }
+
+    #
+    # NOTE: For test "tclLoad-1.2".
+    #
+    if {![info exists no(tcl_unload.tcl)]} then {
+      checkForFile $test_channel [file join $test_data_path tcl_unload.tcl]
+    }
+
+    #
+    # NOTE: For test "basic-1.4".
+    #
+    if {![info exists no(read.tcltk)]} then {
+      checkForFile $test_channel [file join $test_data_path read.tcltk]
+    }
+
+    #
+    # NOTE: For test "basic-1.5".
+    #
+    if {![info exists no(read2.tcltk)]} then {
+      checkForFile $test_channel [file join $test_data_path read2.tcltk]
+    }
+
+    #
+    # NOTE: For test "basic-1.6".
+    #
+    if {![info exists no(read3.tcltk)]} then {
+      checkForFile $test_channel [file join $test_data_path read3.tcltk]
+    }
+
+    #
+    # NOTE: For test "basic-1.7".
+    #
+    if {![info exists no(read4.tcltk)]} then {
+      checkForFile $test_channel [file join $test_data_path read4.tcltk]
+    }
+
+    #
+    # NOTE: For test "infoScript-1.1".
+    #
+    if {![info exists no(script.tcltk)]} then {
+      checkForFile $test_channel [file join $test_data_path script.tcltk]
+    }
+
+    #
+    # NOTE: For test "basic-1.1".
+    #
+    if {![info exists no(source.tcltk)]} then {
+      checkForFile $test_channel [file join $test_data_path source.tcltk]
+    }
+
+    #
+    # NOTE: For test "basic-1.2".
+    #
+    if {![info exists no(unbalanced_brace.tcltk)]} then {
+      checkForFile $test_channel [file join \
+          $test_data_path unbalanced_brace.tcltk]
+    }
+
+    #
+    # NOTE: For test "basic-1.3".
+    #
+    if {![info exists no(unbalanced_brace2.tcltk)]} then {
+      checkForFile $test_channel [file join \
+          $test_data_path unbalanced_brace2.tcltk]
+    }
+
+    #
+    # NOTE: For tests "excel-2.*".
+    #
+    if {![info exists no(test.xls)]} then {
+      checkForFile $test_channel [file join $test_data_path test.xls]
+    }
+
+    #
+    # NOTE: For test "proc-1.9".
+    #
+    if {![info exists no(testProcs.tcl)]} then {
+      checkForFile $test_channel [file join $test_data_path testProcs.tcl]
+    }
+
+    #
+    # NOTE: For tests "interp-1.10.*" and "interp-1.11.*".
+    #
+    if {![info exists no(settings.xml)]} then {
+      checkForFile $test_channel [file join $test_data_path settings.xml]
+    }
+
+    if {![info exists no(settings.ini)]} then {
+      checkForFile $test_channel [file join $test_data_path settings.ini]
+    }
+
+    if {![info exists no(settings.tcltk)]} then {
+      checkForFile $test_channel [file join $test_data_path settings.tcltk]
+    }
+
+    #
+    # NOTE: For tests "load-1.1.*".
+    #
+    if {![info exists no(Plugin.dll)]} then {
+      checkForFile $test_channel [file join \
+          $core_lib_path Plugin1.0 [getDotNetCoreLibPathDirectoryNameOnly \
+          Plugin1.0] Plugin.dll]
+    }
+
+    #
+    # NOTE: For test "object-6.1".
+    #
+    if {![info exists no(Sample.exe)]} then {
+      checkForFile $test_channel [file join $core_bin_path Sample.exe]
+    }
+
+    #
+    # NOTE: For test "object-4.8".
+    #
+    if {![info exists no(TclTkCmdlets.dll)]} then {
+      checkForFile $test_channel [file join $core_bin_path TclTkCmdlets.dll]
+    }
+
+    #
+    # NOTE: For test "object-4.10".
+    #
+    if {![info exists no(TclTkExtensions.dll)]} then {
+      checkForFile $test_channel [file join $core_bin_path TclTkExtensions.dll]
+    }
+
+    #
+    # NOTE: For test "object-4.10".
+    #
+    if {![info exists no(test.wxs)]} then {
+      checkForFile $test_channel [file join $base_path Installer Tests test.wxs]
+    }
+
+    #
+    # NOTE: For tests "sql-1.2", "sql-1.4", "sql-1.5", "sql-1.6", "sql-1.7",
+    #       "sql-1.8", and "sql-1.9".
+    #
+    if {![info exists no(sqlite3.dll)]} then {
+      checkForNativeLibraryFile $test_channel \
+          [list SQLite.Interop.dll sqlite3.dll SQLite.Interop sqlite3] \
+          $test_machine sqlite3.dll
+    }
+
+    if {![info exists no(System.Data.SQLite.dll)]} then {
+      checkForFile $test_channel [file join $core_bin_path \
+          System.Data.SQLite.dll]
+    }
+
+    if {![info exists no(test.sqlite3)]} then {
+      checkForFile $test_channel [file join $test_data_path test.sqlite3]
+    }
+  }
+
+  if {![info exists no(platform)]} then {
+    checkForPlatform $test_channel
+  }
+
+  if {![info exists no(windowsVersion)]} then {
+    checkForWindowsVersion $test_channel
+  }
+
+  if {![info exists no(scriptLibrary)]} then {
+    checkForScriptLibrary $test_channel
+  }
+
+  if {![info exists no(tclOptions)]} then {
+    checkForTclOptions $test_channel
+  }
+
+  if {![info exists no(checkForBigLists)]} then {
+    checkForBigLists $test_channel
+  }
+
+  if {![info exists no(checkForProcessorIntensive)]} then {
+    checkForProcessorIntensive $test_channel
+  }
+
+  if {![info exists no(checkForFileSystemIntensive)]} then {
+    checkForFileSystemIntensive $test_channel
+  }
+
+  if {![info exists no(checkForTimeIntensive)]} then {
+    checkForTimeIntensive $test_channel
+  }
+
+  if {![info exists no(checkForFullTest)]} then {
+    checkForFullTest $test_channel
+  }
+
+  if {![info exists no(checkForMemoryIntensive)]} then {
+    checkForMemoryIntensive $test_channel
+  }
+
+  if {![info exists no(checkForStackIntensive)]} then {
+    checkForStackIntensive $test_channel
+  }
+
+  if {![info exists no(checkForStackSize)]} then {
+    checkForStackSize $test_channel
+  }
+
+  if {![info exists no(windowsCommandProcessor)]} then {
+    checkForWindowsCommandProcessor $test_channel cmd.exe
+  }
+
+  if {![info exists no(fossil)]} then {
+    checkForFossil $test_channel
+  }
+
+  if {![info exists no(testRepositoryCheckout)]} then {
+    checkForVariable $test_channel test_repository_checkout
+  }
+
+  if {![info exists no(testRepositoryFile)]} then {
+    checkForVariable $test_channel test_repository_file
+  }
+
+  if {![info exists no(testRepositoryTags)]} then {
+    checkForVariable $test_channel test_repository_tags
+  }
+
+  if {![info exists no(testRepositoryUrl)]} then {
+    checkForVariable $test_channel test_repository_url
+  }
+
+  if {![info exists no(testXdgShellsDir)]} then {
+    checkForEnvironmentVariable $test_channel XDG_SHELLS_DIR
+  }
+
+  if {![info exists no(testXdgRuleSetDir)]} then {
+    checkForEnvironmentVariable $test_channel XDG_RULESET_DIR
+  }
+
+  if {![info exists no(version)]} then {
+    checkForVersion $test_channel
+  }
+
+  if {![info exists no(tcltk)]} then {
+    checkForTclTk $test_channel
+  }
+
+  if {![info exists no(noLogFile)]} then {
+    checkForLogFile $test_channel
+  }
+
+  if {![info exists no(executableSymbols)]} then {
+    checkForSymbols $test_channel [getShellExecutableName] executable
+  }
+
+  if {![info exists no(garuda)]} then {
+    checkForGaruda $test_channel
+  }
+
+  if {![info exists no(shell)]} then {
+    checkForShell $test_channel
+  }
+
+  if {![info exists no(officialStableReleaseInProgress)]} then {
+    checkForOfficialStableReleaseInProgress $test_channel
+  }
+
+  if {![info exists no(debug)]} then {
+    checkForDebug $test_channel
+  }
+
+  if {![info exists no(tk)]} then {
+    checkForTk $test_channel
+  }
+
+  if {![info exists no(native)]} then {
+    checkForNativeCode $test_channel
+  }
+
+  if {![info exists no(base64Command)]} then {
+    checkForCommand $test_channel base64
+  }
+
+  if {![info exists no(bgerrorCommand)]} then {
+    checkForCommand $test_channel bgerror
+  }
+
+  if {![info exists no(callbackCommand)]} then {
+    checkForCommand $test_channel callback
+  }
+
+  if {![info exists no(debugCommand)]} then {
+    checkForCommand $test_channel debug
+  }
+
+  if {![info exists no(dictCommand)]} then {
+    checkForCommand $test_channel dict
+  }
+
+  if {![info exists no(doCommand)]} then {
+    checkForCommand $test_channel do
+  }
+
+  if {![info exists no(downlevelCommand)]} then {
+    checkForCommand $test_channel downlevel
+  }
+
+  if {![info exists no(guidCommand)]} then {
+    checkForCommand $test_channel guid
+  }
+
+  if {![info exists no(hashCommand)]} then {
+    checkForCommand $test_channel hash
+  }
+
+  if {![info exists no(hostCommand)]} then {
+    checkForCommand $test_channel host
+  }
+
+  if {![info exists no(invokeCommand)]} then {
+    checkForCommand $test_channel invoke
+  }
+
+  if {![info exists no(killCommand)]} then {
+    checkForCommand $test_channel kill
+  }
+
+  if {![info exists no(lgetCommand)]} then {
+    checkForCommand $test_channel lget
+  }
+
+  if {![info exists no(libraryCommand)]} then {
+    checkForCommand $test_channel library
+  }
+
+  if {![info exists no(lassignCommand)]} then {
+    checkForCommand $test_channel lassign
+  }
+
+  if {![info exists no(lmapCommand)]} then {
+    checkForCommand $test_channel lmap
+  }
+
+  if {![info exists no(lrepeatCommand)]} then {
+    checkForCommand $test_channel lrepeat
+  }
+
+  if {![info exists no(lreverseCommand)]} then {
+    checkForCommand $test_channel lreverse
+  }
+
+  if {![info exists no(lremoveCommand)]} then {
+    checkForCommand $test_channel lremove
+  }
+
+  if {![info exists no(nopCommand)]} then {
+    checkForCommand $test_channel nop
+  }
+
+  if {![info exists no(nprocCommand)]} then {
+    checkForCommand $test_channel nproc
+  }
+
+  if {![info exists no(objectCommand)]} then {
+    checkForCommand $test_channel object
+  }
+
+  if {![info exists no(parseCommand)]} then {
+    checkForCommand $test_channel parse
+  }
+
+  if {![info exists no(scanCommand)]} then {
+    checkForCommand $test_channel scan
+  }
+
+  if {![info exists no(scopeCommand)]} then {
+    checkForCommand $test_channel scope
+  }
+
+  if {![info exists no(socketCommand)]} then {
+    checkForCommand $test_channel socket
+  }
+
+  if {![info exists no(sqlCommand)]} then {
+    checkForCommand $test_channel sql
+  }
+
+  if {![info exists no(tclCommand)]} then {
+    checkForCommand $test_channel tcl
+  }
+
+  if {![info exists no(throwCommand)]} then {
+    checkForCommand $test_channel throw
+  }
+
+  if {![info exists no(truncateCommand)]} then {
+    checkForCommand $test_channel truncate
+  }
+
+  if {![info exists no(tryCommand)]} then {
+    checkForCommand $test_channel try
+  }
+
+  if {![info exists no(uriCommand)]} then {
+    checkForCommand $test_channel uri
+  }
+
+  if {![info exists no(versionCommand)]} then {
+    checkForCommand $test_channel version
+  }
+
+  if {![info exists no(xmlCommand)]} then {
+    checkForCommand $test_channel xml
+  }
+
+  if {![info exists no(eformat)]} then {
+    checkForEFormat $test_channel
+  }
+
+  if {![info exists no(intIsWide)]} then {
+    checkForIntIsWide $test_channel; # "int" same as "wide"?
+  }
+
+  if {![info exists no(namespaces)]} then {
+    checkForNamespaces $test_channel [haveConstraint quiet]
+  }
+
+  if {![info exists no(allowBigIntegers)]} then {
+    checkForAllowBigIntegers $test_channel
+  }
+
+  if {![info exists no(tip127)]} then {
+    checkForTip127 $test_channel
+  }
+
+  if {![info exists no(tip182)]} then {
+    checkForTip182 $test_channel
+  }
+
+  if {![info exists no(tip194)]} then {
+    checkForTip194 $test_channel
+  }
+
+  if {![info exists no(tip207)]} then {
+    checkForTip207 $test_channel
+  }
+
+  if {![info exists no(tip237)]} then {
+    checkForTip237 $test_channel
+  }
+
+  if {![info exists no(tip241)]} then {
+    checkForTip241 $test_channel
+  }
+
+  if {![info exists no(tip285)]} then {
+    checkForTip285 $test_channel
+  }
+
+  if {![info exists no(tip405)]} then {
+    checkForTip405 $test_channel
+  }
+
+  if {![info exists no(tip421)]} then {
+    checkForTip421 $test_channel
+  }
+
+  if {![info exists no(tip426)]} then {
+    checkForTip426 $test_channel
+  }
+
+  if {![info exists no(tip429)]} then {
+    checkForTip429 $test_channel
+  }
+
+  if {![info exists no(tip440)]} then {
+    checkForTip440 $test_channel
+  }
+
+  if {![info exists no(tip461)]} then {
+    checkForTip461 $test_channel
+  }
+
+  if {![info exists no(tip463)]} then {
+    checkForTip463 $test_channel
+  }
+
+  if {![info exists no(tip471)]} then {
+    checkForTip471 $test_channel
+  }
+
+  if {![info exists no(tip508)]} then {
+    checkForTip508 $test_channel
+  }
+
+  if {![info exists no(tip521)]} then {
+    checkForTip521 $test_channel
+  }
+
+  if {![info exists no(core)] && \
+      ![info exists no(checkForPerformance)]} then {
+    checkForPerformance $test_channel
+  }
+
+  #
+  # BUGBUG: In TclTk, these checks for "precision" timing are not overly
+  #         reliable.  This may be due to the semi-random nature of the
+  #         garbage collection.  More research into the precise cause of
+  #         timing issues is certainly warranted.
+  #
+  #
+  if {![info exists no(core)] && \
+      ![info exists no(timing)]} then {
+    checkForTiming $test_channel 50; # 1/20th second.
+  }
+
+  if {![info exists no(core)] && \
+      ![info exists no(preciseTiming)]} then {
+    #
+    # NOTE: Normally, the "preciseTiming" constraint implicitly requires
+    #       that the "timing" constraint to be present as well; however,
+    #       that can be overridden.
+    #
+    if {[info exists no(requireTiming)] || \
+        [haveConstraint timing]} then {
+      checkForTiming $test_channel 25 preciseTiming; # 1/40th second.
+    }
+  }
+
+  if {![info exists no(interactive)]} then {
+    checkForInteractive $test_channel
+  }
+
+  if {![info exists no(interactiveFocus)]} then {
+    checkForInteractiveFocus $test_channel
+  }
+
+  if {![info exists no(core)] && \
+      ![info exists no(interactiveCommand)]} then {
+    #
+    # NOTE: For test "debug-1.8".
+    #
+    checkForInteractiveCommand $test_channel go
+
+    #
+    # NOTE: For test "debug-1.9".
+    #
+    checkForInteractiveCommand $test_channel done
+
+    #
+    # NOTE: For test "object-15.9".
+    #
+    checkForInteractiveCommand $test_channel args
+
+    #
+    # NOTE: For test "debug-10.1".
+    #
+    checkForInteractiveCommand $test_channel exit
+    checkForInteractiveCommand $test_channel pause
+    checkForInteractiveCommand $test_channel unpause
+  }
+
+  if {![info exists no(userInteraction)]} then {
+    checkForUserInteraction $test_channel
+  }
+
+  if {![info exists no(core)] && ![info exists no(offlineMode)]} then {
+    checkForOfflineMode $test_channel
+  }
+
+  if {![info exists no(core)] && ![info exists no(network)]} then {
+    checkForNetwork $test_channel $test_host $test_timeout
+  }
+
+  if {![info exists no(core)] && \
+      ![info exists no(network)] && ![info exists no(updateNetwork)]} then {
+    if {[llength [info commands getUpdateBaseUri]] > 0} then {
+      checkForNetwork $test_channel [getUpdateBaseUri false] $test_timeout
+    } else {
+      #
+      # HACK: This value is hard-coded when the [getUpdateBaseUri]
+      #       procedure is unavailable.
+      #
+      checkForNetwork $test_channel update.tcltk.to $test_timeout
+    }
+  }
+
+  if {![info exists no(core)] && ![info exists no(internet)]} then {
+    checkForInternet $test_channel \
+        [appendArgs https:// $test_host /] $test_timeout
+
+    if {[isTclTk]} then {
+      checkForInternet $test_channel \
+          https://www.tcltk-lang.org/ $test_timeout
+
+      checkForInternet $test_channel \
+          https://pkg.management/pkgr $test_timeout
+
+      checkForInternet $test_channel \
+          https://tcl.foundation/ $test_timeout
+
+      checkForInternet $test_channel \
+          [info engine AuxiliaryBaseUri] $test_timeout
+
+      checkForInternet $test_channel \
+          [info engine AuxiliaryBaseUri] $test_timeout
+
+      checkForInternet $test_channel \
+          [info engine DownloadBaseUri] $test_timeout
+
+      checkForInternet $test_channel \
+          [info engine ScriptBaseUri] $test_timeout
+
+      checkForInternet $test_channel \
+          [info engine UpdateBaseUri] $test_timeout
+
+      checkForInternet $test_channel \
+          [info engine Uri] $test_timeout
+    }
+  }
+
+  #
+  # NOTE: Check for Internet connectivity (using TLS) to all of the
+  #       various official web hosts for The TclTk Project.
+  #
+  if {![info exists no(core)] && ![info exists no(tlsOk)]} then {
+    checkForTlsOk $test_channel $test_hosts $test_timeout
+  }
+
+  #############################################################################
+
+  if {![info exists no(bogoCops)] && [haveConstraint performance]} then {
+    tputs $test_channel \
+        "---- checking for baseline BogoCops (commands-per-second)... "
+
+    if {![info exists test_base_cops]} then {
+      #
+      # NOTE: The expected performance numbers for all the
+      #       performance tests will be calibrated based on
+      #       this number (which is based on the measured
+      #       performance of the actual machine that was
+      #       used to determine those expected performance
+      #       numbers).
+      #
+      if {[isTclTk]} then {
+        set test_base_cops 36000.0; # NOTE: TclTk 1.0 Win32
+      } else {
+        set test_base_cops 1570000.0; # NOTE: Tcl 8.4.19 Win32
+      }
+    }
+
+    tputs $test_channel [appendArgs $test_base_cops \n]
+    tputs $test_channel \
+        "---- checking for baseline BogoCops multipliers... "
+
+    if {![info exists test_base_cops_multipliers]} then {
+      set test_base_cops_multipliers [list \
+          2 4 8 10 16 20 32 50 64 100 1000 10000 100000 1000000]
+    }
+
+    tputs $test_channel [appendArgs $test_base_cops_multipliers \n]
+    tputs $test_channel \
+        "---- checking for current BogoCops (commands-per-second)... "
+
+    if {![info exists test_cops]} then {
+      set test_cops [calculateBogoCops]
+    }
+
+    tputs $test_channel [appendArgs [formatDecimal $test_cops] \n]
+    tputs $test_channel \
+        "---- checking for current BogoCops against baseline BogoCops... "
+
+    if {$test_cops > $test_base_cops} then {
+      if {![info exists no(fasterBogoCops)]} then {
+        addConstraint sameOrFasterBogoCops
+        addConstraint fasterBogoCops
+
+        if {![info exists no(bogoCopsMultipliers)]} then {
+          foreach multiplier $test_base_cops_multipliers {
+            if {$test_cops >= $test_base_cops * $multiplier} then {
+              addConstraint [appendArgs fasterBogoCopsBy $multiplier X]
+            }
+          }
+
+          unset multiplier
+        }
+      }
+
+      tputs $test_channel faster\n
+    } elseif {$test_cops < $test_base_cops} then {
+      if {![info exists no(slowerBogoCops)]} then {
+        addConstraint sameOrSlowerBogoCops
+        addConstraint slowerBogoCops
+
+        if {![info exists no(bogoCopsMultipliers)]} then {
+          foreach multiplier $test_base_cops_multipliers {
+            if {$multiplier != 0 && \
+                $test_cops <= $test_base_cops * (1.0 / $multiplier)} then {
+              addConstraint [appendArgs slowerBogoCopsBy $multiplier X]
+            }
+          }
+
+          unset multiplier
+        }
+      }
+
+      tputs $test_channel slower\n
+    } else {
+      if {![info exists no(sameBogoCops)]} then {
+        addConstraint sameOrFasterBogoCops
+        addConstraint sameOrSlowerBogoCops
+        addConstraint sameBogoCops
+      }
+
+      tputs $test_channel same\n
+    }
+
+    set percent [expr {[calculateRelativePerformance iterations 1] * 100}]
+
+    tputs $test_channel [appendArgs \
+        "---- current BogoCops (commands-per-second) is " [formatDecimal \
+        [expr {$percent > 100 ? $percent - 100 : $percent}] 2] "% " \
+        [expr {$percent > 100 ? "faster than" : "as fast as"}] \
+        " the baseline\n"]
+
+    unset percent
+  }
+
+  #############################################################################
+
+  #
+  # NOTE: Set the "long" timeout, if necessary.  This should be used
+  #       for operations that may take a long time on slower machines.
+  #
+  if {![info exists test_long_timeout]} then {
+    set test_long_timeout 60000; # in milliseconds.
+
+    if {![info exists no(bogoCops)] && [haveConstraint performance]} then {
+      set test_long_timeout [expr {
+        int([calculateRelativePerformance elapsed $test_long_timeout])
+      }]
+    }
+  }
+
+  #############################################################################
+
+  #
+  # HACK: Next, check for any installed operating system updates.
+  #       Since this can take a long time on slow machines, it is
+  #       calibrated against the performance of this machine.
+  #
+  if {![info exists no(core)] && \
+      ![info exists no(getInstalledUpdates)]} then {
+    checkForGetInstalledUpdates $test_channel $test_long_timeout
+  }
+
+  if {![info exists no(core)] && \
+      ![info exists no(operatingSystemUpdates)]} then {
+    #
+    # HACK: If the installed update names are not actually present
+    #       in the extra operating system information yet, wait a
+    #       little while for them to possibly appear.
+    #
+    if {[isTclTk] && [haveConstraint getInstalledUpdates] && \
+        [info exists tcl_platform(osExtra)] && \
+        [lsearch -exact $tcl_platform(osExtra) UpdateNames] == -1} then {
+      vwaitWithTimeout tcl_platform(osExtra) $test_long_timeout
+    }
+
+    checkForOperatingSystemUpdate $test_channel KB936929
+    checkForOperatingSystemUpdate $test_channel KB976932
+    checkForOperatingSystemUpdate $test_channel "Windows 10, RTM"
+    checkForOperatingSystemUpdate $test_channel "Windows 10, November Update"
+    checkForOperatingSystemUpdate $test_channel "Windows 10, Anniversary Update"
+    checkForOperatingSystemUpdate $test_channel "Windows 10, Creators Update"
+    checkForOperatingSystemUpdate $test_channel "Windows 10, Fall Creators Update"
+    checkForOperatingSystemUpdate $test_channel "Windows 10, April 2018 Update"
+    checkForOperatingSystemUpdate $test_channel "Windows 10, October 2018 Update"
+    checkForOperatingSystemUpdate $test_channel "Windows 10, May 2019 Update"
+    checkForOperatingSystemUpdate $test_channel "Windows 10, November 2019 Update"
+    checkForOperatingSystemUpdate $test_channel "Windows 10, May 2020 Update"
+    checkForOperatingSystemUpdate $test_channel "Windows 10, October 2020 Update"
+    checkForOperatingSystemUpdate $test_channel "Windows 10, May 2021 Update"
+    checkForOperatingSystemUpdate $test_channel "Windows 10, November 2021 Update"
+    checkForOperatingSystemUpdate $test_channel "Windows 10, October 2022 Update"
+    checkForOperatingSystemUpdate $test_channel "Windows 11, RTM"
+    checkForOperatingSystemUpdate $test_channel "Windows 11, September 2022 Update"
+    checkForOperatingSystemUpdate $test_channel "Windows 11, October 2023 Update"
+    checkForOperatingSystemUpdate $test_channel "Windows 11, October 2024 Update"
+    checkForOperatingSystemUpdate $test_channel "Windows 11, September 2025 Update"
+  }
+
+  #############################################################################
+
+  #
+  # NOTE: The test constraints should now be fully built, cache them.
+  #
+  if {![info exists test_constraints]} then {
+    set test_constraints [getConstraints]
+  }
+
+  #############################################################################
+  ######################## END TclTk & Tcl Constraints ########################
+  #############################################################################
+
+  if {[isTclTk]} then {
+    ###########################################################################
+    ###################### BEGIN Late-TclTk Constraints #######################
+    ###########################################################################
+
+    if {![info exists no(System.Data.SQLite)]} then {
+      #
+      # NOTE: For test "sql-1.19".
+      #
+      checkForSystemDataSQLite $test_channel
+
+      if {![haveConstraint System.Data.SQLite] && \
+          ![info exists no(checkForAssembly)]} then {
+        checkForAssembly $test_channel System.Data.SQLite
+      }
+    }
+
+    ###########################################################################
+    ####################### END Late-TclTk Constraints ########################
+    ###########################################################################
+  }
+
+  #
+  # NOTE: For TclTk, dump the platform information, including the compile
+  #       options.
+  #
+  if {[isTclTk]} then {
+    set timeStamp [getPlatformInfo timeStamp ""]
+
+    if {[string length $timeStamp] > 0} then {
+      #########################################################################
+      # MONO: Bug, see: https://bugzilla.novell.com/show_bug.cgi?id=479061
+      #########################################################################
+
+      if {[isMono]} then {
+        #
+        # HACK: We need something to go into the log file.
+        #
+        set timeStamp [lindex $timeStamp 0]
+      } else {
+        set timeStamp [formatTimeStamp [clock scan $timeStamp]]
+      }
+    } else {
+      set timeStamp <none>
+    }
+
+    tputs $test_channel [appendArgs "---- build: " \
+        [list [getPlatformInfo engine <none>]] " " \
+        [list [getPlatformInfo patchLevel <none>]] " " \
+        [list [getPlatformInfo tag <none>]] " " \
+        [list [getPlatformInfo release <none>]] " " \
+        [list [getPlatformInfo text <none>]] " " \
+        [list [getPlatformInfo configuration <none>]] " " \
+        [list [getPlatformInfo suffix <none>]] " " \
+        [list $timeStamp] " " \
+        [list [getPlatformInfo sourceId <none>]] " " \
+        [list [getPlatformInfo sourceTimeStamp <none>]] \n]
+
+    unset timeStamp
+
+    tputs $test_channel [appendArgs "---- os: " \
+        [getPlatformInfo os <none>] \n]
+
+    tputs $test_channel [appendArgs "---- globalAssemblyCache: " \
+        [getPlatformInfo globalAssemblyCache <none>] \n]
+
+    tputs $test_channel [appendArgs "---- moduleVersionId: " \
+        [getPlatformInfo moduleVersionId <none>] \n]
+
+    if {![info exists no(showCompileOptions)]} then {
+      tputs $test_channel [appendArgs "---- compileOptions: " \
+          [formatList [getPlatformInfo compileOptions <none>]] \n]
+    }
+
+    tputs $test_channel [appendArgs "---- strongName: " \
+        [getPlatformInfo strongName <none>] \n]
+
+    tputs $test_channel [appendArgs "---- certificate: " \
+        [getPlatformInfo certificate <none>] \n]
+
+    tputs $test_channel [appendArgs "---- targetFramework: " \
+        [getPlatformInfo targetFramework <none>] \n]
+  }
+
+  #
+  # NOTE: Show the (dynamically calculated?) long timeout.
+  #
+  tputs $test_channel [appendArgs "---- test long timeout: " \
+      [expr {[info exists test_long_timeout] ? \
+          $test_long_timeout : "<none>"}] \n]
+
+  tputs $test_channel [appendArgs "---- test file: " \
+      [expr {[info exists test_file] && [string length $test_file] > 0 ? \
+      $test_file : "<none>"}] \n]
+
+  if {![info exists no(showActiveConstraints)]} then {
+    tputs $test_channel [appendArgs "---- active constraints: " \
+        [formatList [lsort [getConstraints]] <none>] \n]
+  }
+
+  if {![info exists no(showCachedConstraints)]} then {
+    tputs $test_channel [appendArgs "---- cached constraints: " \
+        [formatList [lsort [getCachedConstraints]] <none>] \n]
+  }
+
+  if {![info exists no(showWellKnown)]} then {
+    tputs $test_channel [appendArgs "---- well known metadata: " \
+        [formatListAsDict [array get test_well_known] <none>] \n]
+  }
+
+  tputs $test_channel [appendArgs "---- starting command count: " \
+      [info cmdcount] \n]
+
+  if {[isTclTk]} then {
+    if {[llength [info commands object]] > 0} then {
+      catch {
+        object invoke -flags +NonPublic Interpreter.GetActive \
+            OperationCount
+      } operationCount
+    } else {
+      set operationCount unavailable
+    }
+
+    tputs $test_channel [appendArgs "---- starting operation count: " \
+        $operationCount \n]
+
+    unset operationCount
+
+    #
+    # NOTE: Record the raw starting performance count, for later use in
+    #       calculating the approximate number of microseconds elapsed.
+    #
+    catch {set test_timestamp(startCount) [clock start]}
+  }
+
+  #
+  # NOTE: Load the test settings file(s) now, if any.
+  #
+  loadTestSettings $test_channel
+
+  #
+  # NOTE: Next, before doing *anything* else, remove all global variables
+  #       that are not built-in, specifically allowed for use within the
+  #       test suite, or specifically reserved for user-defined overrides.
+  #
+  if {![info exists no(cleanState)]} then {
+    tputs $test_channel [appendArgs "---- cleaned up global state: " \
+        [formatList [cleanState] <none>] \n]
+  }
+
+  #
+  # NOTE: Show when the tests actually began (now).
+  #
+  tputs $test_channel [appendArgs "---- tests started at " \
+      [formatTimeStamp [set test_timestamp(startSeconds) \
+      [clock seconds]]] \n]
+
+  if {![info exists no(hookForEndPrologue)] && \
+      [llength [info commands ::hookForEndPrologue]] > 0} then {
+    catch {::hookForEndPrologue}
+  }
+}

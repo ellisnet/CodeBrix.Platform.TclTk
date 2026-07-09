@@ -1,0 +1,3442 @@
+/*
+ * NativePackage.cs --
+ *
+ * Copyright (c) 2007-2012 by Joe Mistachkin.  All rights reserved.
+ *
+ * See the file "license.terms" for information on usage and redistribution of
+ * this file, and for a DISCLAIMER OF ALL WARRANTIES.
+ *
+ * RCS: @(#) $Id: $
+ */
+
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Globalization;
+
+#if NET_STANDARD_20
+using System.Runtime.InteropServices;
+#endif
+
+using System.Threading;
+using CodeBrix.Platform.TclTk._Attributes;
+using CodeBrix.Platform.TclTk._Components.Private;
+using CodeBrix.Platform.TclTk._Components.Private.Tcl;
+using CodeBrix.Platform.TclTk._Constants;
+using CodeBrix.Platform.TclTk._Containers.Private;
+using CodeBrix.Platform.TclTk._Containers.Public;
+using CodeBrix.Platform.TclTk._Interfaces.Private.Tcl;
+using CodeBrix.Platform.TclTk._Interfaces.Public;
+using SharedStringOps = CodeBrix.Platform.TclTk._Components.Shared.StringOps;
+
+namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Components.Public;
+{
+    /// <summary>
+    /// This class provides the entry points and supporting infrastructure used
+    /// to bridge native Tcl interpreters to managed TclTk interpreters (and
+    /// vice versa).  Its public methods are designed to be invoked from native
+    /// code (e.g. the "Garuda" package) in order to start up, control, detach,
+    /// and shut down the integration between a native Tcl interpreter and the
+    /// TclTk interpreter(s) hosting the Tcl integration components.
+    /// </summary>
+    [ObjectId("2e8eae65-3e12-4eb9-8695-c871cc23a57a")]
+    public static class NativePackage
+    {
+        #region Private Constants
+        //
+        // NOTE: This is the name of the native command in the Tcl interpreter
+        //       that will be bridged to the TclTk interpreter (i.e. the native
+        //       endpoint).
+        //
+        // HACK: This is purposely not read-only.
+        //
+        /// <summary>
+        /// The name of the native command in the Tcl interpreter that will be
+        /// bridged to the TclTk interpreter (i.e. the native endpoint).
+        /// </summary>
+        private static string nativeCommandName =
+            GlobalState.GetPackageNameNoCase();
+
+        //
+        // NOTE: This is the name of the managed command in the TclTk
+        //       interpreter that will be bridged to the Tcl interpreter
+        //       (i.e. the managed endpoint).
+        //
+        // HACK: This is purposely not read-only.
+        //
+        /// <summary>
+        /// The name of the managed command in the TclTk interpreter that will
+        /// be bridged to the Tcl interpreter (i.e. the managed endpoint).
+        /// </summary>
+        private static string managedCommandName =
+            ScriptOps.TypeNameToEntityName(typeof(_Commands.Eval));
+
+        //
+        // NOTE: These name prefixes are used when building the script-visible
+        //       names for the Tcl interpreters used by this class.  Also, see
+        //       the constants tclParentInterpPrefix, tclSafeInterpPrefix, and
+        //       tclInterpPrefix in the Interpreter class.
+        //
+        /// <summary>
+        /// The name prefix used when building the script-visible name for a
+        /// parent (unsafe) native Tcl interpreter used by this class.
+        /// </summary>
+        private const string tclNativeParentInterpPrefix = "nativeParentInterp";
+        /// <summary>
+        /// The name prefix used when building the script-visible name for a
+        /// "safe" parent native Tcl interpreter used by this class.
+        /// </summary>
+        private const string tclNativeSafeParentInterpPrefix = "nativeSafeParentInterp";
+        /// <summary>
+        /// The name prefix used when building the script-visible name for a
+        /// (non-parent, unsafe) native Tcl interpreter used by this class.
+        /// </summary>
+        private const string tclNativeInterpPrefix = "nativeInterp";
+        /// <summary>
+        /// The name prefix used when building the script-visible name for a
+        /// "safe" (non-parent) native Tcl interpreter used by this class.
+        /// </summary>
+        private const string tclNativeSafeInterpPrefix = "nativeSafeInterp";
+
+        //
+        // NOTE: In the argument string passed from native code, we need at
+        //       least the module handle, the Tcl interpreter pointer, and the
+        //       Tcl interpreter safety indicator.
+        //
+        /// <summary>
+        /// The minimum number of arguments required in the argument string
+        /// passed from native code when using the original (revision one)
+        /// protocol (i.e. the protocol identifier, the module handle, the Tcl
+        /// interpreter pointer, and the Tcl interpreter safety indicator).
+        /// </summary>
+        private const int MinimumArgumentCountV1R1 = 4;
+        /// <summary>
+        /// The minimum number of arguments required in the argument string
+        /// passed from native code when using the revision two protocol (i.e.
+        /// the revision one arguments plus the Tcl C API stubs structure
+        /// pointer and the TclTk isolated interpreter indicator).
+        /// </summary>
+        private const int MinimumArgumentCountV1R2 = MinimumArgumentCountV1R1 + 2;
+
+        //
+        // NOTE: The possible protocol identifier strings that we should expect
+        //       in the argument string passed from native code.
+        //
+        // HACK: These are purposely not read-only.
+        //
+        /// <summary>
+        /// The legacy protocol identifier string expected in the argument
+        /// string passed from native code.
+        /// </summary>
+        private static string ProtocolIdV1R0 = "Garuda_v1.0"; /* LEGACY */
+        /// <summary>
+        /// The revision one protocol identifier string expected in the argument
+        /// string passed from native code.
+        /// </summary>
+        private static string ProtocolIdV1R1 = "Garuda_v1.0_r1.0";
+        /// <summary>
+        /// The revision two protocol identifier string expected in the argument
+        /// string passed from native code.
+        /// </summary>
+        private static string ProtocolIdV1R2 = "Garuda_v1.0_r2.0";
+
+        //
+        // NOTE: These are the error messages returned when the string argument
+        //       cannot be parsed properly according to the selected protocol
+        //       version (i.e. not a list, not enough sub-arguments, etc).
+        //
+        /// <summary>
+        /// The error message format string returned when the string argument
+        /// cannot be parsed properly according to the revision one protocol.
+        /// </summary>
+        private const string ParseArgumentErrorV1R1 = "could not parse raw " +
+            "argument string \"{0}\" ({1}), expected at least [{2} <IntPtr> " +
+            "<IntPtr> <Boolean>]: {3}";
+
+        /// <summary>
+        /// The error message format string returned when the string argument
+        /// cannot be parsed properly according to the revision two protocol.
+        /// </summary>
+        private const string ParseArgumentErrorV1R2 = "could not parse raw " +
+            "argument string \"{0}\" ({1}), expected at least [{2} <IntPtr> " +
+            "<IntPtr> <IntPtr> <Boolean> <Boolean>]: {3}";
+
+        //
+        // NOTE: This is the error message returned when the "safe" mode of the
+        //       TclTk interpreter is unsuitable for the "safe" mode of the Tcl
+        //       interpreter.
+        //
+        /// <summary>
+        /// The error message format string returned when the "safe" mode of
+        /// the TclTk interpreter is unsuitable for the "safe" mode of the Tcl
+        /// interpreter.
+        /// </summary>
+        private const string SafeUnsafeError = "cannot use safe Tcl " +
+            "interpreter {0} with unsafe TclTk interpreter {1}";
+
+        //
+        // NOTE: This is the error message returned when the Tcl interpreter
+        //       has already been attached to the bridge.
+        //
+        /// <summary>
+        /// The error message format string returned when the Tcl interpreter
+        /// has already been attached to the bridge.
+        /// </summary>
+        private const string AlreadyAttachedError = "cannot attach Tcl " +
+            "interpreter {0} to TclTk interpreter {1}, already attached";
+
+        //
+        // NOTE: This is the error message returned when the Tcl interpreter
+        //       cannot be detached from the bridge.
+        //
+        /// <summary>
+        /// The error message format string returned when the Tcl interpreter
+        /// cannot be detached from the bridge.
+        /// </summary>
+        private const string CouldNotDetachError = "could not detach Tcl " +
+            "interpreter {0} from TclTk interpreter {1}";
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////
+
+        #region Private Data
+        //
+        // NOTE: This object is used with the lock statement to protect
+        //       access to the other static fields.
+        //
+        /// <summary>
+        /// The object used with the lock statement to protect access to the
+        /// other static fields of this class.
+        /// </summary>
+        private static readonly object syncRoot = new object();
+
+        //
+        // NOTE: This is the number of outstanding method calls into methods
+        //       that are called from native code (e.g. "Startup", "Control",
+        //       "Detach", and "Shutdown").  All of these methods are public.
+        //
+        /// <summary>
+        /// The number of outstanding method calls into the methods of this
+        /// class that are called from native code (e.g. "Startup", "Control",
+        /// "Detach", and "Shutdown").
+        /// </summary>
+        private static int activeCount;
+
+        //
+        // NOTE: The TclTk interpreters holding the Tcl integration components
+        //       created and used by this class.
+        //
+        /// <summary>
+        /// The TclTk interpreters holding the Tcl integration components created
+        /// and used by this class, keyed by the associated native Tcl
+        /// interpreter pointer.
+        /// </summary>
+        private static IntPtrInterpreterDictionary interpreters;
+
+        //
+        // NOTE: The list of Tcl interpreters we know originated outside the
+        //       direct control of TclTk (i.e. we should not try to delete
+        //       them).
+        //
+        /// <summary>
+        /// The native Tcl interpreters known to have originated outside the
+        /// direct control of TclTk (i.e. those that should not be deleted),
+        /// keyed by their script-visible names.
+        /// </summary>
+        private static IntPtrDictionary tclInterps = null;
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////
+
+        #region Non-Public Methods
+        #region Private Tcl Interpreter Management Methods
+        /// <summary>
+        /// This method returns the name prefix to use when building the
+        /// script-visible name for a native Tcl interpreter.
+        /// </summary>
+        /// <param name="parent">
+        /// Non-zero if the prefix is for a parent native Tcl interpreter.
+        /// </param>
+        /// <param name="safe">
+        /// Non-zero if the prefix is for a "safe" native Tcl interpreter.
+        /// </param>
+        /// <returns>
+        /// The name prefix appropriate for the specified kind of native Tcl
+        /// interpreter.
+        /// </returns>
+        private static string GetTclInterpreterPrefix(
+            bool parent,
+            bool safe
+            )
+        {
+            if (parent)
+            {
+                return safe ? tclNativeSafeParentInterpPrefix :
+                    tclNativeParentInterpPrefix;
+            }
+            else
+            {
+                return safe ? tclNativeSafeInterpPrefix :
+                    tclNativeInterpPrefix;
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method builds a unique script-visible name for a native Tcl
+        /// interpreter.
+        /// </summary>
+        /// <param name="isolated">
+        /// Non-zero if the native Tcl interpreter is using an isolated TclTk
+        /// interpreter.
+        /// </param>
+        /// <param name="safe">
+        /// Non-zero if the native Tcl interpreter is "safe".
+        /// </param>
+        /// <returns>
+        /// The newly built, unique name for the native Tcl interpreter.
+        /// </returns>
+        private static string GetTclInterpreterName(
+            bool isolated,
+            bool safe
+            )
+        {
+            lock (syncRoot) /* TRANSACTIONAL */
+            {
+                string prefix = GetTclInterpreterPrefix(
+                    isolated || (tclInterps.Count == 0), safe);
+
+                return FormatOps.Id(prefix, null, GlobalState.NextId());
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method builds the name used to track the Tcl bridge associated
+        /// with a native Tcl interpreter and command.
+        /// </summary>
+        /// <param name="interpName">
+        /// The script-visible name of the native Tcl interpreter.
+        /// </param>
+        /// <param name="commandName">
+        /// The name of the bridged native command.
+        /// </param>
+        /// <returns>
+        /// The name to use for the Tcl bridge.
+        /// </returns>
+        private static string GetTclBridgeName(
+            string interpName,
+            string commandName
+            )
+        {
+            return FormatOps.TclBridgeName(interpName, commandName);
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether there are any native Tcl interpreters
+        /// being tracked by this class.
+        /// </summary>
+        /// <param name="validate">
+        /// Non-zero to also verify that at least one tracked native Tcl
+        /// interpreter is valid.
+        /// </param>
+        /// <returns>
+        /// True if there are (valid) native Tcl interpreters available;
+        /// otherwise, false.
+        /// </returns>
+        private static bool HasTclInterpreters(
+            bool validate
+            )
+        {
+            Result error = null;
+
+            return HasTclInterpreters(validate, ref error);
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether there are any native Tcl interpreters
+        /// being tracked by this class.
+        /// </summary>
+        /// <param name="validate">
+        /// Non-zero to also verify that at least one tracked native Tcl
+        /// interpreter is valid.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, this parameter will be modified to contain an
+        /// appropriate error message.
+        /// </param>
+        /// <returns>
+        /// True if there are (valid) native Tcl interpreters available;
+        /// otherwise, false.
+        /// </returns>
+        private static bool HasTclInterpreters(
+            bool validate,
+            ref Result error
+            )
+        {
+            lock (syncRoot) /* TRANSACTIONAL */
+            {
+                bool result = (tclInterps != null);
+
+                if (!result)
+                    error = "no Tcl interpreters available";
+
+                if (result && validate)
+                {
+                    int count = 0;
+
+                    foreach (KeyValuePair<string, IntPtr> pair in
+                            tclInterps) /* O(N) */
+                    {
+                        //
+                        // TODO: Also check if deleted here?
+                        //
+                        if (pair.Value != IntPtr.Zero)
+                            count++;
+                    }
+
+                    result = (count > 0);
+
+                    if (!result)
+                        error = "no valid Tcl interpreters available";
+                }
+
+                return result;
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether there are any TclTk interpreters
+        /// being tracked by this class.
+        /// </summary>
+        /// <param name="validate">
+        /// Non-zero to also verify that at least one tracked TclTk interpreter
+        /// is valid.
+        /// </param>
+        /// <returns>
+        /// True if there are (valid) TclTk interpreters available; otherwise,
+        /// false.
+        /// </returns>
+        private static bool HasInterpreters(
+            bool validate
+            )
+        {
+            Result error = null;
+
+            return HasInterpreters(validate, ref error);
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines whether there are any TclTk interpreters
+        /// being tracked by this class.
+        /// </summary>
+        /// <param name="validate">
+        /// Non-zero to also verify that at least one tracked TclTk interpreter
+        /// is valid.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, this parameter will be modified to contain an
+        /// appropriate error message.
+        /// </param>
+        /// <returns>
+        /// True if there are (valid) TclTk interpreters available; otherwise,
+        /// false.
+        /// </returns>
+        private static bool HasInterpreters(
+            bool validate,
+            ref Result error
+            )
+        {
+            lock (syncRoot) /* TRANSACTIONAL */
+            {
+                bool result = (interpreters != null);
+
+                if (!result)
+                    error = "no TclTk interpreters available";
+
+                if (result && validate)
+                {
+                    int count = 0;
+
+                    foreach (KeyValuePair<IntPtr, Interpreter> pair in
+                            interpreters) /* O(N) */
+                    {
+                        //
+                        // TODO: Also check if disposed here?
+                        //
+                        if (pair.Value != null)
+                            count++;
+                    }
+
+                    result = (count > 0);
+
+                    if (!result)
+                        error = "no valid TclTk interpreters available";
+                }
+
+                return result;
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: For use by the DebugTclInterpreters method only.
+        //
+        /// <summary>
+        /// This method searches the supplied collection of TclTk interpreters
+        /// for the one that owns the specified native Tcl interpreter.
+        /// </summary>
+        /// <param name="interpreters">
+        /// The collection of TclTk interpreters to search.
+        /// </param>
+        /// <param name="interp">
+        /// The native Tcl interpreter to search for.
+        /// </param>
+        /// <param name="parentInterp">
+        /// Upon success, this parameter will be modified to contain the parent
+        /// native Tcl interpreter pointer associated with the owning TclTk
+        /// interpreter.
+        /// </param>
+        /// <param name="interpreter">
+        /// Upon success, this parameter will be modified to contain the TclTk
+        /// interpreter that owns the specified native Tcl interpreter.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> if the owning TclTk interpreter was
+        /// found; otherwise, <see cref="ReturnCode.Error" />.
+        /// </returns>
+        private static ReturnCode GetInterpreter(
+            IntPtrInterpreterDictionary interpreters,
+            IntPtr interp,
+            ref IntPtr parentInterp,
+            ref Interpreter interpreter
+            )
+        {
+            if (interpreters == null)
+                return ReturnCode.Error;
+
+            ///////////////////////////////////////////////////////////////
+
+            Interpreter localInterpreter = null;
+            IntPtr localParentInterp = IntPtr.Zero;
+            bool found = false;
+
+            foreach (KeyValuePair<IntPtr, Interpreter> pair in
+                    interpreters) /* O(N) */
+            {
+                localInterpreter = pair.Value;
+
+                if (TclApi.HasInterp(localInterpreter, null, interp))
+                {
+                    localParentInterp = pair.Key;
+                    found = true;
+
+                    break;
+                }
+            }
+
+            if (found)
+            {
+                parentInterp = localParentInterp;
+                interpreter = localInterpreter;
+
+                return ReturnCode.Ok;
+            }
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: For use by the DebugTclInterpreters method only.
+        //
+        /// <summary>
+        /// This method takes a snapshot of the native Tcl interpreters and
+        /// TclTk interpreters currently being tracked by this class.
+        /// </summary>
+        /// <param name="tclInterps">
+        /// Upon return, this parameter will be modified to contain a copy of
+        /// the tracked native Tcl interpreters, or null if there are none.
+        /// </param>
+        /// <param name="interpreters">
+        /// Upon return, this parameter will be modified to contain a copy of
+        /// the tracked TclTk interpreters, or null if there are none.
+        /// </param>
+        private static void SnapshotAllInterpreters(
+            out IntPtrDictionary tclInterps,
+            out IntPtrInterpreterDictionary interpreters
+            )
+        {
+            lock (syncRoot) /* TRANSACTIONAL */
+            {
+                tclInterps = null;
+
+                if (NativePackage.tclInterps != null)
+                {
+                    tclInterps = new IntPtrDictionary(
+                        NativePackage.tclInterps);
+                }
+
+                interpreters = null;
+
+                if (NativePackage.interpreters != null)
+                {
+                    interpreters = new IntPtrInterpreterDictionary(
+                        NativePackage.interpreters);
+                }
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // TODO: Promote to RuntimeOps?
+        //
+        /// <summary>
+        /// This method builds a display string representing the number of
+        /// elements in a collection, with an optional prefix.
+        /// </summary>
+        /// <param name="collection">
+        /// The collection whose element count is to be formatted.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="prefix">
+        /// The optional prefix to prepend to the formatted count.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="default">
+        /// The string to return when the collection is null.
+        /// </param>
+        /// <returns>
+        /// The formatted count string, or the default value when the
+        /// collection is null.
+        /// </returns>
+        private static string GetCountString(
+            ICollection collection,
+            string prefix,
+            string @default
+            )
+        {
+            if (collection == null)
+                return @default;
+
+            if (String.IsNullOrEmpty(prefix))
+                return collection.Count.ToString();
+
+            return prefix + collection.Count.ToString();
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // TODO: Promote to RuntimeOps?
+        //
+        /// <summary>
+        /// This method emits a diagnostic message either by writing it to the
+        /// debug output of the specified interpreter or by adding it to the
+        /// trace log.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter to use when writing the message, if applicable.
+        /// This parameter may be null.
+        /// </param>
+        /// <param name="message">
+        /// The diagnostic message to emit.
+        /// </param>
+        /// <param name="category">
+        /// The category to associate with the message when adding it to the
+        /// trace log.
+        /// </param>
+        /// <param name="priority">
+        /// The priority to associate with the message when adding it to the
+        /// trace log.
+        /// </param>
+        /// <param name="write">
+        /// Non-zero to write the message to the debug output of the
+        /// interpreter; zero to add it to the trace log instead.
+        /// </param>
+        private static void DebugWriteOrTrace(
+            Interpreter interpreter,
+            string message,
+            string category,
+            TracePriority priority,
+            bool write
+            )
+        {
+            if (write)
+                DebugOps.WriteTo(interpreter, message, true);
+            else
+                TraceOps.DebugTrace(message, category, priority);
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method emits diagnostic information about all the native Tcl
+        /// interpreters and TclTk interpreters currently being tracked by this
+        /// class.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter to use when writing the messages, if applicable.
+        /// This parameter may be null.
+        /// </param>
+        /// <param name="prefix">
+        /// The optional prefix to include in each emitted message; a non-null
+        /// value also indicates that the call originated from one of the entry
+        /// point methods.  This parameter may be null.
+        /// </param>
+        /// <param name="write">
+        /// Non-zero to write the messages to the debug output of the
+        /// interpreter; zero to add them to the trace log instead.
+        /// </param>
+        public static void DebugTclInterpreters(
+            Interpreter interpreter,
+            string prefix,
+            bool write
+            )
+        {
+            //
+            // NOTE: When tracing from the entry point methods, make sure
+            //       the appropriate method name prefixes are added.  All
+            //       the entry points pass non-null for the prefix string;
+            //       therefore, use that as an indicator.
+            //
+            if (!String.IsNullOrEmpty(prefix))
+                prefix = "DebugTclInterpreters: " + prefix + ", ";
+
+            ///////////////////////////////////////////////////////////////////
+
+            IntPtrDictionary tclInterps;
+            IntPtrInterpreterDictionary interpreters;
+
+            SnapshotAllInterpreters(out tclInterps, out interpreters);
+
+            ///////////////////////////////////////////////////////////////////
+
+            if ((tclInterps == null) || (tclInterps.Count == 0))
+            {
+                DebugWriteOrTrace(interpreter, String.Format(
+                    "{0}{1} Tcl interpreters, {2} TclTk interpreters",
+                    prefix, GetCountString(tclInterps, "have ", "no"),
+                    GetCountString(interpreters, "have ", "no")),
+                    typeof(NativePackage).Name, TracePriority.NativeDebug,
+                    write);
+
+                return;
+            }
+
+            if ((interpreters == null) || (interpreters.Count == 0))
+            {
+                DebugWriteOrTrace(interpreter, String.Format(
+                    "{0}{1} TclTk interpreters, {2} Tcl interpreters",
+                    prefix, GetCountString(interpreters, "have ", "no"),
+                    GetCountString(tclInterps, "have ", "no")),
+                    typeof(NativePackage).Name, TracePriority.NativeDebug,
+                    write);
+
+                return;
+            }
+
+            ///////////////////////////////////////////////////////////////////
+
+            foreach (KeyValuePair<string, IntPtr> pair in
+                    tclInterps) /* O(N) */
+            {
+                IntPtr interp = pair.Value;
+                IntPtr parentInterp = IntPtr.Zero;
+                Interpreter localInterpreter = null;
+
+                if (GetInterpreter(
+                        interpreters, interp, ref parentInterp,
+                        ref localInterpreter) == ReturnCode.Ok)
+                {
+                    DebugWriteOrTrace(interpreter, String.Format(
+                        "{0}Tcl interpreter {1} with name {2} held " +
+                        "by TclTk interpreter {3} via parent Tcl " +
+                        "interpreter {4}", prefix, interp,
+                        FormatOps.WrapOrNull(pair.Key),
+                        FormatOps.InterpreterNoThrow(localInterpreter),
+                        parentInterp), typeof(NativePackage).Name,
+                        TracePriority.NativeDebug, write);
+                }
+                else
+                {
+                    DebugWriteOrTrace(interpreter, String.Format(
+                        "{0}Tcl interpreter {1} with name {2} is " +
+                        "not held by any TclTk interpreter", prefix,
+                        interp, FormatOps.WrapOrNull(pair.Key)),
+                        typeof(NativePackage).Name,
+                        TracePriority.NativeDebug, write);
+                }
+            }
+        }
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////
+
+        #region Internal Tcl Interpreter Management Methods
+        //
+        // NOTE: Used by the CheckInterp method of the TclApi class.
+        //
+        /// <summary>
+        /// This method attempts to determine the managed thread identifier
+        /// associated with the TclTk interpreter that owns the specified native
+        /// Tcl interpreter.
+        /// </summary>
+        /// <param name="interp">
+        /// The native Tcl interpreter to look up.
+        /// </param>
+        /// <param name="threadId">
+        /// Upon success, this parameter will be modified to contain the thread
+        /// identifier associated with the owning TclTk interpreter.
+        /// </param>
+        /// <returns>
+        /// True if a valid thread identifier was found; otherwise, false.
+        /// </returns>
+        internal static bool FindTclInterpreterThreadId(
+            IntPtr interp,
+            ref long threadId
+            )
+        {
+            bool locked = false;
+
+            try
+            {
+                TryLock(ref locked); /* TRANSACTIONAL */
+
+                if (locked)
+                {
+                    if ((tclInterps != null) &&
+                        tclInterps.ContainsValue(interp) /* O(N) */)
+                    {
+                        //
+                        // NOTE: GetInterpreter() call OK, local value is
+                        //       not used elsewhere.
+                        //
+                        // NOTE: GetPrimaryInterpreter() call OK, local
+                        //       value is not used elsewhere.
+                        //
+                        Interpreter interpreter = GetInterpreter(interp);
+
+                        if (interpreter == null)
+                            interpreter = GetPrimaryInterpreter();
+
+                        if (interpreter != null)
+                        {
+                            long localThreadId = interpreter.GetTclThreadId();
+
+                            if (localThreadId != 0)
+                            {
+                                threadId = localThreadId;
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                return false;
+            }
+            finally
+            {
+                ExitLock(ref locked); /* TRANSACTIONAL */
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: Used by the DoOneEvent method of the TclWrapper class and by
+        //       the DisposeTcl method of the Interpreter class.
+        //
+        /// <summary>
+        /// This method determines whether any native Tcl interpreter is
+        /// currently active, either because there are outstanding public method
+        /// calls into this class or because both native Tcl interpreters and
+        /// TclTk interpreters are being tracked.
+        /// </summary>
+        /// <returns>
+        /// True if a native Tcl interpreter is active; otherwise, false.
+        /// </returns>
+        internal static bool IsTclInterpreterActive()
+        {
+            //
+            // BUGFIX: If there are any active public method calls into this
+            //         class, some native Tcl interpreter must be active.
+            //
+            if (Interlocked.CompareExchange(ref activeCount, 0, 0) > 0)
+                return true;
+
+            lock (syncRoot) /* TRANSACTIONAL */
+            {
+                return HasInterpreters(true) && HasTclInterpreters(true);
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: Used indirectly by the Execute method of the _Commands.Tcl
+        //       class to help implement the [tcl primary] sub-command.
+        //
+        /// <summary>
+        /// This method locates the parent native Tcl interpreter associated
+        /// with the specified TclTk interpreter, if any.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The TclTk interpreter whose parent native Tcl interpreter is to be
+        /// located.  This parameter may be null.
+        /// </param>
+        /// <param name="name">
+        /// Upon success, this parameter will be modified to contain the
+        /// script-visible name of the parent native Tcl interpreter.
+        /// </param>
+        /// <param name="interp">
+        /// Upon success, this parameter will be modified to contain the parent
+        /// native Tcl interpreter pointer.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, this parameter will be modified to contain an
+        /// appropriate error message.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> if the parent native Tcl interpreter
+        /// was found; otherwise, <see cref="ReturnCode.Error" />.
+        /// </returns>
+        internal static ReturnCode GetParentTclInterpreter(
+            Interpreter interpreter,
+            ref string name,
+            ref IntPtr interp,
+            ref Result error
+            )
+        {
+            lock (syncRoot) /* TRANSACTIONAL */
+            {
+                if (HasTclInterpreters(false, ref error))
+                {
+                    //
+                    // HACK: Use the convention that we always prefix the
+                    //       parent Tcl interpreter with a specially formatted
+                    //       name in order to find it (we cannot simply use the
+                    //       Tcl interpreter at index zero because the Tcl
+                    //       interpreters are maintained in a dictionary).
+                    //
+                    string pattern = FormatOps.Id(
+                        tclNativeParentInterpPrefix, null,
+                        Characters.Asterisk.ToString());
+
+                    string safePattern = FormatOps.Id(
+                        tclNativeSafeParentInterpPrefix, null,
+                        Characters.Asterisk.ToString());
+
+                    //
+                    // NOTE: Search all the Tcl interpreters in this interpreter
+                    //       for the parent Tcl interp stopping as soon as we
+                    //       find a valid one (there should only be one valid
+                    //       parent Tcl interpreter per interpreter at any given
+                    //       time).
+                    //
+                    string key = null;
+                    IntPtr value = IntPtr.Zero;
+
+                    foreach (KeyValuePair<string, IntPtr> pair in
+                            tclInterps) /* O(N) */
+                    {
+                        //
+                        // NOTE: First, make sure the native Tcl interpreter
+                        //       belongs to the specified TclTk interpreter,
+                        //       if any.
+                        //
+                        // NOTE: GetInterpreter() call OK, local value is
+                        //       not used elsewhere.
+                        //
+                        // NOTE: GetPrimaryInterpreter() call OK, local
+                        //       value is not used elsewhere.
+                        //
+                        if ((interpreter != null) &&
+                            !Object.ReferenceEquals(
+                                GetInterpreter(pair.Value), interpreter) &&
+                            !Object.ReferenceEquals(
+                                GetPrimaryInterpreter(), interpreter))
+                        {
+                            continue;
+                        }
+
+                        //
+                        // NOTE: Second, make sure it is a parent (or "safe"
+                        //       parent) Tcl interpreter.  Hard-coded match
+                        //       mode is OK here.
+                        //
+                        if ((StringOps.Match(
+                                interpreter, MatchMode.Glob, pair.Key,
+                                pattern, false) ||
+                            StringOps.Match(
+                                interpreter, MatchMode.Glob, pair.Key,
+                                safePattern, false)) &&
+                            (pair.Value != IntPtr.Zero))
+                        {
+                            key = pair.Key;
+                            value = pair.Value;
+
+                            break;
+                        }
+                    }
+
+                    //
+                    // NOTE: Did we find the handle for the parent Tcl
+                    //       interpreter?
+                    //
+                    if (key != null)
+                    {
+                        name = key;
+                        interp = value;
+
+                        return ReturnCode.Ok;
+                    }
+                    else
+                    {
+                        error = "Tcl parent interpreter is not available";
+                    }
+                }
+            }
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: Used by the DeleteTclInterpreter and DisposeTcl methods of
+        //       the Interpreter class.
+        //
+        /// <summary>
+        /// This method determines whether the specified native Tcl interpreter
+        /// should be deleted by TclTk.  A native Tcl interpreter that is being
+        /// tracked by this class is owned externally and must not be deleted.
+        /// </summary>
+        /// <param name="interpName">
+        /// The script-visible name of the native Tcl interpreter.
+        /// </param>
+        /// <param name="interp">
+        /// The native Tcl interpreter to check.
+        /// </param>
+        /// <returns>
+        /// True if the native Tcl interpreter should be deleted; otherwise,
+        /// false.
+        /// </returns>
+        internal static bool ShouldDeleteTclInterpreter(
+            string interpName,
+            IntPtr interp
+            )
+        {
+            //
+            // NOTE: Return true if we are not aware of the Tcl interpreter;
+            //       otherwise, we must return false because it is not
+            //       actually owned by TclTk and we should not delete it.
+            //
+            lock (syncRoot) /* TRANSACTIONAL */
+            {
+                return (tclInterps == null) ||
+                    !tclInterps.ContainsValue(interp); /* O(N) */
+            }
+        }
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////
+
+        #region Private TclTk Interpreter Management Methods
+        //
+        // WARNING: Normally, this method should not be called directly.
+        //          All exceptions to this rule should be marked in the
+        //          neighboring source code comments.
+        //
+        /// <summary>
+        /// This method looks up the TclTk interpreter associated with the
+        /// specified native Tcl interpreter pointer.
+        /// </summary>
+        /// <param name="interp">
+        /// The native Tcl interpreter pointer to look up.
+        /// </param>
+        /// <returns>
+        /// The associated TclTk interpreter, or null if none was found.
+        /// </returns>
+        private static Interpreter GetInterpreter(
+            IntPtr interp
+            )
+        {
+            lock (syncRoot) /* TRANSACTIONAL */
+            {
+                Interpreter interpreter = null;
+
+                if ((interpreters != null) &&
+                    interpreters.TryGetValue(interp, out interpreter))
+                {
+                    return interpreter;
+                }
+
+                TraceOps.DebugTrace(String.Format(
+                    "GetInterpreter: failed, interp = {0}, " +
+                    "interpreter = {1}, {2}",
+                    interp, FormatOps.InterpreterNoThrow(interpreter),
+                    (interpreters != null) ? "not found" : "unavailable"),
+                    typeof(NativePackage).Name,
+                    TracePriority.NativeError);
+
+                return null;
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // WARNING: For use by GetPrimaryOrIsolatedInterpreter() only.
+        //          All exceptions to this rule *MUST* be marked in the
+        //          neighboring source code comments.
+        //
+        /// <summary>
+        /// This method returns the "primary" TclTk interpreter, which is the
+        /// one shared by all non-isolated native Tcl interpreters.
+        /// </summary>
+        /// <returns>
+        /// The primary TclTk interpreter, or null if none is available.
+        /// </returns>
+        private static Interpreter GetPrimaryInterpreter()
+        {
+            //
+            // NOTE: GetInterpreter() call OK, the GetPrimaryInterpreter()
+            //       method is trusted implicitly and should be used with
+            //       great care.
+            //
+            return GetInterpreter(IntPtr.Zero);
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method returns the TclTk interpreter to use for the specified
+        /// native Tcl interpreter, taking into account whether isolated mode is
+        /// in effect.
+        /// </summary>
+        /// <param name="interp">
+        /// The native Tcl interpreter pointer used to look up the isolated
+        /// TclTk interpreter, when applicable.
+        /// </param>
+        /// <param name="isolated">
+        /// Non-zero to return the isolated TclTk interpreter associated with
+        /// the native Tcl interpreter; zero to return the primary TclTk
+        /// interpreter.
+        /// </param>
+        /// <returns>
+        /// The appropriate TclTk interpreter, or null if none is available.
+        /// </returns>
+        private static Interpreter GetPrimaryOrIsolatedInterpreter(
+            IntPtr interp,
+            bool isolated
+            )
+        {
+            //
+            // NOTE: GetInterpreter() call OK, the purpose of this method
+            //       is to return it, if necessary.
+            //
+            // NOTE: GetPrimaryInterpreter() call OK, the purpose of this
+            //       method is to return it, if necessary.
+            //
+            return isolated ?
+                GetInterpreter(interp) : GetPrimaryInterpreter();
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method creates a new TclTk interpreter for use as a host for
+        /// the native Tcl integration components, applying the default
+        /// pre-initialize script when none is supplied.
+        /// </summary>
+        /// <param name="args">
+        /// The arguments to pass to the new interpreter.  This parameter may be
+        /// null.
+        /// </param>
+        /// <param name="createFlags">
+        /// The flags that control how the interpreter is created.
+        /// </param>
+        /// <param name="hostCreateFlags">
+        /// The flags that control how the interpreter host is created.
+        /// </param>
+        /// <param name="initializeFlags">
+        /// The flags that control how the interpreter is initialized.
+        /// </param>
+        /// <param name="scriptFlags">
+        /// The flags that control how scripts are located during interpreter
+        /// initialization.
+        /// </param>
+        /// <param name="findFlags">
+        /// The flags that control how files are located during interpreter
+        /// initialization.
+        /// </param>
+        /// <param name="loadFlags">
+        /// The flags that control how the script library is loaded during
+        /// interpreter initialization.
+        /// </param>
+        /// <param name="text">
+        /// The pre-initialize script to evaluate; when null, the configured
+        /// default pre-initialize script is used.  This parameter may be null.
+        /// </param>
+        /// <param name="libraryPath">
+        /// The script library path to use.  This parameter may be null.
+        /// </param>
+        /// <param name="result">
+        /// Upon failure, this parameter will be modified to contain an
+        /// appropriate error message.
+        /// </param>
+        /// <returns>
+        /// The newly created TclTk interpreter, or null on failure.
+        /// </returns>
+        private static Interpreter CreateInterpreter(
+            IEnumerable<string> args,
+            CreateFlags createFlags,
+            HostCreateFlags hostCreateFlags,
+            InitializeFlags initializeFlags,
+            ScriptFlags scriptFlags,
+            FindFlags findFlags,
+            LoadFlags loadFlags,
+            string text,
+            string libraryPath,
+            ref Result result
+            )
+        {
+            if (text == null)
+            {
+                text = GlobalConfiguration.GetValue(
+                    EnvVars.NativePackagePreInitialize,
+                    ConfigurationFlags.NativePackage);
+            }
+
+            return Interpreter.Create(
+                args, createFlags, hostCreateFlags, initializeFlags,
+                scriptFlags, findFlags, loadFlags, text, libraryPath,
+                ref result);
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method adds an TclTk interpreter to the collection tracked by
+        /// this class, keyed by the associated native Tcl interpreter pointer.
+        /// </summary>
+        /// <param name="interp">
+        /// The native Tcl interpreter pointer to use as the key.
+        /// </param>
+        /// <param name="interpreter">
+        /// The TclTk interpreter to add.
+        /// </param>
+        /// <returns>
+        /// True if the TclTk interpreter was added; false if an interpreter
+        /// with the same key already exists.
+        /// </returns>
+        private static bool AddInterpreter(
+            IntPtr interp,
+            Interpreter interpreter
+            )
+        {
+            lock (syncRoot) /* TRANSACTIONAL */
+            {
+                if (interpreters == null)
+                    interpreters = new IntPtrInterpreterDictionary();
+
+                if (interpreters.ContainsKey(interp))
+                {
+                    TraceOps.DebugTrace(String.Format(
+                        "AddInterpreter: failed, interp = {0}, " +
+                        "interpreter = {1}, already exists",
+                        interp, FormatOps.InterpreterNoThrow(interpreter)),
+                        typeof(NativePackage).Name,
+                        TracePriority.NativeError);
+
+                    return false;
+                }
+
+                interpreters.Add(interp, interpreter);
+                return true;
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method removes an TclTk interpreter from the collection tracked
+        /// by this class.
+        /// </summary>
+        /// <param name="interp">
+        /// The native Tcl interpreter pointer used as the key.
+        /// </param>
+        /// <param name="interpreter">
+        /// The TclTk interpreter expected to be associated with the key; this
+        /// is verified in debug or trace builds.
+        /// </param>
+        /// <returns>
+        /// True if the TclTk interpreter was removed; otherwise, false.
+        /// </returns>
+        private static bool RemoveInterpreter(
+            IntPtr interp,
+            Interpreter interpreter
+            )
+        {
+            lock (syncRoot) /* TRANSACTIONAL */
+            {
+                if (interpreters == null)
+                    interpreters = new IntPtrInterpreterDictionary();
+
+#if DEBUG || FORCE_TRACE
+                Interpreter localInterpreter;
+
+                if (!interpreters.TryGetValue(interp, out localInterpreter))
+                {
+                    TraceOps.DebugTrace(String.Format(
+                        "RemoveInterpreter: failed, interp = {0}, " +
+                        "interpreter = {1}, does not exist",
+                        interp, FormatOps.InterpreterNoThrow(interpreter)),
+                        typeof(NativePackage).Name,
+                        TracePriority.NativeError);
+
+                    return false;
+                }
+
+                if (!Object.ReferenceEquals(localInterpreter, interpreter))
+                {
+                    TraceOps.DebugTrace(String.Format(
+                        "RemoveInterpreter: failed, interp = {0}, " +
+                        "interpreter = {1}, localInterpreter = {2}, " +
+                        "mismatched", interp, FormatOps.InterpreterNoThrow(
+                        interpreter), FormatOps.InterpreterNoThrow(
+                        localInterpreter)), typeof(NativePackage).Name,
+                        TracePriority.NativeError);
+
+                    return false;
+                }
+#endif
+
+                return interpreters.Remove(interp);
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method disposes of an TclTk interpreter and removes it from the
+        /// collection tracked by this class.
+        /// </summary>
+        /// <param name="interp">
+        /// The native Tcl interpreter pointer used as the key.
+        /// </param>
+        /// <param name="interpreter">
+        /// The TclTk interpreter to dispose.  This parameter may be null.
+        /// </param>
+        /// <returns>
+        /// True if the TclTk interpreter was disposed and removed; otherwise,
+        /// false.
+        /// </returns>
+        private static bool DisposeInterpreter(
+            IntPtr interp,
+            Interpreter interpreter
+            )
+        {
+            bool result = false;
+
+            TraceOps.DebugTrace(String.Format(
+                "DisposeInterpreter: entered, interp = {0}, " +
+                "interpreter = {1}", interp,
+                FormatOps.InterpreterNoThrow(interpreter)),
+                typeof(NativePackage).Name,
+                TracePriority.NativeDebug);
+
+            if (interpreter != null)
+            {
+                //
+                // NOTE: Attempt to dispose of the TclTk interpreter
+                //       now.  In theory, this may throw exceptions;
+                //       however, since it should not attempt to
+                //       unload Tcl, so that is unlikely.
+                //
+                interpreter.Dispose(); /* throw */
+
+                //
+                // NOTE: Next, make sure the interpreter is removed
+                //       from the static dictionary for this class.
+                //
+                result = RemoveInterpreter(interp, interpreter);
+
+                //
+                // NOTE: Finally, null it out for good measure.
+                //
+                interpreter = null;
+            }
+
+            TraceOps.DebugTrace(String.Format(
+                "DisposeInterpreter: exited, interp = {0}, " +
+                "interpreter = {1}, result = {2}", interp,
+                FormatOps.InterpreterNoThrow(interpreter), result),
+                typeof(NativePackage).Name, TracePriority.NativeDebug);
+
+            return result;
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method disposes of all the TclTk interpreters tracked by this
+        /// class.
+        /// </summary>
+        /// <param name="interp">
+        /// The native Tcl interpreter pointer associated with the operation,
+        /// used for diagnostic purposes.
+        /// </param>
+        /// <returns>
+        /// The number of TclTk interpreters that were successfully disposed.
+        /// </returns>
+        private static int DisposeInterpreters(
+            IntPtr interp
+            )
+        {
+            lock (syncRoot) /* TRANSACTIONAL */
+            {
+                TraceOps.DebugTrace(String.Format(
+                    "DisposeInterpreters: entered, interp = {0}",
+                    interp), typeof(NativePackage).Name,
+                    TracePriority.NativeDebug);
+
+                int[] count = { 0, 0 };
+
+                if (interpreters != null)
+                {
+                    IntPtrInterpreterDictionary localInterpreters =
+                        interpreters.Clone() as IntPtrInterpreterDictionary;
+
+                    if (localInterpreters != null)
+                    {
+                        count[1] = localInterpreters.Count;
+
+                        foreach (KeyValuePair<IntPtr, Interpreter> pair
+                                in localInterpreters) /* O(N) */
+                        {
+                            Interpreter interpreter = pair.Value;
+
+                            try
+                            {
+                                if (DisposeInterpreter(pair.Key, interpreter))
+                                    count[0]++;
+                            }
+                            catch (Exception e)
+                            {
+                                TraceOps.DebugTrace(
+                                    e, typeof(NativePackage).Name,
+                                    TracePriority.NativeError);
+                            }
+                        }
+
+                        localInterpreters.Clear();
+                        localInterpreters = null;
+                    }
+                }
+
+                TraceOps.DebugTrace(String.Format(
+                    "DisposeInterpreters: exited, interp = {0}, " +
+                    "disposed = {1}/{2}", interp, count[0], count[1]),
+                    typeof(NativePackage).Name, TracePriority.NativeDebug);
+
+                return count[0];
+            }
+        }
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////
+
+        #region Internal State Introspection Methods
+        //
+        // NOTE: Used by the _Hosts.Default.BuildEngineInfoList method.
+        //
+        /// <summary>
+        /// This method appends diagnostic information about the native package
+        /// state (e.g. the tracked native Tcl interpreters and TclTk
+        /// interpreters) to the specified list.
+        /// </summary>
+        /// <param name="list">
+        /// The list to which the diagnostic information is appended.  This
+        /// parameter may be null.
+        /// </param>
+        /// <param name="detailFlags">
+        /// The flags that control how much detail is included.
+        /// </param>
+        internal static void AddInfo(
+            StringPairList list,
+            DetailFlags detailFlags
+            )
+        {
+            if (list == null)
+                return;
+
+            lock (syncRoot) /* TRANSACTIONAL */
+            {
+                bool empty = HostOps.HasEmptyContent(detailFlags);
+                StringPairList localList = new StringPairList();
+
+                if (empty ||
+                    ((tclInterps != null) && (tclInterps.Count > 0)))
+                {
+                    localList.Add("TclInterps", (tclInterps != null) ?
+                        tclInterps.Count.ToString() : FormatOps.DisplayNull);
+                }
+
+                if (empty ||
+                    ((interpreters != null) && (interpreters.Count > 0)))
+                {
+                    localList.Add("Interpreters", (interpreters != null) ?
+                        interpreters.Count.ToString() : FormatOps.DisplayNull);
+                }
+
+                //
+                // NOTE: GetPrimaryInterpreter() call OK, local value is not
+                //       used elsewhere.
+                //
+                Interpreter interpreter = GetPrimaryInterpreter();
+
+                HostOps.BuildInterpreterInfoList(
+                    interpreter, "Primary Native Package Interpreter",
+                    detailFlags, ref localList);
+
+                if (localList.Count > 0)
+                {
+                    list.Add((IPair<string>)null);
+                    list.Add("Native Package");
+                    list.Add((IPair<string>)null);
+                    list.Add(localList);
+                }
+            }
+        }
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////
+
+        #region Private Helper Methods
+        /// <summary>
+        /// This method attempts to acquire the lock that protects the static
+        /// data of this class, without blocking.
+        /// </summary>
+        /// <param name="locked">
+        /// Upon return, this parameter will be modified to indicate whether the
+        /// lock was successfully acquired.
+        /// </param>
+        private static void TryLock(
+            ref bool locked
+            )
+        {
+            if (syncRoot == null)
+                return;
+
+            locked = Monitor.TryEnter(syncRoot);
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method releases the lock that protects the static data of this
+        /// class, if it is currently held.
+        /// </summary>
+        /// <param name="locked">
+        /// On input, indicates whether the lock is held; upon return, this
+        /// parameter will be modified to indicate that the lock is no longer
+        /// held.
+        /// </param>
+        private static void ExitLock(
+            ref bool locked
+            )
+        {
+            if (syncRoot == null)
+                return;
+
+            if (locked)
+            {
+                Monitor.Exit(syncRoot);
+                locked = false;
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method reports a failure that cannot be communicated back to
+        /// native code by routing it through the standard complaint mechanism
+        /// of the appropriate TclTk interpreter.
+        /// </summary>
+        /// <param name="interp">
+        /// The native Tcl interpreter pointer used to look up the TclTk
+        /// interpreter, when applicable.
+        /// </param>
+        /// <param name="isolated">
+        /// Non-zero to use the isolated TclTk interpreter associated with the
+        /// native Tcl interpreter; zero to use the primary TclTk interpreter.
+        /// </param>
+        /// <param name="code">
+        /// The return code associated with the failure.
+        /// </param>
+        /// <param name="result">
+        /// The result or error message associated with the failure.
+        /// </param>
+        private static void Complain(
+            IntPtr interp,
+            bool isolated,
+            ReturnCode code,
+            Result result
+            )
+        {
+            DebugOps.Complain(
+                GetPrimaryOrIsolatedInterpreter(interp, isolated),
+                code, result);
+        }
+        #endregion
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////
+
+        #region Private Argument Handling Methods
+        /// <summary>
+        /// This method verifies that the supplied protocol identifier
+        /// represents a supported protocol version and determines whether
+        /// additional arguments should be expected.
+        /// </summary>
+        /// <param name="protocolId">
+        /// The protocol identifier string to check.
+        /// </param>
+        /// <param name="haveExtra">
+        /// Upon success, this parameter will be modified to indicate whether
+        /// the selected protocol version expects an additional Tcl C API stubs
+        /// structure pointer argument.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, this parameter will be modified to contain an
+        /// appropriate error message.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> if the protocol identifier is
+        /// supported; otherwise, <see cref="ReturnCode.Error" />.
+        /// </returns>
+        private static ReturnCode CheckProtocolId(
+            string protocolId,
+            ref bool haveExtra,
+            ref Result error
+            )
+        {
+            if (SharedStringOps.SystemEquals(protocolId, ProtocolIdV1R0) ||
+                SharedStringOps.SystemEquals(protocolId, ProtocolIdV1R1))
+            {
+                haveExtra = false;
+                return ReturnCode.Ok;
+            }
+
+            if (SharedStringOps.SystemEquals(protocolId, ProtocolIdV1R2))
+            {
+                haveExtra = true;
+                return ReturnCode.Ok;
+            }
+
+            error = String.Format(
+                "protocol mismatch, have \"{0}\" ({1}), need " +
+                "\"{2}\" ({3}), \"{4}\" ({5}), or \"{6}\" ({7})",
+                protocolId, (protocolId != null) ?
+                    protocolId.Length : Length.Invalid,
+                ProtocolIdV1R0, (ProtocolIdV1R0 != null) ?
+                    ProtocolIdV1R0.Length : Length.Invalid,
+                ProtocolIdV1R1, (ProtocolIdV1R1 != null) ?
+                    ProtocolIdV1R1.Length : Length.Invalid,
+                ProtocolIdV1R2, (ProtocolIdV1R2 != null) ?
+                    ProtocolIdV1R2.Length : Length.Invalid);
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method converts a string containing a wide integer into a
+        /// native pointer value.
+        /// </summary>
+        /// <param name="text">
+        /// The string to convert.
+        /// </param>
+        /// <param name="nonZero">
+        /// Non-zero to require that the resulting pointer value be non-zero.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, this parameter will be modified to contain an
+        /// appropriate error message.
+        /// </param>
+        /// <returns>
+        /// The converted pointer value, or IntPtr.Zero on failure (or when the
+        /// converted value is zero and a non-zero value was required).
+        /// </returns>
+        private static IntPtr StringToIntPtr(
+            string text,
+            bool nonZero,
+            ref Result error
+            )
+        {
+            long value = 0;
+
+            if (Value.GetWideInteger2(
+                    text, ValueFlags.AnyInteger, null, ref value,
+                    ref error) == ReturnCode.Ok)
+            {
+                if (nonZero && (value == 0))
+                {
+                    error = String.Format(
+                        "expected non-zero wide integer but got \"{0}\"",
+                        text);
+
+                    return IntPtr.Zero;
+                }
+
+                return new IntPtr(value);
+            }
+
+            return IntPtr.Zero;
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method parses the raw argument string passed from native code
+        /// into its component parts (e.g. the protocol identifier, module
+        /// handle, interpreter pointers, and mode indicators) according to the
+        /// selected protocol version.
+        /// </summary>
+        /// <param name="arg">
+        /// The raw argument string to parse.
+        /// </param>
+        /// <param name="protocolId">
+        /// Upon success, this parameter will be modified to contain the parsed
+        /// protocol identifier.
+        /// </param>
+        /// <param name="module">
+        /// Upon success, this parameter will be modified to contain the parsed
+        /// Tcl library module handle.
+        /// </param>
+        /// <param name="stubs">
+        /// Upon success, this parameter will be modified to contain the parsed
+        /// Tcl C API stubs structure pointer, or IntPtr.Zero when not supplied.
+        /// </param>
+        /// <param name="interp">
+        /// Upon success, this parameter will be modified to contain the parsed
+        /// native Tcl interpreter pointer.
+        /// </param>
+        /// <param name="isolated">
+        /// Upon success, this parameter will be modified to indicate whether an
+        /// isolated TclTk interpreter should be used.
+        /// </param>
+        /// <param name="safe">
+        /// Upon success, this parameter will be modified to indicate whether
+        /// the native Tcl interpreter is "safe".
+        /// </param>
+        /// <param name="list">
+        /// Upon success, this parameter will be modified to contain the
+        /// remaining (optional) arguments, if any.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, this parameter will be modified to contain an
+        /// appropriate error message.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        private static ReturnCode ParseArgument(
+            string arg,
+            ref string protocolId,
+            ref IntPtr module,
+            ref IntPtr stubs,
+            ref IntPtr interp,
+            ref bool isolated,
+            ref bool safe,
+            ref StringList list,
+            ref Result error
+            )
+        {
+            StringList localList = null;
+            Result localError = null;
+            bool haveExtra = false;
+
+            //
+            // NOTE: Attempt to parse the argument as a Tcl/TclTk list.  Upon
+            //       failure, we cannot continue.
+            //
+            if (ParserOps<string>.SplitList(
+                    null, arg, 0, Length.Invalid, false, ref localList,
+                    ref localError) != ReturnCode.Ok)
+            {
+                goto done;
+            }
+
+            //
+            // NOTE: Make sure the parsed list has at least the minimum number
+            //       of arguments we need (i.e. the Tcl library module handle,
+            //       the Tcl interpreter pointer, etc).
+            //
+            if (localList.Count < MinimumArgumentCountV1R1)
+            {
+                localError = String.Format(
+                    "not enough arguments for \"{0}\", have {1}, need {2}",
+                    ProtocolIdV1R1, localList.Count, MinimumArgumentCountV1R1);
+
+                goto done;
+            }
+
+            //
+            // NOTE: Initially, start at the first element of the parsed list,
+            //       which is always the protocol identifier.
+            //
+            int index = 0;
+
+            //
+            // NOTE: The first argument must be the protocol identifier and it
+            //       must represent a supported protocol version.  This check
+            //       will also tell us if we should expect an additional
+            //       argument containing the Tcl C API stubs structure pointer.
+            //
+            string localProtocolId = localList[index];
+
+            if (CheckProtocolId(localProtocolId,
+                    ref haveExtra, ref localError) != ReturnCode.Ok)
+            {
+                goto done;
+            }
+
+            //
+            // NOTE: Make sure the parsed list has at least the minimum number
+            //       of arguments we need, taking into account the Tcl C API
+            //       stubs structure pointer argument, if applicable.
+            //
+            if (haveExtra && (localList.Count < MinimumArgumentCountV1R2))
+            {
+                localError = String.Format(
+                    "not enough arguments for \"{0}\", have {1}, need {2}",
+                    ProtocolIdV1R2, localList.Count, MinimumArgumentCountV1R2);
+
+                goto done;
+            }
+
+            //
+            // NOTE: Advance to the next element, which is always the Tcl
+            //       library module handle.
+            //
+            index++;
+
+            //
+            // NOTE: Assume the second argument of the list parsed from the
+            //       argument actually represents the Tcl library module
+            //       handle.
+            //
+            IntPtr localModule = StringToIntPtr(localList[index], true,
+                ref localError);
+
+            if (localModule == IntPtr.Zero)
+                goto done;
+
+            //
+            // NOTE: Advance to the next element, which is either the pointer to
+            //       the Tcl C API stubs structure -OR- the pointer to the Tcl
+            //       interpreter.
+            //
+            index++;
+
+            IntPtr localStubs = IntPtr.Zero;
+
+            if (haveExtra)
+            {
+                //
+                // NOTE: Assume the third argument of the list parsed from the
+                //       argument actually represents the pointer to the Tcl C
+                //       API stubs structure.
+                //
+                localStubs = StringToIntPtr(localList[index], true,
+                    ref localError);
+
+                if (localStubs == IntPtr.Zero)
+                    goto done;
+
+                //
+                // NOTE: Advance to the next element, which is the pointer to
+                //       the Tcl interpreter.
+                //
+                index++;
+            }
+
+            //
+            // NOTE: Assume the third (or fourth) argument of the list parsed
+            //       from the argument actually represents the pointer to the
+            //       Tcl interpreter.
+            //
+            IntPtr localInterp = StringToIntPtr(localList[index], true,
+                ref localError);
+
+            if (localInterp == IntPtr.Zero)
+                goto done;
+
+            //
+            // NOTE: Advance to the next element, which is either the Tcl
+            //       interpreter safety indicator -OR- the TclTk isolated
+            //       interpreter indicator.
+            //
+            index++;
+
+            bool localIsolated = false;
+
+            if (haveExtra)
+            {
+                //
+                // NOTE: The fourth (or fifth) argument is the Tcl interpreter
+                //       safety indicator.  Non-zero means the Tcl interpreter
+                //       is "safe" and the TclTk interpreter MUST be as well.
+                //
+                if (Value.GetBoolean2(
+                        localList[index], ValueFlags.AnyBoolean, null,
+                        ref localIsolated, ref localError) != ReturnCode.Ok)
+                {
+                    goto done;
+                }
+
+                //
+                // NOTE: Advance to the next element, which is always the Tcl
+                //       interpreter safety indicator.
+                //
+                index++;
+            }
+
+            //
+            // NOTE: The fifth (or sixth) argument is the Tcl interpreter
+            //       safety indicator.  Non-zero means the Tcl interpreter is
+            //       "safe" and the TclTk interpreter MUST be as well.
+            //
+            bool localSafe = false;
+
+            if (Value.GetBoolean2(localList[index], ValueFlags.AnyBoolean,
+                    null, ref localSafe, ref localError) != ReturnCode.Ok)
+            {
+                goto done;
+            }
+
+            //
+            // NOTE: Advance to the next element, which is always the start
+            //       of the remaining (optional) arguments, if any.
+            //
+            index++;
+
+            //
+            // NOTE: Ok, everything was successful.  Commit changes to the
+            //       parameters provided by the caller starting with the
+            //       argument list just in case the called method throws an
+            //       exception.
+            //
+            list = StringList.GetRange(localList, index, true);
+
+            protocolId = localProtocolId;
+            interp = localInterp;
+            module = localModule;
+            stubs = localStubs;
+            isolated = localIsolated;
+            safe = localSafe;
+
+            return ReturnCode.Ok;
+
+        done:
+
+            error = haveExtra ?
+                String.Format(
+                    ParseArgumentErrorV1R2, arg, (arg != null) ?
+                    arg.Length : Length.Invalid, ProtocolIdV1R2,
+                    localError) :
+                String.Format(
+                    ParseArgumentErrorV1R1, arg, (arg != null) ?
+                    arg.Length : Length.Invalid, ProtocolIdV1R1,
+                    localError);
+
+            return ReturnCode.Error;
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method determines the package control type requested by the
+        /// "control" sub-command, based on the supplied argument list.
+        /// </summary>
+        /// <param name="list">
+        /// The argument list for the "control" sub-command.  This parameter may
+        /// be null.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, this parameter will be modified to contain an
+        /// appropriate error message.
+        /// </param>
+        /// <returns>
+        /// The parsed package control type, or null when there are no arguments
+        /// (indicating that no action should be taken) or upon failure.
+        /// </returns>
+        private static PackageControlType? GetControlType(
+            StringList list,
+            ref Result error
+            )
+        {
+            //
+            // HACK: It is NOT an error if there are no arguments to the
+            //       "control" sub-command.  In that case, just clear out
+            //       the error and return null.  Our caller will interpret
+            //       this result to mean "do nothing and return success".
+            //
+            if ((list == null) || (list.Count < 1))
+            {
+                error = null;
+                return null;
+            }
+
+            //
+            // NOTE: Otherwise, if there is at least one argument to the
+            //       "control" sub-command, it must represent one of the
+            //       valid package control types.
+            //
+            object enumValue = EnumOps.TryParse(
+                typeof(PackageControlType), list[0],
+                true, true, ref error);
+
+            if (!(enumValue is PackageControlType))
+                return null;
+
+            return (PackageControlType)enumValue;
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method extracts and validates the arguments used by the
+        /// "control" sub-command (e.g. the package name, version, and target
+        /// interpreter).
+        /// </summary>
+        /// <param name="list">
+        /// The argument list for the "control" sub-command.  This parameter may
+        /// be null.
+        /// </param>
+        /// <param name="interpreter">
+        /// Upon success, this parameter will be modified to contain the target
+        /// TclTk interpreter.
+        /// </param>
+        /// <param name="packageName">
+        /// Upon success, this parameter will be modified to contain the package
+        /// name.
+        /// </param>
+        /// <param name="version">
+        /// Upon success, this parameter will be modified to contain the
+        /// requested package version, if any.
+        /// </param>
+        /// <param name="error">
+        /// Upon failure, this parameter will be modified to contain an
+        /// appropriate error message.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" />.
+        /// </returns>
+        private static ReturnCode GetControlArgs(
+            StringList list,
+            ref Interpreter interpreter,
+            ref string packageName,
+            ref Version version,
+            ref Result error
+            )
+        {
+            Interpreter localInterpreter = GetPrimaryInterpreter();
+
+            if (localInterpreter == null)
+            {
+                error = "invalid interpreter";
+                return ReturnCode.Error;
+            }
+
+            CultureInfo cultureInfo = localInterpreter.InternalCultureInfo;
+
+            if ((list == null) || (list.Count < 2))
+            {
+                error = "missing package name";
+                return ReturnCode.Error;
+            }
+
+            string localPackageName = list[1];
+            Version localVersion = null;
+
+            if (list.Count >= 3)
+            {
+                if (Value.GetVersion(
+                        list[2], cultureInfo, ref localVersion,
+                        ref error) != ReturnCode.Ok)
+                {
+                    return ReturnCode.Error;
+                }
+            }
+
+            if (list.Count >= 4)
+            {
+                if (Value.GetInterpreter(
+                        localInterpreter, list[3], InterpreterType.Default,
+                        ref localInterpreter, ref error) != ReturnCode.Ok)
+                {
+                    return ReturnCode.Error;
+                }
+            }
+
+            interpreter = localInterpreter;
+            packageName = localPackageName;
+            version = localVersion;
+
+            return ReturnCode.Ok;
+        }
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////
+
+        #region Private CoreCLR Native API Support Methods
+#if NET_STANDARD_20
+        /// <summary>
+        /// This method marshals the native argument buffer passed via the
+        /// CoreCLR native API into a managed string, accounting for the
+        /// platform-specific width of the native wide character type.
+        /// </summary>
+        /// <param name="ptr">
+        /// The pointer to the native argument buffer.
+        /// </param>
+        /// <param name="count">
+        /// The size, in bytes, of the native argument buffer.
+        /// </param>
+        /// <returns>
+        /// The marshaled managed string.
+        /// </returns>
+        internal static string MarshalArgument(
+            IntPtr ptr, /* in */
+            int count   /* in */
+            )
+        {
+            if (PlatformOps.IsWindowsOperatingSystem())
+            {
+                //
+                // HACK: This assumes that the "wchar_t" type on Win32
+                //       uses two bytes to represent a single character,
+                //       which nicely corresponds to the size of the
+                //       "char" type in C#.  It should be noted that the
+                //       count here is in bytes, not code units; hence,
+                //       we have to divide by the code unit size before
+                //       passing it to the Marshal.PtrToStringUni method,
+                //       as that method wants the number of code units.
+                //
+                return Marshal.PtrToStringUni(ptr, count / sizeof(char));
+            }
+            else
+            {
+                //
+                // HACK: This assumes that the "wchar_t" type on Linux
+                //       (and macOS, etc) uses four bytes to represent
+                //       a single character.  It should be noted that
+                //       the count here is in bytes, not code units.
+                //       Since the MarshalOps.PtrToStringUTF32 method
+                //       requires the total number of bytes, this call
+                //       is correct.
+                //
+                return MarshalOps.PtrToStringUTF32(ptr, count);
+            }
+        }
+#endif
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: These methods must conform to the following native signature:
+        //
+        //       #include <coreclr_delegates.h>
+        //
+        //       typedef int (
+        //         CORECLR_DELEGATE_CALLTYPE *component_entry_point_fn
+        //       )(
+        //         void *arg, int32_t arg_size_in_bytes
+        //       );
+        //
+        #region Public CoreCLR Native API Integration Methods
+#if NET_STANDARD_20
+        //
+        // WARNING: This method is used to integrate with native code via the
+        //          native CoreCLR API.
+        //
+        /// <summary>
+        /// This method is the CoreCLR native API entry point used to start up
+        /// the native Tcl integration for a native Tcl interpreter.
+        /// </summary>
+        /// <param name="arg">
+        /// The pointer to the native argument buffer.
+        /// </param>
+        /// <param name="arg_size_in_bytes">
+        /// The size, in bytes, of the native argument buffer.
+        /// </param>
+        /// <returns>
+        /// The integer value of the resulting return code (zero indicates
+        /// success).
+        /// </returns>
+#if NET_CORE_50
+        [UnmanagedCallersOnly(EntryPoint = "StartupCoreClr",
+            CallConvs = new[] { typeof(CallConvCdecl) })]
+#endif
+        public static int StartupCoreClr(
+            IntPtr arg,           /* in */
+            int arg_size_in_bytes /* in */
+            )
+        {
+            TraceOps.DebugTrace(String.Format(
+                "StartupCoreClr: entered, arg = {0}, " +
+                "arg_size_in_bytes = {1}", FormatOps.WrapOrNull(arg),
+                arg_size_in_bytes), typeof(NativePackage).Name,
+                TracePriority.NativeDebug);
+
+            if (arg == IntPtr.Zero)
+                return (int)ReturnCode.Error;
+
+            return StartupClr(MarshalArgument(arg, arg_size_in_bytes));
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // WARNING: This method is used to integrate with native code via the
+        //          native CoreCLR API.
+        //
+        /// <summary>
+        /// This method is the CoreCLR native API entry point used to perform a
+        /// control operation (e.g. "require") on a native Tcl interpreter.
+        /// </summary>
+        /// <param name="arg">
+        /// The pointer to the native argument buffer.
+        /// </param>
+        /// <param name="arg_size_in_bytes">
+        /// The size, in bytes, of the native argument buffer.
+        /// </param>
+        /// <returns>
+        /// The integer value of the resulting return code (zero indicates
+        /// success).
+        /// </returns>
+#if NET_CORE_50
+        [UnmanagedCallersOnly(EntryPoint = "ControlCoreClr",
+            CallConvs = new[] { typeof(CallConvCdecl) })]
+#endif
+        public static int ControlCoreClr(
+            IntPtr arg,           /* in */
+            int arg_size_in_bytes /* in */
+            )
+        {
+            TraceOps.DebugTrace(String.Format(
+                "ControlCoreClr: entered, arg = {0}, " +
+                "arg_size_in_bytes = {1}", FormatOps.WrapOrNull(arg),
+                arg_size_in_bytes), typeof(NativePackage).Name,
+                TracePriority.NativeDebug);
+
+            if (arg == IntPtr.Zero)
+                return (int)ReturnCode.Error;
+
+            return ControlClr(MarshalArgument(arg, arg_size_in_bytes));
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // WARNING: This method is used to integrate with native code via the
+        //          native CoreCLR API.
+        //
+        /// <summary>
+        /// This method is the CoreCLR native API entry point used to detach the
+        /// native Tcl integration from a native Tcl interpreter.
+        /// </summary>
+        /// <param name="arg">
+        /// The pointer to the native argument buffer.
+        /// </param>
+        /// <param name="arg_size_in_bytes">
+        /// The size, in bytes, of the native argument buffer.
+        /// </param>
+        /// <returns>
+        /// The integer value of the resulting return code (zero indicates
+        /// success).
+        /// </returns>
+#if NET_CORE_50
+        [UnmanagedCallersOnly(EntryPoint = "DetachCoreClr",
+            CallConvs = new[] { typeof(CallConvCdecl) })]
+#endif
+        public static int DetachCoreClr(
+            IntPtr arg,           /* in */
+            int arg_size_in_bytes /* in */
+            )
+        {
+            TraceOps.DebugTrace(String.Format(
+                "DetachCoreClr: entered, arg = {0}, " +
+                "arg_size_in_bytes = {1}", FormatOps.WrapOrNull(arg),
+                arg_size_in_bytes), typeof(NativePackage).Name,
+                TracePriority.NativeDebug);
+
+            if (arg == IntPtr.Zero)
+                return (int)ReturnCode.Error;
+
+            return DetachClr(MarshalArgument(arg, arg_size_in_bytes));
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // WARNING: This method is used to integrate with native code via the
+        //          native CoreCLR API.
+        //
+        /// <summary>
+        /// This method is the CoreCLR native API entry point used to shut down
+        /// the native Tcl integration for the entire process.
+        /// </summary>
+        /// <param name="arg">
+        /// The pointer to the native argument buffer.
+        /// </param>
+        /// <param name="arg_size_in_bytes">
+        /// The size, in bytes, of the native argument buffer.
+        /// </param>
+        /// <returns>
+        /// The integer value of the resulting return code (zero indicates
+        /// success).
+        /// </returns>
+#if NET_CORE_50
+        [UnmanagedCallersOnly(EntryPoint = "ShutdownCoreClr",
+            CallConvs = new[] { typeof(CallConvCdecl) })]
+#endif
+        public static int ShutdownCoreClr(
+            IntPtr arg,           /* in */
+            int arg_size_in_bytes /* in */
+            )
+        {
+            TraceOps.DebugTrace(String.Format(
+                "ShutdownCoreClr: entered, arg = {0}, " +
+                "arg_size_in_bytes = {1}", FormatOps.WrapOrNull(arg),
+                arg_size_in_bytes), typeof(NativePackage).Name,
+                TracePriority.NativeDebug);
+
+            if (arg == IntPtr.Zero)
+                return (int)ReturnCode.Error;
+
+            return ShutdownClr(MarshalArgument(arg, arg_size_in_bytes));
+        }
+#endif
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // NOTE: These methods must conform to the following native signature:
+        //
+        //       static int pwzMethodName (String pwzArgument);
+        //
+        #region Public CLR Native API Integration Methods
+        //
+        // WARNING: This method is used to integrate with native code via the
+        //          native CLR API.
+        //
+        /// <summary>
+        /// This method is the CLR native API entry point used to start up the
+        /// native Tcl integration for a native Tcl interpreter.  It creates or
+        /// reuses an TclTk interpreter, sets up the Tcl API and Tcl bridge
+        /// objects, and registers the native Tcl interpreter with this class.
+        /// </summary>
+        /// <param name="argument">
+        /// The raw argument string passed from native code (i.e. the value of
+        /// the "pwzArgument" argument passed to the native CLR API method
+        /// ICLRRuntimeHost.ExecuteInDefaultAppDomain).
+        /// </param>
+        /// <returns>
+        /// The integer value of the resulting return code (zero indicates
+        /// success).
+        /// </returns>
+        public static int StartupClr(
+            string argument /* This is the value of the "pwzArgument" argument
+                             * as it was passed to native CLR API method
+                             * ICLRRuntimeHost.ExecuteInDefaultAppDomain. */
+            ) /* ENTRY-POINT, THREAD-SAFE */
+        {
+            Interlocked.Increment(ref activeCount);
+
+            try
+            {
+                ReturnCode code;
+                string protocolId = null;
+                IntPtr module = IntPtr.Zero;
+                IntPtr stubs = IntPtr.Zero;
+                IntPtr interp = IntPtr.Zero;
+                bool isolated = false;
+                bool safe = false;
+                StringList list = null;
+                Result result = null;
+
+                TraceOps.DebugTrace(String.Format(
+                    "StartupClr: entered, argument = {0}",
+                    FormatOps.WrapOrNull(true, true, argument)),
+                    typeof(NativePackage).Name, TracePriority.NativeDebug);
+
+                DebugTclInterpreters(null, "Startup entered", false);
+
+                code = ParseArgument(
+                    argument, ref protocolId, ref module, ref stubs,
+                    ref interp, ref isolated, ref safe, ref list,
+                    ref result);
+
+                if (code == ReturnCode.Ok)
+                {
+                    //
+                    // NOTE: These are boolean flags used for communication
+                    //       between the secondary try and finally blocks in
+                    //       this method (below).  If a flag is true, the
+                    //       associated resource is [still] owned by this
+                    //       method and must be cleaned up by the secondary
+                    //       finally block; otherwise, it is no longer owned
+                    //       by this method and should be left alone.  These
+                    //       flags should only be consulted in the event of
+                    //       a failure.
+                    //
+                    bool[] created = new bool[] {
+                        false, /* NOTE: [0], TclTk interpreter owned? */
+                        false, /* NOTE: [1], Tcl API object owned? */
+                        false, /* NOTE: [2], TclBridge object owned? */
+                        false  /* NOTE: [3], Tcl read-only flag owned? */
+                    };
+
+                    //
+                    // NOTE: These local variables are used to track the TclTk
+                    //       interpreter, Tcl API object, and TclBridge object
+                    //       that we [may] create in this method.  In the event
+                    //       of a failure, they should be cleaned up within the
+                    //       secondary finally block.
+                    //
+                    Interpreter interpreter = null;
+                    ITclApi tclApi = null;
+                    TclBridge tclBridge = null;
+
+                    try
+                    {
+                        //
+                        // NOTE: Lock access to the static data contained in
+                        //       this class (e.g. the dictionaries of native
+                        //       Tcl and TclTk interpreters).
+                        //
+                        // BUGFIX: Lock Reform: Part #1, prevent deadlock by
+                        //         simply removing the outer lock here.  This
+                        //         should still be safe because the lock will
+                        //         be held for access to our own local static
+                        //         data (i.e. but not while accessing any of
+                        //         the Interpreter methods).
+                        //
+                        // NOTE: We will need at least one TclTk interpreter
+                        //       to host the necessary native Tcl integration
+                        //       components; therefore, attempt to fetch or
+                        //       create one now.  When operating in isolated
+                        //       mode, each native Tcl interpreter will use a
+                        //       different TclTk interpreter.  When operating
+                        //       in non-isolated mode, all native Tcl
+                        //       interpreters will share the "primary" TclTk
+                        //       interpreter.  These two modes can coexist.
+                        //       The TclTk interpreters MUST be kept around
+                        //       for the entire lifetime of their associated
+                        //       native Tcl interpreters unless they are
+                        //       manually detached or shutdown.  Furthermore,
+                        //       they MUST be visible to the CLR GC (i.e. to
+                        //       prevent them from being garbage collected);
+                        //       therefore, we store them in a static field
+                        //       of this class.  If a native Tcl interpreter
+                        //       is deleted, that will now trigger a call to
+                        //       Detach(), which will then dispose of the
+                        //       associated TclTk interpreter.
+                        //
+                        interpreter = GetPrimaryOrIsolatedInterpreter(
+                            interp, isolated);
+
+                        if (interpreter == null)
+                        {
+                            TraceOps.DebugTrace(String.Format(
+                                "StartupClr: appDomain = {0}",
+                                FormatOps.DisplayAppDomain()),
+                                typeof(NativePackage).Name,
+                                TracePriority.NativeDebug);
+
+                            //
+                            // HACK: Figure out if we should use console
+                            //       for trace messages, errors, etc.
+                            //
+                            bool console;
+                            bool verbose;
+
+                            Interpreter.RefreshConsoleAndVerbose(
+                                out console, out verbose);
+
+                            //
+                            // NOTE: Starting with the mandatory creation
+                            //       flags then calculate out the exact
+                            //       creation flags necessary to properly
+                            //       create a suitable TclTk interpreter.
+                            //       Typically, this will end up with a
+                            //       value something like:
+                            //
+                            //       Verbose | Initialize | Debugger |
+                            //       NoIsolated | NoTitle | NoIcon |
+                            //       NoCancel | SetArguments |
+                            //       UseNamespaces | NoMonitorPlugin
+                            //
+                            CreateFlags createFlags =
+                                Interpreter.GetStartupCreateFlags(
+                                    list, CreateFlags.NativeUse,
+                                    OptionOriginFlags.NativePackage,
+                                    console, verbose);
+
+                            //
+                            // NOTE: Starting with the mandatory host
+                            //       creation flags then calculate out
+                            //       the exact host creation flags
+                            //       necessary to properly create a
+                            //       suitable TclTk interpreter host.
+                            //       Typically, this will end up with a
+                            //       value something like:
+                            //
+                            //       NoTitle | NoIcon | NoCancel
+                            //
+                            HostCreateFlags hostCreateFlags =
+                                Interpreter.GetStartupHostCreateFlags(
+                                    list, HostCreateFlags.NativeUse,
+                                    OptionOriginFlags.NativePackage,
+                                    console, verbose);
+
+                            //
+                            // NOTE: Starting with the default initialize
+                            //       flags then calculate the effective
+                            //       initialize flags.  These semantics
+                            //       may have to change at some point.
+                            //
+                            InitializeFlags initializeFlags =
+                                Interpreter.GetStartupInitializeFlags(
+                                    list, Defaults.InitializeFlags,
+                                    OptionOriginFlags.NativePackage,
+                                    console, verbose);
+
+                            //
+                            // NOTE: Starting with the default script
+                            //       flags then calculate the effective
+                            //       script flags.  These semantics may
+                            //       have to change at some point.
+                            //
+                            ScriptFlags scriptFlags =
+                                Interpreter.GetStartupScriptFlags(
+                                    list, Defaults.ScriptFlags,
+                                    OptionOriginFlags.NativePackage,
+                                    console, verbose);
+
+                            //
+                            // NOTE: Create the TclTk interpreter as
+                            //       "safe"?  Normally, this is only done
+                            //       for "safe" Tcl interpreters; however,
+                            //       it can also be specified manually.
+                            //
+                            if (safe)
+                                createFlags |= CreateFlags.SafeAndHideUnsafe;
+
+                            //
+                            // NOTE: Fetch the pre-initialize script for
+                            //       the TclTk interpreter to be created.
+                            //       This will almost always be null (i.e.
+                            //       none).
+                            //
+                            string text = null;
+
+                            code = Interpreter.GetStartupPreInitializeText(list,
+                                createFlags, OptionOriginFlags.NativePackage,
+                                console, verbose, ref text, ref result);
+
+                            string libraryPath = null;
+
+                            if (code == ReturnCode.Ok)
+                            {
+                                //
+                                // NOTE: Fetch the script library path for the
+                                //       TclTk interpreter to be created.  This
+                                //       will almost always be null (i.e. use
+                                //       the default).
+                                //
+                                code = Interpreter.GetStartupLibraryPath(list,
+                                    createFlags, OptionOriginFlags.NativePackage,
+                                    console, verbose, ref libraryPath, ref result);
+                            }
+
+                            if (code == ReturnCode.Ok)
+                            {
+                                //
+                                // HACK: Always forbid changes to the native
+                                //       Tcl integration subsystem while it
+                                //       is being actively modified by this
+                                //       method (i.e. during any script
+                                //       evaluation that may take place from
+                                //       within the Interpreter.Create
+                                //       method).
+                                //
+                                // NOTE: Attempt to create a new (TclTk)
+                                //       interpreter now.  This can fail
+                                //       for any number of reasons (e.g.
+                                //       no script library found, etc).
+                                //
+                                interpreter = CreateInterpreter(
+                                    safe ? null : list, createFlags,
+                                    hostCreateFlags, initializeFlags,
+                                    scriptFlags, Defaults.FindFlags,
+                                    Defaults.LoadFlags |
+                                        LoadFlags.NativePackage,
+                                    text, libraryPath, ref result);
+
+                                created[0] = true; /* NOTE: Owned. */
+
+                                if (interpreter != null)
+                                {
+                                    //
+                                    // NOTE: Ok, the TclTk interpreter was
+                                    //       created.  Process the "startup
+                                    //       options" for it now (e.g. set
+                                    //       flags, enable tracing, etc).
+                                    //
+                                    code = Interpreter.ProcessStartupOptions(
+                                        interpreter, list, createFlags,
+                                        OptionOriginFlags.NativePackage,
+                                        console, verbose, ref result);
+                                }
+                            }
+
+                            //
+                            // NOTE: Show an interpreter was just created and
+                            //       the information associated with it.
+                            //
+                            TraceOps.DebugTrace(String.Format(
+                                "StartupClr: interpreter {0}, " +
+                                "interpreter = {1}, args = {2}, " +
+                                "createFlags = {3}, hostCreateFlags = {4}, " +
+                                "libraryPath = {5}, code = {6}, result = {7}",
+                                (interpreter != null) ?
+                                    "created" : "not created",
+                                FormatOps.InterpreterNoThrow(interpreter),
+                                FormatOps.WrapOrNull(true, true, list),
+                                FormatOps.WrapOrNull(createFlags),
+                                FormatOps.WrapOrNull(hostCreateFlags),
+                                FormatOps.WrapOrNull(libraryPath), code,
+                                FormatOps.WrapOrNull(true, true, result)),
+                                typeof(NativePackage).Name,
+                                TracePriority.NativeDebug);
+                        }
+
+                        //
+                        // NOTE: Do we have a valid TclTk interpreter context
+                        //       (i.e. either pre-existing or just created)?
+                        //
+                        if ((code == ReturnCode.Ok) &&
+                            (interpreter != null))
+                        {
+                            //
+                            // NOTE: Verify that the TclTk interpreter is safe
+                            //       if the Tcl interpreter is safe (i.e. just
+                            //       in case the TclTk interpreter was created
+                            //       previously with an unsafe Tcl interpreter).
+                            //
+                            if (!safe || interpreter.InternalIsSafe())
+                            {
+                                //
+                                // NOTE: Lookup the TclTk [eval] command by
+                                //       name and grab the IExecute object
+                                //       for it.  This command will be the
+                                //       destination for the [tcltk] command
+                                //       in Tcl added by this package.
+                                //
+                                IExecute execute = null;
+
+                                code = interpreter.InternalGetIExecuteViaResolvers(
+                                    interpreter.GetResolveEngineFlagsNoLock(true),
+                                    managedCommandName,
+                                    new ArgumentList(managedCommandName),
+                                    LookupFlags.Default, ref execute,
+                                    ref result);
+
+                                if (code == ReturnCode.Ok)
+                                {
+                                    //
+                                    // NOTE: Check if the TclTk interpreter
+                                    //       already existed.
+                                    //
+                                    if (!created[0])
+                                    {
+                                        //
+                                        // HACK: Always forbid changes to the native
+                                        //       Tcl integration subsystem while it is
+                                        //       being actively modified by this method
+                                        //       (i.e. during any script evaluation
+                                        //       that may take place in this method).
+                                        //
+                                        interpreter.MakeTclReadOnly(true);
+
+                                        //
+                                        // HACK: Indicate to the finally block that we
+                                        //       did indeed set the Tcl read-only flag.
+                                        //
+                                        created[3] = true; /* NOTE: Owned. */
+                                    }
+
+                                    //
+                                    // NOTE: Create the TclApi object based on the
+                                    //       provided Tcl library module handle.  If
+                                    //       the supplied module handle is invalid in
+                                    //       some way, this is where the failure will
+                                    //       likely be [noticed first].
+                                    //
+                                    lock (interpreter.TclSyncRoot) /* TRANSACTIONAL */
+                                    {
+                                        tclApi = TclApi.GetTclApi(interpreter);
+
+                                        if (tclApi == null)
+                                        {
+                                            tclApi = TclApi.Create(
+                                                interpreter, null, null,
+                                                module, stubs, LoadFlags.Default,
+                                                ref result);
+
+                                            created[1] = true; /* NOTE: Owned. */
+
+                                            TraceOps.DebugTrace(String.Format(
+                                                "StartupClr: tclApi {0}, " +
+                                                "interpreter = {1}, " +
+                                                "module = {2}, stubs = {3}, " +
+                                                "code = {4}, result = {5}",
+                                                (tclApi != null) ?
+                                                    "created" : "not created",
+                                                FormatOps.InterpreterNoThrow(
+                                                    interpreter), module, stubs,
+                                                code, FormatOps.WrapOrNull(
+                                                    true, true, result)),
+                                                typeof(NativePackage).Name,
+                                                TracePriority.NativeDebug);
+
+                                            TclApi.SetTclApi(interpreter, tclApi);
+
+                                            created[1] = false; /* NOTE: Disowned. */
+                                        }
+                                    }
+
+                                    if (tclApi != null)
+                                    {
+                                        //
+                                        // NOTE: Make sure the list of Tcl interpreters
+                                        //       tracked by this class, that should not
+                                        //       be deleted, is initialized.
+                                        //
+                                        string interpName = null;
+
+                                        //
+                                        // BUGFIX: Lock Reform: Part #2, obtain and hold
+                                        //         the lock while modifying our own static
+                                        //         data (i.e. the dictionary of native Tcl
+                                        //         interpreters).
+                                        //
+                                        lock (syncRoot) /* TRANSACTIONAL */
+                                        {
+                                            if (tclInterps == null)
+                                                tclInterps = new IntPtrDictionary();
+
+                                            //
+                                            // HACK: Yes, this check is "useless" (i.e.
+                                            //       always true) if the dictionary was
+                                            //       just created (above).
+                                            //
+                                            if (!tclInterps.ContainsValue(
+                                                    interp)) /* O(N) */
+                                            {
+                                                //
+                                                // NOTE: All isolated Tcl interpreters
+                                                //       are a "parent" Tcl interpreter.
+                                                //       However, only the very first
+                                                //       non-isolated one is.
+                                                //
+                                                interpName = GetTclInterpreterName(
+                                                    isolated, safe);
+
+                                                tclInterps.Add(interpName, interp);
+                                            }
+                                        }
+
+                                        //
+                                        // NOTE: Make sure this Tcl interpreter is not
+                                        //       already attached.
+                                        //
+                                        if (interpName != null)
+                                        {
+                                            //
+                                            // NOTE: Associate the Tcl interpreter
+                                            //       with the name determined for it
+                                            //       above.  There can be NO race
+                                            //       condition here because the Tcl
+                                            //       interpreter name is determined
+                                            //       within the locked region above
+                                            //       and this class is designed to
+                                            //       permit the same Tcl interpreter
+                                            //       to be added multiple times, as
+                                            //       long as each one has a distinct
+                                            //       name.
+                                            //
+                                            TclApi.AddInterp(
+                                                interpreter, interpName, interp);
+
+                                            //
+                                            // NOTE: Create the TclBridge object to
+                                            //       translate calls from the [tcltk]
+                                            //       Tcl command to the [eval] TclTk
+                                            //       command.
+                                            //
+                                            tclBridge = TclBridge.Create(
+                                                interpreter, execute, ClientData.Empty,
+                                                interp, nativeCommandName, false, true,
+                                                true, ref result);
+
+                                            created[2] = true; /* NOTE: Owned. */
+
+                                            TraceOps.DebugTrace(String.Format(
+                                                "StartupClr: tclBridge {0}, " +
+                                                "interpreter = {1}, execute = {2}, " +
+                                                "interp = {3}, name = {4}, " +
+                                                "code = {5}, result = {6}",
+                                                (tclBridge != null) ?
+                                                    "created" : "not created",
+                                                FormatOps.InterpreterNoThrow(interpreter),
+                                                FormatOps.WrapOrNull(execute), interp,
+                                                FormatOps.WrapOrNull(nativeCommandName),
+                                                code, FormatOps.WrapOrNull(true, true,
+                                                result)), typeof(NativePackage).Name,
+                                                TracePriority.NativeDebug);
+
+                                            if (tclBridge != null)
+                                            {
+                                                string bridgeName = GetTclBridgeName(
+                                                    interpName, nativeCommandName);
+
+                                                interpreter.AddTclBridge(
+                                                    bridgeName, tclBridge);
+
+                                                created[2] = false; /* NOTE: Disowned. */
+
+                                                if (AddInterpreter(
+                                                        isolated ? interp : IntPtr.Zero,
+                                                        interpreter))
+                                                {
+                                                    created[0] = false; /* NOTE: Disowned. */
+                                                }
+
+                                                //
+                                                // HACK: Finally, permit changes to the
+                                                //       native Tcl integration subsystem.
+                                                //
+                                                interpreter.MakeTclReadOnly(false);
+
+                                                //
+                                                // HACK: Indicate to the finally block
+                                                //       that the Tcl read-only flag has
+                                                //       now been unset.
+                                                //
+                                                created[3] = false;
+                                            }
+                                            else
+                                            {
+                                                code = ReturnCode.Error;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            result = String.Format(
+                                                AlreadyAttachedError, interp,
+                                                FormatOps.InterpreterNoThrow(
+                                                interpreter));
+
+                                            code = ReturnCode.Error;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        code = ReturnCode.Error;
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                result = String.Format(
+                                    SafeUnsafeError, interp,
+                                    FormatOps.InterpreterNoThrow(
+                                    interpreter));
+
+                                code = ReturnCode.Error;
+                            }
+                        }
+                        else if (code != ReturnCode.Error)
+                        {
+                            code = ReturnCode.Error;
+                        }
+                    }
+                    finally
+                    {
+                        //
+                        // NOTE: If we fail for some reason, cleanup any
+                        //       resources we allocated during this method
+                        //       call.
+                        //
+                        if (code != ReturnCode.Ok)
+                        {
+                            if (created[2] && (tclBridge != null))
+                            {
+                                tclBridge.Dispose();
+                                tclBridge = null;
+                            }
+
+                            //
+                            // NOTE: Only dispose of the Tcl API object if we
+                            //       created it during this method call.
+                            //
+                            if (created[1] && (tclApi != null))
+                            {
+                                IDisposable disposable = tclApi as IDisposable;
+
+                                if (disposable != null)
+                                {
+                                    disposable.Dispose();
+                                    disposable = null;
+                                }
+
+                                tclApi = null;
+                            }
+
+                            //
+                            // NOTE: Only dispose of the TclTk interpreter
+                            //       if we created it during this method call;
+                            //       otherwise, it may already be in use.
+                            //
+                            if (created[0] && (interpreter != null))
+                            {
+                                interpreter.Dispose();
+                                interpreter = null;
+                            }
+                            else if (created[3] && (interpreter != null))
+                            {
+                                //
+                                // NOTE: If the TclTk interpreter was not
+                                //       created by us, make sure the Tcl
+                                //       read-only flag is unset now (as
+                                //       we may have set it above).
+                                //
+                                interpreter.MakeTclReadOnly(false);
+                            }
+                        }
+                    }
+                }
+
+                //
+                // NOTE: We have no way of passing the result string back to
+                //       native code; therefore, just "complain" about it
+                //       (e.g. to the console).
+                //
+                if (code != ReturnCode.Ok)
+                    Complain(interp, isolated, code, result);
+
+                DebugTclInterpreters(null, "Startup exited", false);
+
+                TraceOps.DebugTrace(String.Format(
+                    "StartupClr: exited, protocolId = {0}, module = {1}, " +
+                    "stubs = {2}, interp = {3}, isolated = {4}, safe = {5}, " +
+                    "list = {6}, code = {7}, result = {8}",
+                    FormatOps.WrapOrNull(true, true, protocolId), module,
+                    stubs, interp, isolated, safe, FormatOps.WrapOrNull(
+                    true, true, list), code, FormatOps.WrapOrNull(true,
+                    true, result)), typeof(NativePackage).Name,
+                    TracePriority.NativeDebug);
+
+                return (int)code;
+            }
+            finally
+            {
+                Interlocked.Decrement(ref activeCount);
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // WARNING: This method is used to integrate with native code via the
+        //          native CLR API.
+        //
+        /// <summary>
+        /// This method is the CLR native API entry point used to perform a
+        /// control operation (e.g. "require" a package) on the TclTk
+        /// interpreter associated with a native Tcl interpreter.
+        /// </summary>
+        /// <param name="argument">
+        /// The raw argument string passed from native code (i.e. the value of
+        /// the "pwzArgument" argument passed to the native CLR API method
+        /// ICLRRuntimeHost.ExecuteInDefaultAppDomain).
+        /// </param>
+        /// <returns>
+        /// The integer value of the resulting return code (zero indicates
+        /// success).
+        /// </returns>
+        public static int ControlClr(
+            string argument /* This is the value of the "pwzArgument" argument
+                             * as it was passed to native CLR API method
+                             * ICLRRuntimeHost.ExecuteInDefaultAppDomain. */
+            ) /* ENTRY-POINT, THREAD-SAFE */
+        {
+            Interlocked.Increment(ref activeCount);
+
+            try
+            {
+                ReturnCode code;
+                string protocolId = null;
+                IntPtr module = IntPtr.Zero;
+                IntPtr stubs = IntPtr.Zero;
+                IntPtr interp = IntPtr.Zero;
+                bool isolated = false;
+                bool safe = false;
+                StringList list = null;
+                Result result = null;
+
+                TraceOps.DebugTrace(String.Format(
+                    "ControlClr: entered, argument = {0}",
+                    FormatOps.WrapOrNull(true, true, argument)),
+                    typeof(NativePackage).Name,
+                    TracePriority.NativeDebug);
+
+                DebugTclInterpreters(null, "Control entered", false);
+
+                code = ParseArgument(
+                    argument, ref protocolId, ref module, ref stubs,
+                    ref interp, ref isolated, ref safe, ref list,
+                    ref result);
+
+                if (code == ReturnCode.Ok)
+                {
+                    PackageControlType? controlType;
+                    Result error = null;
+
+                    controlType = GetControlType(list, ref error);
+
+                    if (controlType != null)
+                    {
+                        switch ((PackageControlType)controlType)
+                        {
+                            case PackageControlType.Require:
+                                {
+                                    Interpreter interpreter = null;
+                                    string packageName = null;
+                                    Version version = null;
+
+                                    code = GetControlArgs(
+                                        list, ref interpreter,
+                                        ref packageName, ref version,
+                                        ref result);
+
+                                    if (code == ReturnCode.Ok)
+                                    {
+                                        code = interpreter.PkgRequire(
+                                            packageName, version,
+                                            ClientData.Empty,
+                                            PackageFlags.None,
+                                            false, ref result);
+                                    }
+                                    break;
+                                }
+                            default:
+                                {
+                                    result = String.Format(
+                                        "unsupported control type: {0}",
+                                        controlType);
+
+                                    code = ReturnCode.Error;
+                                    break;
+                                }
+                        }
+                    }
+                    else if (error != null)
+                    {
+                        result = error;
+                        code = ReturnCode.Error;
+                    }
+                    else
+                    {
+                        // do nothing.
+                    }
+                }
+
+                //
+                // NOTE: We have no way of passing the result string back to
+                //       native code; therefore, just "complain" about it
+                //       (e.g. to the console).
+                //
+                if (code != ReturnCode.Ok)
+                    Complain(interp, isolated, code, result);
+
+                DebugTclInterpreters(null, "Control exited", false);
+
+                TraceOps.DebugTrace(String.Format(
+                    "ControlClr: exited, protocolId = {0}, module = {1}, " +
+                    "stubs = {2}, interp = {3}, isolated = {4}, safe = {5}, " +
+                    "list = {6}, code = {7}, result = {8}",
+                    FormatOps.WrapOrNull(true, true, protocolId), module,
+                    stubs, interp, isolated, safe, FormatOps.WrapOrNull(
+                    true, true, list), code, FormatOps.WrapOrNull(true,
+                    true, result)), typeof(NativePackage).Name,
+                    TracePriority.NativeDebug);
+
+                return (int)code;
+            }
+            finally
+            {
+                Interlocked.Decrement(ref activeCount);
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // WARNING: This method is used to integrate with native code via the
+        //          native CLR API.
+        //
+        /// <summary>
+        /// This method is the CLR native API entry point used to detach the
+        /// native Tcl integration from a native Tcl interpreter.  For an
+        /// isolated TclTk interpreter, the interpreter is disposed; for a
+        /// shared TclTk interpreter, only its associated bridged Tcl commands
+        /// are disposed.
+        /// </summary>
+        /// <param name="argument">
+        /// The raw argument string passed from native code (i.e. the value of
+        /// the "pwzArgument" argument passed to the native CLR API method
+        /// ICLRRuntimeHost.ExecuteInDefaultAppDomain).
+        /// </param>
+        /// <returns>
+        /// The integer value of the resulting return code (zero indicates
+        /// success).
+        /// </returns>
+        public static int DetachClr(
+            string argument /* This is the value of the "pwzArgument" argument
+                             * as it was passed to native CLR API method
+                             * ICLRRuntimeHost.ExecuteInDefaultAppDomain. */
+            ) /* ENTRY-POINT, THREAD-SAFE */
+        {
+            Interlocked.Increment(ref activeCount);
+
+            try
+            {
+                ReturnCode code;
+                string protocolId = null;
+                IntPtr module = IntPtr.Zero;
+                IntPtr stubs = IntPtr.Zero;
+                IntPtr interp = IntPtr.Zero;
+                bool isolated = false;
+                bool safe = false;
+                StringList list = null;
+                Result result = null;
+
+                TraceOps.DebugTrace(String.Format(
+                    "DetachClr: entered, argument = {0}",
+                    FormatOps.WrapOrNull(true, true, argument)),
+                    typeof(NativePackage).Name,
+                    TracePriority.NativeDebug);
+
+                DebugTclInterpreters(null, "Detach entered", false);
+
+                code = ParseArgument(
+                    argument, ref protocolId, ref module, ref stubs,
+                    ref interp, ref isolated, ref safe, ref list,
+                    ref result);
+
+                if (code == ReturnCode.Ok)
+                {
+                    //
+                    // BUGFIX: Lock Reform: Part #1, prevent deadlock by simply
+                    //         removing the outer lock here.  This should still
+                    //         be safe because the lock will be held for access
+                    //         to our own local static data (i.e. but not while
+                    //         accessing any of the Interpreter methods).
+                    //
+                    try
+                    {
+                        Interpreter interpreter =
+                            GetPrimaryOrIsolatedInterpreter(
+                                interp, isolated);
+
+                        //
+                        // NOTE: For an isolated TclTk interpreter, it
+                        //       should be completely disposed.  For a
+                        //       shared TclTk interpreter, its bridged
+                        //       Tcl commands should be disposed.
+                        //
+                        if (isolated)
+                        {
+                            //
+                            // NOTE: The package is being unloaded from
+                            //       this Tcl interpreter; therefore,
+                            //       dispose of this isolated TclTk
+                            //       interpreter now.
+                            //
+                            if (DisposeInterpreter(interp, interpreter))
+                            {
+                                code = ReturnCode.Ok;
+                            }
+                            else
+                            {
+                                result = String.Format(
+                                    CouldNotDetachError, interp,
+                                    FormatOps.InterpreterNoThrow(
+                                    interpreter));
+
+                                code = ReturnCode.Error;
+                            }
+                        }
+                        else if (interpreter != null)
+                        {
+                            //
+                            // NOTE: The package is being unloaded from
+                            //       this Tcl interpreter.  Therefore,
+                            //       remove any bridged Tcl commands from
+                            //       this shared TclTk interpreter that
+                            //       are associated with the target Tcl
+                            //       interpreter.
+                            //
+                            code = interpreter.DisposeTclBridges(
+                                interp, null, null, false, ref result);
+
+                            if (code == ReturnCode.Ok)
+                            {
+                                int count = TclApi.RemoveInterp(
+                                    interpreter, interp);
+
+                                if (count != 1)
+                                {
+                                    TraceOps.DebugTrace(String.Format(
+                                        "DetachClr: expected to remove 1 " +
+                                        "Tcl interpreter from TclTk " +
+                                        "interpreter {0} matching {1}, " +
+                                        "actually removed {2}",
+                                        FormatOps.InterpreterNoThrow(
+                                        interpreter), interp, count),
+                                        typeof(NativePackage).Name,
+                                        TracePriority.NativeError);
+                                }
+                            }
+                        }
+
+                        if (code == ReturnCode.Ok)
+                        {
+                            //
+                            // BUGFIX: Lock Reform: Part #2, obtain and hold
+                            //         the lock while modifying our own static
+                            //         data (i.e. the dictionary of native Tcl
+                            //         interpreters).
+                            //
+                            lock (syncRoot) /* TRANSACTIONAL */
+                            {
+                                //
+                                // NOTE: Now that we are sure that either the
+                                //       isolated TclTk interpreter has been
+                                //       completely disposed -OR- the matching
+                                //       bridged Tcl commands within the shared
+                                //       TclTk interpreter have been disposed,
+                                //       remove this Tcl interpreter from the
+                                //       list [that we cannot delete] because
+                                //       this is only an issue during disposal
+                                //       of TclTk interpreters.
+                                //
+                                if (tclInterps != null)
+                                {
+                                    int count = tclInterps.RemoveAll(
+                                        interp, 0); /* O(N) */
+
+                                    if (count != 1)
+                                    {
+                                        TraceOps.DebugTrace(String.Format(
+                                            "DetachClr: expected to remove 1 " +
+                                            "Tcl interpreter matching {0}, " +
+                                            "actually removed {1}",
+                                            interp, count),
+                                            typeof(NativePackage).Name,
+                                            TracePriority.NativeError);
+                                    }
+
+                                    if (tclInterps.Count == 0)
+                                        tclInterps = null;
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        result = e;
+                        code = ReturnCode.Error;
+                    }
+                }
+
+                //
+                // NOTE: We have no way of passing the result string back to
+                //       native code; therefore, just "complain" about it
+                //       (e.g. to the console).
+                //
+                if (code != ReturnCode.Ok)
+                    Complain(interp, isolated, code, result);
+
+                DebugTclInterpreters(null, "Detach exited", false);
+
+                TraceOps.DebugTrace(String.Format(
+                    "DetachClr: exited, protocolId = {0}, module = {1}, " +
+                    "stubs = {2}, interp = {3}, isolated = {4}, safe = {5}, " +
+                    "list = {6}, code = {7}, result = {8}",
+                    FormatOps.WrapOrNull(true, true, protocolId), module,
+                    stubs, interp, isolated, safe, FormatOps.WrapOrNull(
+                    true, true, list), code, FormatOps.WrapOrNull(true,
+                    true, result)), typeof(NativePackage).Name,
+                    TracePriority.NativeDebug);
+
+                return (int)code;
+            }
+            finally
+            {
+                Interlocked.Decrement(ref activeCount);
+            }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        //
+        // WARNING: This method is used to integrate with native code via the
+        //          native CLR API.
+        //
+        /// <summary>
+        /// This method is the CLR native API entry point used to shut down the
+        /// native Tcl integration for the entire process, disposing of all the
+        /// TclTk interpreters tracked by this class.
+        /// </summary>
+        /// <param name="argument">
+        /// The raw argument string passed from native code (i.e. the value of
+        /// the "pwzArgument" argument passed to the native CLR API method
+        /// ICLRRuntimeHost.ExecuteInDefaultAppDomain).
+        /// </param>
+        /// <returns>
+        /// The integer value of the resulting return code (zero indicates
+        /// success).
+        /// </returns>
+        public static int ShutdownClr(
+            string argument /* This is the value of the "pwzArgument" argument
+                             * as it was passed to native CLR API method
+                             * ICLRRuntimeHost.ExecuteInDefaultAppDomain. */
+            ) /* ENTRY-POINT, THREAD-SAFE */
+        {
+            Interlocked.Increment(ref activeCount);
+
+            try
+            {
+                ReturnCode code;
+                string protocolId = null;
+                IntPtr module = IntPtr.Zero;
+                IntPtr stubs = IntPtr.Zero;
+                IntPtr interp = IntPtr.Zero;
+                bool isolated = false;
+                bool safe = false;
+                StringList list = null;
+                Result result = null;
+
+                TraceOps.DebugTrace(String.Format(
+                    "ShutdownClr: entered, argument = {0}",
+                    FormatOps.WrapOrNull(true, true, argument)),
+                    typeof(NativePackage).Name,
+                    TracePriority.NativeDebug);
+
+                DebugTclInterpreters(null, "Shutdown entered", false);
+
+                code = ParseArgument(
+                    argument, ref protocolId, ref module, ref stubs,
+                    ref interp, ref isolated, ref safe, ref list,
+                    ref result);
+
+                if (code == ReturnCode.Ok)
+                {
+                    lock (syncRoot) /* TRANSACTIONAL */
+                    {
+                        try
+                        {
+                            //
+                            // NOTE: The native package is being unloaded from
+                            //       the entire process, dispose all the TclTk
+                            //       interpreters now.
+                            //
+                            DisposeInterpreters(interp);
+
+                            //
+                            // NOTE: Now that we are sure the TclTk interpreters
+                            //       have all been disposed, remove all the Tcl
+                            //       interpreters from the list [that we should
+                            //       not delete] because this is only an issue
+                            //       during disposal of the TclTk interpreters.
+                            //
+                            if (tclInterps != null)
+                            {
+                                tclInterps.Clear();
+                                tclInterps = null;
+                            }
+                        }
+                        catch (Exception e)
+                        {
+                            result = e;
+                            code = ReturnCode.Error;
+                        }
+                    }
+                }
+
+                //
+                // NOTE: We have no way of passing the result string back to
+                //       native code; therefore, just "complain" about it
+                //       (e.g. to the console).
+                //
+                if (code != ReturnCode.Ok)
+                    Complain(interp, isolated, code, result);
+
+                DebugTclInterpreters(null, "Shutdown exited", false);
+
+                TraceOps.DebugTrace(String.Format(
+                    "ShutdownClr: exited, protocolId = {0}, module = {1}, " +
+                    "stubs = {2}, interp = {3}, isolated = {4}, safe = {5}, " +
+                    "list = {6}, code = {7}, result = {8}",
+                    FormatOps.WrapOrNull(true, true, protocolId), module,
+                    stubs, interp, isolated, safe, FormatOps.WrapOrNull(
+                    true, true, list), code, FormatOps.WrapOrNull(true,
+                    true, result)), typeof(NativePackage).Name,
+                    TracePriority.NativeDebug);
+
+                return (int)code;
+            }
+            finally
+            {
+                Interlocked.Decrement(ref activeCount);
+            }
+        }
+        #endregion
+    }
+}

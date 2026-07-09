@@ -1,0 +1,417 @@
+###############################################################################
+#
+# process.tcltk --
+#
+# Extensible Adaptable Generalized Logic Engine (TclTk)
+# TclTk Process Package File
+#
+# Copyright (c) 2007-2012 by Joe Mistachkin.  All rights reserved.
+#
+# See the file "license.terms" for information on usage and redistribution of
+# this file, and for a DISCLAIMER OF ALL WARRANTIES.
+#
+# RCS: @(#) $Id: $
+#
+###############################################################################
+
+#
+# NOTE: Use our own namespace here because even though we do not directly
+#       support namespaces ourselves, we do not want to pollute the global
+#       namespace if this script actually ends up being evaluated in Tcl.
+#
+namespace eval ::TclTk {
+  #
+  # NOTE: This procedure attempts to determine the owner of the specified
+  #       process.  The return value may be in the format "DOMAIN\USER",
+  #       an empty string (e.g. for non-Windows), an error message, or the
+  #       literal string "error" if no error message is available.  Script
+  #       errors should not be raised by this procedure.
+  #
+  proc getOwnerForProcess { process {noIntegrity false} {refresh false} } {
+    # <help>
+    # This procedure attempts to determine the owning user of a given process
+    # and return it in "DOMAIN\USER" form.  It is used (notably by
+    # [getProcesses]) to skip over processes that do not belong to the current
+    # user, thereby avoiding many "Access Denied" exceptions when enumerating
+    # or manipulating processes.  This functionality is Windows-only and
+    # requires the [object] command; on other platforms or without that
+    # command it simply returns an empty string.  By design, this procedure
+    # never raises a script error to its caller.
+    #
+    # How it works: it reads the process Id and, unless a refresh is
+    # requested, returns a previously cached owner for that Id from the
+    # tcltk_debugger array when one is present.  Otherwise it loads the
+    # System.Management assembly if needed, builds and runs a WMI query
+    # selecting the Win32_Process row for that Id, and calls the GetOwner
+    # method to obtain the user and domain.  As an additional safeguard, it
+    # compares the integrity level of the target process against that of the
+    # current process (using a non-public NativeOps helper): even when the
+    # current user technically owns a process, it is not reported as owned if
+    # its integrity level is higher than ours.  When ownership is confirmed,
+    # the computed "DOMAIN\USER" string is cached in the tcltk_debugger array
+    # keyed by process Id and returned.
+    #
+    # Tricky details: the whole body runs inside a [catch]; a [catch] code of
+    # 2 means the inner [return] fired with a real owner string, which is
+    # passed straight back to the caller.  Any other outcome yields either the
+    # captured error text (when non-empty) or the literal string "error" when
+    # no error message is available.  The WMI calls here are noted as
+    # potentially expensive.  The integrity check may itself fail; the
+    # noIntegrity argument lets the caller bypass it entirely.
+    #
+    # Arguments:
+    #   process     -- An object handle for the process to inspect (something
+    #                  exposing Id and supporting a WMI lookup by that Id).
+    #   noIntegrity -- When true, the integrity-level comparison is skipped and
+    #                  ownership is reported without regard to integrity level.
+    #                  Defaults to false.
+    #   refresh     -- When true, any cached owner for this process Id is
+    #                  ignored and the owner is recomputed (and re-cached).
+    #                  Defaults to false.
+    #
+    # Results:
+    #   The owner as "DOMAIN\USER" on success; an empty string when not on
+    #   Windows or when the [object] command is unavailable; a captured error
+    #   message, or the literal string "error" when none is available, on
+    #   failure.  A script error is never raised.
+    # </help>
+
+    if {[isWindows] && [llength [info commands object]] > 0} then {
+      if {[catch {
+        set id [$process Id]
+
+        if {!$refresh && \
+            [info exists ::tcltk_debugger(processOwner,$id)]} then {
+          return $::tcltk_debugger(processOwner,$id); # cache
+        }
+
+        if {[llength \
+            [object assemblies "System.Management, *"]] == 0} then {
+          set assembly [object load System.Management]
+        }
+
+        set query [subst -nocommands -nobackslashes [string trim {
+          SELECT * FROM Win32_Process WHERE ProcessId = $id
+        }]]
+
+        #
+        # BUGBUG: Apparently, (some of?) these System.Management
+        #         related method calls are expensive.
+        #
+        set searcher [object create \
+            -alias System.Management.ManagementObjectSearcher \
+            $query]
+
+        set collection [$searcher Get]
+
+        set args [object invoke \
+            -create -alias Array CreateInstance String 2]
+
+        object foreach -alias item $collection {
+          if {[$item InvokeMethod GetOwner args] == 0} then {
+            #
+            # HACK: Even if we technically own a process, do not return
+            #       it if its integrity level that is too high for us.
+            #
+            set level(1) ""
+            set level(2) ""
+
+            if {$noIntegrity || ([catch {
+              set pid(1) [object create IntPtr $id]
+              set string null
+
+              if {[object invoke -flags +NonPublic \
+                  CodeBrix.Platform.TclTk._Components.Private.NativeOps \
+                  GetIntegrityLevel $pid(1) string]} then {
+                set level(1) [lindex $string 0]
+              }
+            } level(1)] == 0 && [catch {
+              set pid(2) [object create IntPtr [pid]]
+              set string null
+
+              if {[object invoke -flags +NonPublic \
+                  CodeBrix.Platform.TclTk._Components.Private.NativeOps \
+                  GetIntegrityLevel $pid(2) string]} then {
+                set level(2) [lindex $string 0]
+              }
+            } level(2)] == 0)} then {
+              if {$level(1) eq $level(2) || ($level(1) >= 0 && \
+                  $level(2) >= 0 && $level(1) <= $level(2))} then {
+                return [set ::tcltk_debugger(processOwner,$id) \
+                    [appendArgs [$args GetValue 1] \\ [$args \
+                    GetValue 0]]]
+              }
+            }
+          }
+        }
+      } result] == 2} then {; # NOTE: Success is [return].
+        return $result
+      } else {
+        if {[string length $result] > 0} then {
+          return $result
+        } else {
+          return error
+        }
+      }
+    }
+
+    return ""
+  }
+
+  #
+  # NOTE: This procedure returns a list of process Ids matching the specified
+  #       name -OR- all process Ids if the specified name is an empty string.
+  #
+  proc getProcesses { name } {
+    # <help>
+    # This procedure returns a list of process Ids for processes running on
+    # the local machine.  When the name argument is a non-empty string, only
+    # processes whose name matches are returned; when it is empty, all
+    # processes are considered.  It is typically paired with
+    # [waitForProcesses] to wait for or terminate a set of processes.  The
+    # functionality requires the [object] command; without it the empty list
+    # is returned.
+    #
+    # How it works: using System.Diagnostics.Process, it obtains either the
+    # processes matching the requested name (GetProcessesByName) or all
+    # processes (GetProcesses) as a managed array.  Unless ownership checking
+    # has been disabled via the global no(getOwnerForProcess) element, it then
+    # determines the current user and, for each process, calls
+    # [getOwnerForProcess] to skip any process not owned by the current user
+    # (this reduces "Access Denied" errors, though some seemingly owned
+    # processes such as high-integrity ones may still be inaccessible).  For
+    # each remaining process it refreshes the process state, verifies the
+    # process has not exited, and reads its Id, appending that Id to the
+    # result; each of these steps is guarded with [catch] because they can
+    # fail (including on some versions of Mono).  Object-bearing variables are
+    # explicitly unset as they are finished with, both to release the
+    # underlying objects and to document the intent.
+    #
+    # Arguments:
+    #   name -- A process name to match, or an empty string to consider all
+    #           processes on the local machine.
+    #
+    # Results:
+    #   A list of integer process Ids, which may be empty (including when the
+    #   [object] command is unavailable).
+    # </help>
+
+    #
+    # NOTE: Start with an empty list of process Ids.
+    #
+    set result [list]
+
+    #
+    # NOTE: Are we able to actually query the active processes?
+    #
+    if {[llength [info commands object]] > 0} then {
+      #
+      # NOTE: Does the caller want processes matching a specific name
+      #       or all processes on the local machine?
+      #
+      if {[string length $name] > 0} then {
+        #
+        # NOTE: Get the managed array of processes with matching names.
+        #
+        set array [object invoke -alias System.Diagnostics.Process \
+            GetProcessesByName $name]; # throw
+      } else {
+        #
+        # NOTE: Get the managed array of all processes on the local
+        #       machine.
+        #
+        set array [object invoke -alias System.Diagnostics.Process \
+            GetProcesses]; # throw
+      }
+    } else {
+      #
+      # NOTE: No, return nothing.
+      #
+      return $result
+    }
+
+    #
+    # NOTE: If needed, figure out who I am.
+    #
+    if {[info exists ::no(getOwnerForProcess)]} then {
+      set whoami ""
+    } else {
+      set whoami [info user]
+    }
+
+    #
+    # NOTE: For each process in the resulting array, grab the Id.
+    #
+    for {set index 0} {$index < [$array Length]} {incr index} {
+      #
+      # NOTE: Grab the Nth process array element value using the
+      #       accessor method.
+      #
+      set process [$array -alias GetValue $index]
+
+      #
+      # NOTE: Add the Id of the process to the result list.  This
+      #       may fail on some versions of Mono.
+      #
+      # BUGFIX: Only do this if the process has not exited?
+      #
+      # HACK: Attempt to skip over processes that do not belong to
+      #       the current user.  This reduces the numer of "Access
+      #       Denied" exceptions; however, there may still be some
+      #       processes that seem to be owned by us that we cannot
+      #       actually access (e.g. "High Integrity", etc).
+      #
+      if {[info exists ::no(getOwnerForProcess)] || \
+          [getOwnerForProcess $process] in [list "" $whoami]} then {
+        if {[catch {
+          $process Refresh; # throw
+        }] == 0 && [catch {
+          $process HasExited; # throw
+        } exited] == 0 && !$exited && [catch {
+          $process Id; # throw
+        } id] == 0} then {
+          lappend result $id
+        }
+      }
+
+      #
+      # NOTE: Get rid of the process object, we no longer need it.
+      #       Technically, it is not a requirement to explicitly
+      #       unset variables that contain object references;
+      #       however, it is useful in helping to document the
+      #       code.
+      #
+      unset process; # dispose
+    }
+
+    #
+    # NOTE: Get rid of the managed array of processes, we no longer
+    #       need it.
+    #
+    unset array; # dispose
+
+    #
+    # NOTE: Return the list of process Ids, which may be empty.
+    #
+    return $result
+  }
+
+  #
+  # NOTE: This procedure waits for the specified number of milliseconds for
+  #       processes with the specified Ids to exit (or be terminated).
+  #
+  proc waitForProcesses { ids timeout {collect true} {kill true} } {
+    # <help>
+    # This procedure waits, up to a specified timeout, for a set of processes
+    # (identified by their integer Ids) to exit, optionally killing those that
+    # do not exit in time.  It returns the Ids of the processes that exited or
+    # were successfully killed.  It is commonly used to clean up child or
+    # helper processes after a test or operation.
+    #
+    # How it works: if requested, it first runs the garbage collector via
+    # [debug collect]; this can be necessary to release runtime callable
+    # wrappers that are keeping out-of-process COM servers (such as Excel)
+    # alive, so that those processes can actually exit.  Then, for each Id, it
+    # obtains the process object via
+    # System.Diagnostics.Process.GetProcessById (which fails if the process is
+    # gone or inaccessible) and waits up to the timeout using WaitForExit.  If
+    # the process exits within the timeout, its Id is recorded.  Otherwise, if
+    # killing is enabled, it refreshes its view of the process and attempts to
+    # Kill it, recording the Id when the kill call succeeds.  A [try]/[finally]
+    # ensures the process object variable is unset (released) after each
+    # iteration whether or not an error occurred.
+    #
+    # Tricky details: the GetProcessById, WaitForExit, Refresh, and Kill calls
+    # are each wrapped in [catch] so that one inaccessible or already-exited
+    # process does not abort the wait for the others.  An Id is added to the
+    # result only when the process is confirmed exited or the kill call
+    # succeeds.
+    #
+    # Arguments:
+    #   ids     -- A list of integer process Ids to wait for.
+    #   timeout -- The maximum number of milliseconds to wait for each process
+    #              to exit.
+    #   collect -- When true, the garbage collector is run before waiting, to
+    #              release wrappers keeping processes alive.  Defaults to true.
+    #   kill    -- When true, a process that has not exited by the timeout is
+    #              forcibly killed.  Defaults to true.
+    #
+    # Results:
+    #   A list of the Ids of the processes that exited within the timeout or
+    #   were successfully killed; this may be empty.
+    # </help>
+
+    #
+    # NOTE: Start with an empty list of process Ids.
+    #
+    set result [list]
+
+    #
+    # NOTE: If requested, run the garbage collector now.  This may be
+    #       necessary to successfully wait for processes that are being
+    #       kept alive via runtime callable wrappers for out-of-process
+    #       COM servers (e.g. Excel).
+    #
+    if {$collect} then {debug collect}
+
+    #
+    # NOTE: Attempt to wait for each process in the list to exit.
+    #
+    foreach id $ids {
+      try {
+        #
+        # NOTE: Get the process object by its integer identifier.  If
+        #       it does not exist (or we lack access to it), this will
+        #       raise an error.
+        #
+        if {[catch {
+          object invoke -alias \
+              System.Diagnostics.Process GetProcessById $id
+        } process] == 0} then {
+          #
+          # NOTE: Wait a while for the process to exit.
+          #
+          if {[catch {
+            $process WaitForExit $timeout; # throw
+          } exited] == 0 && $exited} then {
+            #
+            # NOTE: Ok, process is now exited.
+            #
+            lappend result $id
+          } elseif {$kill} then {
+            #
+            # NOTE: Attempt to "refresh" our view
+            #       of the state of the process.
+            #
+            catch {
+              $process Refresh; # throw
+            }
+
+            #
+            # NOTE: Attempt to kill the process.
+            #
+            catch {
+              $process Kill; # throw
+              lappend result $id; # ok
+            }
+          }
+        }
+      } finally {
+        #
+        # NOTE: Get rid of the process (if we actually obtained it to
+        #       begin with).
+        #
+        unset -nocomplain process; # dispose
+      }
+    }
+
+    return $result
+  }
+
+  #
+  # NOTE: Provide the TclTk "process" package to the interpreter.
+  #
+  package provide TclTk.Process \
+    [expr {[isTclTk] ? [info engine PatchLevel] : "1.0"}]
+}
+

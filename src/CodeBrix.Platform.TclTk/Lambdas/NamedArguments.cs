@@ -1,0 +1,686 @@
+/*
+ * NamedArguments.cs --
+ *
+ * Copyright (c) 2007-2012 by Joe Mistachkin.  All rights reserved.
+ *
+ * See the file "license.terms" for information on usage and redistribution of
+ * this file, and for a DISCLAIMER OF ALL WARRANTIES.
+ *
+ * RCS: @(#) $Id: $
+ */
+
+using System;
+using System.Collections.Generic;
+using CodeBrix.Platform.TclTk._Attributes;
+using CodeBrix.Platform.TclTk._Components.Private;
+using CodeBrix.Platform.TclTk._Components.Public;
+using CodeBrix.Platform.TclTk._Containers.Public;
+using CodeBrix.Platform.TclTk._Interfaces.Private;
+using CodeBrix.Platform.TclTk._Interfaces.Public;
+
+namespace CodeBrix.Platform.TclTk._Lambdas //was previously: Eagle._Lambdas;
+{
+    /// <summary>
+    /// This class implements a lambda term whose arguments are bound by name
+    /// rather than by position.  When executed, each caller-supplied value is
+    /// matched to a formal argument by its name, default values are applied to
+    /// any unspecified arguments, and the lambda body is then evaluated.  It
+    /// derives from <see cref="Core" />.  See <c>core_language.md</c> for
+    /// procedure and lambda semantics.
+    /// </summary>
+    [ObjectId("d3ad8630-d913-4968-9683-f79e8790c7e2")]
+    internal class NamedArguments : Core
+    {
+        #region Public Constructors
+        /// <summary>
+        /// Constructs an instance of the named-argument lambda term.
+        /// </summary>
+        /// <param name="lambdaData">
+        /// The data used to create and identify this lambda term, such as its
+        /// name, arguments, and body.  This parameter may be null.
+        /// </param>
+        public NamedArguments(
+            ILambdaData lambdaData
+            )
+            : base(lambdaData)
+        {
+            // do nothing.
+        }
+        #endregion
+
+        ///////////////////////////////////////////////////////////////////////
+
+        #region IExecute Members
+        /// <summary>
+        /// Executes this lambda term, binding the caller-supplied arguments to
+        /// the formal arguments by name, applying default values for any
+        /// unspecified arguments, and then evaluating the lambda body.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context this lambda term is executing in.  This
+        /// parameter should not be null.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra, caller-specific data supplied for this invocation, if
+        /// any.  This parameter may be null.
+        /// </param>
+        /// <param name="arguments">
+        /// The list of arguments for this invocation, consisting of the lambda
+        /// name followed by alternating argument-name and argument-value
+        /// pairs.  This parameter should not be null.
+        /// </param>
+        /// <param name="result">
+        /// Upon success, this may contain the result value produced by the
+        /// lambda body.  Upon failure, this must contain an appropriate error
+        /// message.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise, a non-Ok value
+        /// with details placed in the <paramref name="result" /> parameter.
+        /// </returns>
+        public override ReturnCode Execute(
+            Interpreter interpreter,
+            IClientData clientData,
+            ArgumentList arguments,
+            ref Result result
+            )
+        {
+            EnterLevel();
+
+            try
+            {
+                if (interpreter == null)
+                {
+                    result = "invalid interpreter";
+                    return ReturnCode.Error;
+                }
+
+                if (arguments == null)
+                {
+                    result = "invalid argument list";
+                    return ReturnCode.Error;
+                }
+
+                ProcedureFlags procedureFlags = ProcedureFlags.None;
+
+                if (ScriptOps.MaybeCheckProcedureCaller(
+                        interpreter, this, ref procedureFlags,
+                        ref result) != ReturnCode.Ok)
+                {
+                    return ReturnCode.Error;
+                }
+
+                IScriptLocation location = null;
+
+                if (ScriptOps.GetAndCheckProcedureLocation(
+                        interpreter, this, procedureFlags,
+                        ref location, ref result) != ReturnCode.Ok)
+                {
+                    return ReturnCode.Error;
+                }
+
+                ArgumentDictionary procedureArguments = this.NamedArguments;
+
+                if (procedureArguments == null)
+                {
+                    result = "invalid procedure argument list";
+                    return ReturnCode.Error;
+                }
+
+                int argumentCount = arguments.Count;
+                string procedureName = this.Name;
+
+                if (!procedureArguments.IsGoodCount(argumentCount - 1, true))
+                {
+                    if (procedureArguments.Count > 0)
+                    {
+                        result = String.Format(
+                            "wrong # args: should be \"{0} {1}\"",
+                            Parser.Quote(procedureName),
+                            procedureArguments.ToRawString(
+                                ToStringFlags.Decorated,
+                                Characters.SpaceString));
+                    }
+                    else
+                    {
+                        result = String.Format(
+                            "wrong # args: should be \"{0}\"",
+                            Parser.Quote(procedureName));
+                    }
+
+                    return ReturnCode.Error;
+                }
+
+                int saveCount = 0;
+                int restoreCount = 0;
+
+                bool noPushFrame = FlagOps.HasFlags(
+                    procedureFlags, ProcedureFlags.NoPushFrame, true);
+
+                ICallFrame frame = null;
+                VariableDictionary savedVariables = null;
+
+                VariableFlags variableFlags = noPushFrame ?
+                    VariableFlags.None : VariableFlags.Argument;
+
+                try
+                {
+                    bool hasArgs = procedureArguments.IsVariadic(null, true);
+                    int maximumId = procedureArguments.GetMaximumId();
+
+                    if (hasArgs)
+                        maximumId--;
+
+                    bool[] foundArguments = null;
+
+                    if (maximumId > 0)
+                        foundArguments = new bool[maximumId];
+
+                    ReturnCode code;
+
+                    if (noPushFrame)
+                    {
+                        code = interpreter.GetVariableFrameViaResolvers(
+                            LookupFlags.Default, ref frame, ref result);
+
+                        if (code != ReturnCode.Ok)
+                            goto done;
+
+                        ArgumentDictionary finalArguments;
+
+                        ScriptOps.GetFinalArguments(
+                            procedureArguments, this.OverwriteArguments,
+                            out finalArguments);
+
+                        code = frame.Save(
+                            interpreter, finalArguments, ref savedVariables,
+                            ref saveCount, ref result);
+
+                        if (code != ReturnCode.Ok)
+                            goto done;
+                    }
+                    else
+                    {
+                        CallFrameFlags callFrameFlags =
+                            CallFrameFlags.Procedure | CallFrameFlags.Lambda;
+
+                        frame = interpreter.NewProcedureCallFrame(
+                            procedureName, callFrameFlags, null, this, arguments);
+
+                        if (frame != null)
+                        {
+                            code = ReturnCode.Ok;
+                        }
+                        else
+                        {
+                            result = "could not create new procedure frame";
+                            code = ReturnCode.Error;
+                            goto done;
+                        }
+                    }
+
+                    StringDictionary alreadySet = new StringDictionary();
+                    ArgumentList argsArguments = hasArgs ? new ArgumentList() : null;
+                    ArgumentList frameProcedureArguments = noPushFrame ? null : new ArgumentList();
+
+                    if (!noPushFrame)
+                    {
+                        frameProcedureArguments.Add(arguments[0]);
+                        frame.ProcedureArguments = frameProcedureArguments;
+                    }
+
+                    int argumentIndex = 1;
+
+                    for (; argumentIndex < argumentCount; argumentIndex += 2)
+                    {
+                        string varName = arguments[argumentIndex];
+
+                        if ((argumentIndex + 1) >= argumentCount)
+                        {
+                            if (!hasArgs)
+                            {
+                                result = String.Format(
+                                    "procedure \"{0}\" missing value for argument named \"{1}\"",
+                                    procedureName, varName);
+
+                                code = ReturnCode.Error;
+                            }
+
+                            break;
+                        }
+
+                        if (hasArgs && procedureArguments.IsVariadicName(varName))
+                        {
+                            Argument argument = arguments[argumentIndex + 1];
+                            StringList list4 = null;
+
+                            code = ListOps.GetOrCopyOrSplitList(
+                                interpreter, argument, true, ref list4,
+                                ref result);
+
+                            if (code != ReturnCode.Ok)
+                                break;
+
+                            for (int index = 0; index < list4.Count; index++)
+                            {
+                                Argument argsArgument = Argument.GetOrCreate(
+                                    interpreter, argument.Flags |
+                                        ArgumentFlags.Named |
+                                        ArgumentFlags.List,
+                                    String.Format("{0}{1}{2}{3}{4}",
+                                        procedureArguments.GetVariadicName(),
+                                        Characters.Space, argumentIndex + 1,
+                                        Characters.Space, index), list4[index],
+                                    interpreter.HasNoCacheArgument());
+
+                                argsArguments.Add(argsArgument);
+                            }
+                        }
+
+                        IAnyPair<int, Argument> anyPair;
+
+                        if (!procedureArguments.TryGetValue(varName, out anyPair))
+                        {
+                            if (!hasArgs)
+                            {
+                                //
+                                // NOTE: This is an error.  The named argument is not
+                                //       supported -AND- there was no "args" argument
+                                //       in the definition of the procedure.
+                                //
+                                result = String.Format(
+                                    "procedure \"{0}\" unsupported argument named \"{1}\"",
+                                    procedureName, varName);
+
+                                code = ReturnCode.Error;
+                            }
+
+                            break;
+                        }
+
+                        if (!alreadySet.ContainsKey(varName))
+                        {
+                            //
+                            // HACK: Set the found flag on this named argument.
+                            //
+                            if ((anyPair != null) && (foundArguments != null))
+                            {
+                                int id = anyPair.X;
+
+                                if ((id >= 0) && (id < foundArguments.Length))
+                                    foundArguments[id] = true;
+                            }
+
+                            //
+                            // NOTE: Sync up the argument name for use when debugging
+                            //       (below) and use the value supplied by the caller.
+                            //
+                            object varValue;
+                            Argument argument = arguments[argumentIndex + 1];
+
+                            varValue = Argument.GetOrCreate(
+                                interpreter, argument.Flags | ArgumentFlags.Named,
+                                varName, argument, interpreter.HasNoCacheArgument());
+
+                            code = interpreter.SetVariableValue2(
+                                variableFlags, frame, varName, varValue, ref result);
+
+                            if (code != ReturnCode.Ok)
+                                break;
+
+                            //
+                            // BUGFIX: Now, also keep track of this argument in the procedure
+                            //         arguments list.  Primarily because we do not want to
+                            //         have to redo this logic later (i.e. for [scope]).
+                            //
+                            if (!noPushFrame)
+                            {
+                                if (varValue is Argument)
+                                {
+                                    frameProcedureArguments.Add((Argument)varValue);
+                                }
+                                else
+                                {
+                                    frameProcedureArguments.Add(Argument.GetOrCreate(
+                                        interpreter, ArgumentFlags.Named |
+                                        ArgumentFlags.FrameOnly, varName, varValue,
+                                        interpreter.HasNoCacheArgument()));
+                                }
+                            }
+
+                            alreadySet.Add(varName, null);
+                        }
+                    }
+
+                    if (code == ReturnCode.Ok)
+                    {
+                        //
+                        // NOTE: Next, verify that all named arguments that do not
+                        //       have a default value have been specified.
+                        //
+                        if (foundArguments != null)
+                        {
+                            foreach (KeyValuePair<string, IAnyPair<int, Argument>> pair
+                                    in procedureArguments)
+                            {
+                                IAnyPair<int, Argument> anyPair = pair.Value;
+
+                                if (anyPair == null)
+                                    continue; /* TODO: Error? */
+
+                                int id = anyPair.X;
+
+                                if ((id < 0) || (id >= foundArguments.Length))
+                                    continue; /* TODO: Error? */
+
+                                if (foundArguments[id])
+                                    continue;
+
+                                Argument argument = anyPair.Y;
+
+                                if (argument == null)
+                                    continue;
+
+                                string varName = pair.Key;
+
+                                if (argument.HasFlags(ArgumentFlags.HasDefault, true))
+                                {
+                                    object @default = argument.Default;
+
+                                    object varValue = (@default != null) ?
+                                        @default : Argument.NoValue;
+
+                                    code = interpreter.SetVariableValue2(
+                                        variableFlags, frame, varName, varValue, ref result);
+
+                                    if (code != ReturnCode.Ok)
+                                        break;
+
+                                    //
+                                    // BUGFIX: Now, also keep track of this argument in
+                                    //         the procedure arguments list.  Primarily
+                                    //         because we do not want to have to redo
+                                    //         this logic later (i.e. for [scope]).
+                                    //
+                                    if (!noPushFrame)
+                                    {
+                                        if (varValue is Argument)
+                                        {
+                                            frameProcedureArguments.Add((Argument)varValue);
+                                        }
+                                        else
+                                        {
+                                            frameProcedureArguments.Add(Argument.GetOrCreate(
+                                                interpreter, ArgumentFlags.Named |
+                                                ArgumentFlags.FrameOnly, varName, varValue,
+                                                interpreter.HasNoCacheArgument()));
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    //
+                                    // NOTE: This is an error.  A required named argument is
+                                    //       missing.  This means it was not specified -AND-
+                                    //       it has no default value.
+                                    //
+                                    result = String.Format(
+                                        "procedure \"{0}\" missing argument named \"{1}\"",
+                                        procedureName, varName);
+
+                                    code = ReturnCode.Error;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (code == ReturnCode.Ok)
+                    {
+                        if (hasArgs)
+                        {
+                            //
+                            // NOTE: Add to the list for the final argument value,
+                            //       which consists of all the remaining argument
+                            //       values.
+                            //
+                            for (; argumentIndex < argumentCount; argumentIndex++)
+                            {
+                                Argument argument = arguments[argumentIndex];
+
+                                Argument argsArgument = Argument.GetOrCreate(
+                                    interpreter, argument.Flags |
+                                        ArgumentFlags.Named |
+                                        ArgumentFlags.List,
+                                    String.Format("{0}{1}{2}",
+                                        procedureArguments.GetVariadicName(),
+                                        Characters.Space,
+                                        argumentIndex), argument,
+                                    interpreter.HasNoCacheArgument());
+
+                                argsArguments.Add(argsArgument);
+                            }
+                        }
+                    }
+
+                    if (code == ReturnCode.Ok)
+                    {
+                        if (argsArguments != null)
+                        {
+                            code = interpreter.SetVariableValue2(
+                                variableFlags, frame,
+                                procedureArguments.GetVariadicName(),
+                                argsArguments, ref result);
+
+                            if ((code == ReturnCode.Ok) && !noPushFrame)
+                            {
+                                frameProcedureArguments.Add(Argument.GetOrCreate(
+                                    interpreter, ArgumentFlags.Named |
+                                    ArgumentFlags.FrameOnly | ArgumentFlags.List,
+                                    procedureArguments.GetVariadicName(), argsArguments,
+                                    interpreter.HasNoCacheArgument()));
+                            }
+                        }
+                    }
+
+                    //
+                    // NOTE: Make sure we succeeded in creating the call frame.
+                    //
+                    if (code == ReturnCode.Ok)
+                    {
+                        ICallFrame savedFrame = null;
+
+                        if (!noPushFrame)
+                            interpreter.PushProcedureCallFrame(frame, true, ref savedFrame);
+
+                        try
+                        {
+#if DEBUGGER && DEBUGGER_EXECUTE
+                            if (DebuggerOps.CanHitBreakpoints(interpreter,
+                                    EngineFlags.None, BreakpointType.BeforeLambdaBody))
+                            {
+                                code = interpreter.CheckBreakpoints(
+                                    code, BreakpointType.BeforeLambdaBody, procedureName,
+                                    null, null, this, null, clientData, arguments,
+                                    ref result);
+                            }
+#endif
+
+                            if (code == ReturnCode.Ok)
+                            {
+                                bool locked = false;
+
+                                try
+                                {
+                                    bool atomic = FlagOps.HasFlags(
+                                        procedureFlags, ProcedureFlags.Atomic, true);
+
+                                    if (atomic)
+                                        interpreter.InternalHardTryLock(ref locked); /* TRANSACTIONAL */
+
+                                    if (!atomic || locked)
+                                    {
+#if ARGUMENT_CACHE || PARSE_CACHE
+                                        EngineFlags savedEngineFlags = EngineFlags.None;
+
+                                        bool nonCaching = FlagOps.HasFlags(
+                                            procedureFlags, ProcedureFlags.NonCaching, true);
+
+                                        if (nonCaching)
+                                        {
+                                            interpreter.BeginProcedureBodyNoCaching(
+                                                ref savedEngineFlags);
+                                        }
+#endif
+
+                                        try
+                                        {
+                                            string body = this.Body;
+
+                                            interpreter.ReturnCode = ReturnCode.Ok;
+
+                                            code = interpreter.EvaluateScript(
+                                                body, location, ref result);
+                                        }
+                                        catch (Exception e)
+                                        {
+                                            result = e;
+                                            code = ReturnCode.Error;
+                                        }
+#if ARGUMENT_CACHE || PARSE_CACHE
+                                        finally
+                                        {
+                                            if (nonCaching)
+                                            {
+                                                interpreter.EndProcedureBodyNoCaching(
+                                                    ref savedEngineFlags);
+                                            }
+                                        }
+#endif
+                                    }
+                                    else
+                                    {
+                                        TraceOps.LockTrace(
+                                            "Execute",
+                                            typeof(NamedArguments).Name, false,
+                                            TracePriority.LockError,
+                                            interpreter.MaybeWhoHasLock());
+
+                                        result = "could not lock interpreter";
+                                        code = ReturnCode.Error;
+                                    }
+                                }
+                                finally
+                                {
+                                    interpreter.InternalExitLock(ref locked); /* TRANSACTIONAL */
+                                }
+
+#if DEBUGGER && DEBUGGER_EXECUTE
+                                if (DebuggerOps.CanHitBreakpoints(interpreter,
+                                        EngineFlags.None, BreakpointType.AfterLambdaBody))
+                                {
+                                    code = interpreter.CheckBreakpoints(
+                                        code, BreakpointType.AfterLambdaBody, procedureName,
+                                        null, null, this, null, clientData, arguments,
+                                        ref result);
+                                }
+#endif
+
+                                //
+                                // BUGFIX: If an opaque object handle is being returned, add
+                                //         a reference to it now.
+                                //
+                                if (ResultOps.IsOkOrReturn(code))
+                                {
+                                    code = interpreter.AddObjectReference(
+                                        code, result, ObjectReferenceType.Return,
+                                        ref result);
+                                }
+
+                                if (code == ReturnCode.Return)
+                                {
+                                    code = Engine.UpdateReturnInformation(interpreter);
+                                }
+                                else if (code == ReturnCode.Error)
+                                {
+                                    /* IGNORED */
+                                    Engine.AddErrorInformation(interpreter, result,
+                                        String.Format("{0}    (lambda term \"{1}\" line {2})",
+                                            Environment.NewLine, FormatOps.Ellipsis(procedureName),
+                                            Interpreter.GetErrorLine(interpreter)));
+                                }
+                            }
+                        }
+                        finally
+                        {
+                            if (!noPushFrame)
+                            {
+                                /* IGNORED */
+                                interpreter.PopProcedureCallFrame(frame, ref savedFrame);
+                            }
+                        }
+                    }
+
+                done:
+
+                    return code;
+                }
+                finally
+                {
+                    if (frame != null)
+                    {
+                        if (noPushFrame)
+                        {
+                            ScriptOps.UnsetArgumentsOrComplain(
+                                interpreter, frame, procedureArguments,
+                                this.CleanArguments);
+
+                            ReturnCode restoreCode;
+                            Result restoreError = null;
+
+                            restoreCode = frame.Restore(interpreter,
+                                procedureArguments, ref savedVariables,
+                                ref restoreCount, ref restoreError);
+
+                            if ((restoreCode == ReturnCode.Ok) &&
+                                (restoreCount != saveCount))
+                            {
+                                restoreError = String.Format(
+                                    "failed to properly restore call frame {0} for " +
+                                    "procedure {1}: restored {2} versus saved {3}",
+                                    frame.Name, procedureName, restoreCount,
+                                    saveCount);
+
+                                restoreCode = ReturnCode.Error;
+                            }
+
+                            if (restoreCode != ReturnCode.Ok)
+                            {
+                                DebugOps.Complain(
+                                    interpreter, restoreCode,
+                                    restoreError);
+                            }
+                        }
+                        else
+                        {
+                            IDisposable disposable = frame as IDisposable;
+
+                            if (disposable != null)
+                            {
+                                disposable.Dispose();
+                                disposable = null;
+                            }
+                        }
+
+                        frame = null;
+                    }
+                }
+            }
+            finally
+            {
+                ExitLevel();
+            }
+        }
+        #endregion
+    }
+}

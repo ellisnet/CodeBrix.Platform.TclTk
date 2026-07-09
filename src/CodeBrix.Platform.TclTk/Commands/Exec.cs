@@ -1,0 +1,692 @@
+/*
+ * Exec.cs --
+ *
+ * Copyright (c) 2007-2012 by Joe Mistachkin.  All rights reserved.
+ *
+ * See the file "license.terms" for information on usage and redistribution of
+ * this file, and for a DISCLAIMER OF ALL WARRANTIES.
+ *
+ * RCS: @(#) $Id: $
+ */
+
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Security;
+using CodeBrix.Platform.TclTk._Attributes;
+using CodeBrix.Platform.TclTk._Components.Private;
+using CodeBrix.Platform.TclTk._Components.Public;
+using CodeBrix.Platform.TclTk._Constants;
+using CodeBrix.Platform.TclTk._Containers.Public;
+using CodeBrix.Platform.TclTk._Interfaces.Public;
+using SharedStringOps = CodeBrix.Platform.TclTk._Components.Shared.StringOps;
+
+#if NET_STANDARD_21
+using Index = CodeBrix.Platform.TclTk._Constants.Index;
+#endif
+
+namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
+{
+    /// <summary>
+    /// This class implements the TclTk <c>exec</c> command, which runs an
+    /// external program as a child process, optionally passing it arguments
+    /// and input and capturing its standard output, standard error, process
+    /// identifier, and exit code.  It supports a large set of options that
+    /// control how the command line is built, how the process is launched
+    /// (including shell execution and alternate credentials), and how its
+    /// results are reported back to the interpreter.  See
+    /// <c>core_language.md</c> for the command syntax and semantics.
+    /// </summary>
+    [ObjectId("f622148a-93e0-4fbc-9645-e2ead4e5483b")]
+    [CommandFlags(CommandFlags.Unsafe | CommandFlags.Standard)]
+    [ObjectGroup("nativeEnvironment")]
+    internal sealed class Exec : Core
+    {
+        /// <summary>
+        /// Constructs an instance of the <c>exec</c> command.
+        /// </summary>
+        /// <param name="commandData">
+        /// The data used to create and identify this command, such as its
+        /// name and flags.  This parameter may be null.
+        /// </param>
+        public Exec(
+            ICommandData commandData
+            )
+            : base(commandData)
+        {
+            // do nothing.
+        }
+
+        #region IExecute Members
+        /// <summary>
+        /// This method executes the <c>exec</c> command.  It parses the
+        /// supplied options, builds the external command line, launches the
+        /// requested program as a child process (synchronously or in the
+        /// background), and then captures and reports the process identifier,
+        /// exit code, standard output, and standard error as directed by the
+        /// options.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter context this command is executing in.  This
+        /// parameter should not be null.
+        /// </param>
+        /// <param name="clientData">
+        /// The extra, command-specific data supplied when this command was
+        /// created, if any.  This parameter may be null.
+        /// </param>
+        /// <param name="arguments">
+        /// The list of arguments for this invocation.  Element zero is the
+        /// command name; the remaining elements supply any options, the name
+        /// of the program to execute, and the arguments to pass to it.  This
+        /// parameter should not be null.
+        /// </param>
+        /// <param name="result">
+        /// Upon success, this contains the captured standard output of the
+        /// child process (subject to the capture options).  Upon failure,
+        /// this contains an appropriate error message.
+        /// </param>
+        /// <returns>
+        /// <see cref="ReturnCode.Ok" /> on success; otherwise,
+        /// <see cref="ReturnCode.Error" /> when the wrong number of arguments
+        /// is supplied, an option cannot be parsed, the command line cannot be
+        /// built, the process cannot be executed, or the interpreter or
+        /// argument list is null, with details placed in
+        /// <paramref name="result" />.
+        /// </returns>
+        public override ReturnCode Execute(
+            Interpreter interpreter, /* in */
+            IClientData clientData,  /* in */
+            ArgumentList arguments,  /* in */
+            ref Result result        /* out */
+            )
+        {
+            ReturnCode code = ReturnCode.Ok;
+
+            if (interpreter != null)
+            {
+                if (arguments != null)
+                {
+                    int argumentCount = arguments.Count;
+
+                    if (argumentCount >= 2)
+                    {
+                        OptionDictionary options = CommandOptions.GetCommandOptions(
+                            CommandOptionType.Exec);
+
+                        int argumentIndex = Index.Invalid;
+
+                        code = interpreter.GetOptions(options, arguments, 0, 1,
+                            Index.Invalid, true, ref argumentIndex, ref result);
+
+                        if (code == ReturnCode.Ok)
+                        {
+                            if (argumentIndex != Index.Invalid)
+                            {
+                                bool noPreviousProcessId = false;
+
+                                if (options.IsPresent("-nopreviousprocessid"))
+                                    noPreviousProcessId = true;
+
+                                bool noInterpreter = false;
+
+                                if (options.IsPresent("-nointerpreter"))
+                                    noInterpreter = true;
+
+                                bool noEvents = false;
+
+                                if (options.IsPresent("-noevents"))
+                                    noEvents = true;
+
+                                bool noSleep = false;
+
+                                if (options.IsPresent("-nosleep"))
+                                    noSleep = true;
+
+                                bool userInterface = false;
+
+                                if (options.IsPresent("-userinterface"))
+                                    userInterface = true;
+
+                                bool trace = false;
+
+                                if (options.IsPresent("-trace"))
+                                    trace = true;
+
+                                bool debug = false;
+
+                                if (options.IsPresent("-debug"))
+                                    debug = true;
+
+                                bool normalize = true;
+
+                                if (options.IsPresent("-nonormalize"))
+                                    normalize = false;
+
+                                bool ellipsis = true;
+
+                                if (options.IsPresent("-noellipsis"))
+                                    ellipsis = false;
+
+                                TracePriority errorPriority = TracePriority.ProcessError2;
+                                TracePriority priority = TracePriority.CommandDebug;
+
+                                if (debug)
+                                    TraceOps.ExternalAdjustTracePriority(ref priority, 1);
+
+                                bool commandLine = false;
+
+                                if (options.IsPresent("-commandline"))
+                                    commandLine = true;
+
+                                bool forProcessor = false;
+
+                                if (options.IsPresent("-forprocessor"))
+                                    forProcessor = true;
+
+                                bool dequote = false;
+
+                                if (options.IsPresent("-dequote"))
+                                    dequote = true;
+
+                                bool quoteAll = false;
+
+                                if (options.IsPresent("-quoteall"))
+                                    quoteAll = true;
+
+                                bool captureExitCode = true;
+
+                                if (options.IsPresent("-noexitcode"))
+                                    captureExitCode = false;
+
+                                bool captureInput = true;
+                                bool captureOutput = true;
+
+                                if (options.IsPresent("-nocapture"))
+                                {
+                                    captureInput = false;
+                                    captureOutput = false;
+                                }
+
+                                if (options.IsPresent("-nocaptureinput"))
+                                    captureInput = false;
+
+                                if (options.IsPresent("-nocaptureoutput"))
+                                    captureOutput = false;
+
+                                bool useUnicode = false;
+
+                                if (options.IsPresent("-unicode"))
+                                    useUnicode = true;
+
+                                bool ignoreStdErr = false;
+
+                                if (options.IsPresent("-ignorestderr"))
+                                    ignoreStdErr = true;
+
+                                bool overrideCapture = false;
+
+                                if (options.IsPresent("-overridecapture"))
+                                    overrideCapture = true;
+
+                                bool killOnError = false;
+
+                                if (options.IsPresent("-killonerror"))
+                                    killOnError = true;
+
+                                bool keepNewLine = false;
+
+                                if (options.IsPresent("-keepnewline"))
+                                    keepNewLine = true;
+
+                                bool carriageReturns = true;
+
+                                if (options.IsPresent("-nocarriagereturns"))
+                                    carriageReturns = false;
+
+                                bool setAll = false;
+
+                                if (options.IsPresent("-setall"))
+                                    setAll = true;
+
+                                bool trimAll = false;
+
+                                if (options.IsPresent("-trimall"))
+                                    trimAll = true;
+
+                                bool useShellExecute = false;
+
+                                if (options.IsPresent("-shell"))
+                                    useShellExecute = true;
+
+                                IVariant value = null;
+
+                                ObjectFlags objectFlags =
+                                    ObjectOps.GetDefaultObjectFlags() |
+                                    ObjectFlags.NoDispose;
+
+                                if (options.IsPresent("-objectflags", ref value))
+                                    objectFlags = (ObjectFlags)value.Value;
+
+                                ExitCode? successExitCode = null;
+
+                                if (options.IsPresent("-success", ref value))
+                                    successExitCode = (ExitCode)value.Value;
+
+                                string domainName = null;
+
+                                if (options.IsPresent("-domainname", ref value))
+                                    domainName = value.ToString();
+
+                                string userName = null;
+
+                                if (options.IsPresent("-username", ref value))
+                                    userName = value.ToString();
+
+                                SecureString password = null;
+
+                                if (options.IsPresent("-password", ref value))
+                                    password = (SecureString)value.Value;
+
+                                string directory = null;
+
+                                if (options.IsPresent("-directory", ref value))
+                                    directory = value.ToString();
+
+                                string processIdVarName = null;
+
+                                if (options.IsPresent("-processid", ref value))
+                                    processIdVarName = value.ToString();
+
+                                string exitCodeVarName = null;
+
+                                if (options.IsPresent("-exitcode", ref value))
+                                    exitCodeVarName = value.ToString();
+
+                                string stdInVarName = null;
+
+                                if (options.IsPresent("-stdin", ref value))
+                                    stdInVarName = value.ToString();
+
+                                string stdOutVarName = null;
+
+                                if (options.IsPresent("-stdout", ref value))
+                                    stdOutVarName = value.ToString();
+
+                                string stdErrVarName = null;
+
+                                if (options.IsPresent("-stderr", ref value))
+                                    stdErrVarName = value.ToString();
+
+                                string stdInObjectVarName = null;
+
+                                if (options.IsPresent("-stdinobject", ref value))
+                                    stdInObjectVarName = value.ToString();
+
+                                ICallback startCallback = null;
+
+                                if (options.IsPresent("-startcallback", ref value))
+                                    startCallback = (ICallback)value.Value;
+
+                                ICallback stdOutCallback = null;
+
+                                if (options.IsPresent("-stdoutcallback", ref value))
+                                    stdOutCallback = (ICallback)value.Value;
+
+                                ICallback stdErrCallback = null;
+
+                                if (options.IsPresent("-stderrcallback", ref value))
+                                    stdErrCallback = (ICallback)value.Value;
+
+                                EventFlags eventFlags = interpreter.EngineEventFlags;
+
+                                if (options.IsPresent("-eventflags", ref value))
+                                    eventFlags = (EventFlags)value.Value;
+
+                                ProcessWindowStyle windowStyle = ProcessWindowStyle.Normal;
+
+                                if (options.IsPresent("-windowstyle", ref value))
+                                    windowStyle = (ProcessWindowStyle)value.Value;
+
+                                StringList tags = null; /* EXTERNAL USE ONLY */
+
+                                if (options.IsPresent("-tags", ref value))
+                                    tags = (StringList)value.Value;
+
+                                int? timeout = null;
+
+                                if (options.IsPresent("-timeout", ref value))
+                                    timeout = (int)value.Value;
+
+                                string logTag = null;
+
+                                if (options.IsPresent("-logtag", ref value))
+                                    logTag = value.ToString();
+
+                                StringList escapeSubStringCommand = null;
+
+                                if (options.IsPresent("-escapesubstring", ref value))
+                                    escapeSubStringCommand = (StringList)value.Value;
+
+                                StringList preProcessArgumentsCommand = null;
+
+                                if (options.IsPresent("-preprocessarguments", ref value))
+                                    preProcessArgumentsCommand = (StringList)value.Value;
+
+                                string escapeRanges = null;
+
+                                if (options.IsPresent("-escaperanges", ref value))
+                                    escapeRanges = value.ToString();
+
+                                string outputLogPath = null;
+
+                                if (options.IsPresent("-stdoutlogpath", ref value))
+                                    outputLogPath = value.ToString();
+
+                                string errorLogPath = null;
+
+                                if (options.IsPresent("-stderrlogpath", ref value))
+                                    errorLogPath = value.ToString();
+
+                                int argumentStopIndex = argumentCount - 1;
+                                bool background = false;
+
+                                if (SharedStringOps.SystemEquals(
+                                        arguments[argumentStopIndex],
+                                        Characters.Ampersand.ToString()))
+                                {
+                                    argumentStopIndex--;
+                                    background = true;
+                                }
+                                else if (options.IsPresent("-background"))
+                                {
+                                    background = true;
+                                }
+
+                                string execFileName = arguments[argumentIndex];
+
+                                if (!PathOps.IsRemoteUri(execFileName))
+                                    execFileName = PathOps.GetNativePath(execFileName);
+
+                                Result input = null;
+                                IObject inputObject = null;
+                                DataReceivedEventHandler outputHandler = null;
+                                DataReceivedEventHandler errorHandler = null;
+                                EventHandler startHandler = null;
+
+                                long processId = 0;
+                                bool attempted = false;
+                                ExitCode exitCode = ResultOps.SuccessExitCode();
+                                Result error = null;
+
+                                string execArguments = null;
+                                int argumentStartIndex = argumentIndex + 1;
+                                bool done = false;
+
+                                if (argumentStartIndex < argumentCount)
+                                {
+                                    if (commandLine)
+                                    {
+                                        execArguments = RuntimeOps.BuildCommandLine(
+                                            interpreter,
+                                            ArgumentList.GetRangeAsStringList(
+                                                arguments, argumentStartIndex,
+                                                argumentStopIndex, dequote),
+                                            escapeSubStringCommand, quoteAll,
+                                            forProcessor, true, ref done,
+                                            ref result);
+
+                                        if (done)
+                                            goto done;
+                                    }
+                                    else if (escapeRanges != null)
+                                    {
+                                        execArguments = RuntimeOps.BuildCommandLine(
+                                            interpreter,
+                                            ArgumentList.GetRangeAsStringList(
+                                                arguments, argumentStartIndex,
+                                                argumentStopIndex, dequote),
+                                            escapeRanges,
+                                            interpreter.InternalCultureInfo,
+                                            escapeSubStringCommand, quoteAll,
+                                            forProcessor, true, ref done,
+                                            ref result);
+
+                                        if (done)
+                                            goto done;
+                                    }
+                                    else
+                                    {
+                                        execArguments = ListOps.Concat(arguments,
+                                            argumentStartIndex, argumentStopIndex);
+                                    }
+
+                                    if (execArguments == null)
+                                    {
+                                        code = ReturnCode.Error;
+
+                                        TraceOps.ChangeBaseTracePriority(
+                                            ref priority, errorPriority);
+
+                                        TraceOps.ChangeToErrorPriority(
+                                            ref priority);
+
+                                        goto done;
+                                    }
+                                }
+
+                                code = ProcessOps.HandleCaptureOptions(
+                                    interpreter, options, startCallback, stdOutCallback,
+                                    stdErrCallback, stdInVarName, stdInObjectVarName,
+                                    objectFlags, captureInput, captureOutput, ref input,
+                                    ref inputObject, ref outputHandler, ref errorHandler,
+                                    ref startHandler, ref result);
+
+                                if (debug)
+                                {
+                                    if (code != ReturnCode.Ok)
+                                    {
+                                        TraceOps.ChangeBaseTracePriority(
+                                            ref priority, errorPriority);
+
+                                        TraceOps.ChangeToErrorPriority(
+                                            ref priority);
+                                    }
+
+                                    TraceOps.DebugTrace(String.Format(
+                                        "Execute: interpreter = {0}, domainName = {1}, userName = {2}, " +
+                                        "password = {3}, execFileName = {4}, execArguments = {5}, " +
+                                        "directory = {6}, input = {7}, inputObject = {8}, windowStyle = {9}, " +
+                                        "eventFlags = {10}, timeout = {11}, noInterpreter = {12}, debug = {13}, " +
+                                        "commandLine = {14}, dequote = {15}, quoteAll = {16}, " +
+                                        "useShellExecute = {17}, captureExitCode = {18}, captureInput = {19}, " +
+                                        "captureOutput = {20}, useUnicode = {21}, ignoreStdErr = {22}, " +
+                                        "overrideCapture = {23}, userInterface = {24}, noSleep = {25}, " +
+                                        "killOnError = {26}, keepNewLine = {27}, carriageReturns = {28}, " +
+                                        "trimAll = {29}, background = {30}, noEvents = {31}, " +
+                                        "noPreviousProcessId = {32}, successExitCode = {33}, " +
+                                        "processIdVarName = {34}, exitCodeVarName = {35}, stdInVarName = {36}, " +
+                                        "stdInObjectVarName = {37}, stdOutVarName = {38}, stdErrVarName = {39}, " +
+                                        "startCallback = {40}, stdOutCallback = {41}, stdErrCallback = {42}, " +
+                                        "startHandler = {43}, outputLogPath = {44}, errorLogPath = {45}, " +
+                                        "outputHandler = {46}, errorHandler = {47}, logTag = {48}, tags = {49}, " +
+                                        "done = {50}",
+                                        FormatOps.InterpreterNoThrow(interpreter), FormatOps.WrapOrNull(domainName),
+                                        FormatOps.WrapOrNull(userName), FormatOps.WrapOrNull(password),
+                                        FormatOps.WrapOrNull(execFileName), FormatOps.WrapOrNull(execArguments),
+                                        FormatOps.WrapOrNull(directory), FormatOps.WrapOrNull(input),
+                                        FormatOps.WrapOrNull(inputObject), FormatOps.WrapOrNull(windowStyle),
+                                        FormatOps.WrapOrNull(eventFlags), FormatOps.WrapOrNull(timeout),
+                                        noInterpreter, debug, commandLine, dequote, quoteAll, useShellExecute,
+                                        captureExitCode, captureInput, captureOutput, useUnicode, ignoreStdErr,
+                                        overrideCapture, userInterface, noSleep, killOnError, keepNewLine,
+                                        carriageReturns, trimAll, background, noEvents, noPreviousProcessId,
+                                        FormatOps.WrapOrNull(successExitCode), FormatOps.WrapOrNull(processIdVarName),
+                                        FormatOps.WrapOrNull(exitCodeVarName), FormatOps.WrapOrNull(stdInVarName),
+                                        FormatOps.WrapOrNull(stdInObjectVarName), FormatOps.WrapOrNull(stdOutVarName),
+                                        FormatOps.WrapOrNull(stdErrVarName), FormatOps.WrapOrNull(startCallback),
+                                        FormatOps.WrapOrNull(stdOutCallback), FormatOps.WrapOrNull(stdErrCallback),
+                                        FormatOps.WrapOrNull(startHandler), FormatOps.WrapOrNull(outputLogPath),
+                                        FormatOps.WrapOrNull(errorLogPath), FormatOps.WrapOrNull(outputHandler),
+                                        FormatOps.WrapOrNull(errorHandler), FormatOps.WrapOrNull(logTag),
+                                        FormatOps.WrapOrNull(tags), done), typeof(Exec).Name, priority);
+                                }
+
+                                if (code == ReturnCode.Ok)
+                                {
+                                    code = ProcessOps.PreProcessArguments(
+                                        interpreter, preProcessArgumentsCommand,
+                                        execFileName, directory, ref execArguments,
+                                        ref done, ref result);
+
+                                    if (debug && (code != ReturnCode.Ok))
+                                    {
+                                        TraceOps.ChangeBaseTracePriority(
+                                            ref priority, errorPriority);
+
+                                        TraceOps.ChangeToErrorPriority(
+                                            ref priority);
+                                    }
+
+                                    if (done)
+                                        goto done;
+
+                                    if (code == ReturnCode.Ok)
+                                    {
+                                        result = null; /* FAIL-SAFE */
+
+                                        code = ProcessOps.ExecuteProcess(
+                                            noInterpreter ? null : interpreter, domainName,
+                                            userName, password, execFileName, execArguments,
+                                            directory, input, inputObject, startHandler,
+                                            outputLogPath, errorLogPath, outputHandler,
+                                            errorHandler, logTag, windowStyle, eventFlags,
+                                            timeout, useShellExecute, captureExitCode,
+                                            captureOutput, useUnicode, ignoreStdErr,
+                                            overrideCapture, userInterface, noSleep,
+                                            killOnError, keepNewLine, background,
+                                            !noEvents && !background, noPreviousProcessId,
+                                            trace, ref processId, ref exitCode, ref result,
+                                            ref error);
+
+                                        if (debug && (code != ReturnCode.Ok))
+                                        {
+                                            TraceOps.ChangeBaseTracePriority(
+                                                ref priority, errorPriority);
+
+                                            TraceOps.ChangeToErrorPriority(
+                                                ref priority);
+                                        }
+
+                                        attempted = true; /* probably? */
+                                    }
+                                }
+
+                            done:
+
+                                if (debug)
+                                {
+                                    TraceOps.DebugTrace(String.Format(
+                                        "Execute: interpreter = {0}, domainName = {1}, userName = {2}, " +
+                                        "password = {3}, execFileName = {4}, execArguments = {5}, " +
+                                        "directory = {6}, input = {7}, inputObject = {8}, windowStyle = {9}, " +
+                                        "eventFlags = {10}, timeout = {11}, noInterpreter = {12}, debug = {13}, " +
+                                        "commandLine = {14}, dequote = {15}, quoteAll = {16}, " +
+                                        "useShellExecute = {17}, captureExitCode = {18}, captureInput = {19}, " +
+                                        "captureOutput = {20}, useUnicode = {21}, ignoreStdErr = {22}, " +
+                                        "overrideCapture = {23}, userInterface = {24}, noSleep = {25}, " +
+                                        "killOnError = {26}, keepNewLine = {27}, carriageReturns = {28}, " +
+                                        "trimAll = {29}, background = {30}, noEvents = {31}, " +
+                                        "noPreviousProcessId = {32}, successExitCode = {33}, " +
+                                        "processIdVarName = {34}, exitCodeVarName = {35}, stdInVarName = {36}, " +
+                                        "stdInObjectVarName = {37}, stdOutVarName = {38}, stdErrVarName = {39}, " +
+                                        "startCallback = {40}, stdOutCallback = {41}, stdErrCallback = {42}, " +
+                                        "startHandler = {43}, outputLogPath = {44}, errorLogPath = {45}, " +
+                                        "outputHandler = {46}, errorHandler = {47}, logTag = {48}, tags = {49}, " +
+                                        "done = {50}, processId = {51}, exitCode = {52}, result = {53}, error = {54}",
+                                        FormatOps.InterpreterNoThrow(interpreter), FormatOps.WrapOrNull(domainName),
+                                        FormatOps.WrapOrNull(userName), FormatOps.WrapOrNull(password),
+                                        FormatOps.WrapOrNull(execFileName), FormatOps.WrapOrNull(execArguments),
+                                        FormatOps.WrapOrNull(directory), FormatOps.WrapOrNull(input),
+                                        FormatOps.WrapOrNull(inputObject), FormatOps.WrapOrNull(windowStyle),
+                                        FormatOps.WrapOrNull(eventFlags), FormatOps.WrapOrNull(timeout),
+                                        noInterpreter, debug, commandLine, dequote, quoteAll, useShellExecute,
+                                        captureExitCode, captureInput, captureOutput, useUnicode, ignoreStdErr,
+                                        overrideCapture, userInterface, noSleep, killOnError, keepNewLine,
+                                        carriageReturns, trimAll, background, noEvents, noPreviousProcessId,
+                                        FormatOps.WrapOrNull(successExitCode), FormatOps.WrapOrNull(processIdVarName),
+                                        FormatOps.WrapOrNull(exitCodeVarName), FormatOps.WrapOrNull(stdInVarName),
+                                        FormatOps.WrapOrNull(stdInObjectVarName), FormatOps.WrapOrNull(stdOutVarName),
+                                        FormatOps.WrapOrNull(stdErrVarName), FormatOps.WrapOrNull(startCallback),
+                                        FormatOps.WrapOrNull(stdOutCallback), FormatOps.WrapOrNull(stdErrCallback),
+                                        FormatOps.WrapOrNull(startHandler), FormatOps.WrapOrNull(outputLogPath),
+                                        FormatOps.WrapOrNull(errorLogPath), FormatOps.WrapOrNull(outputHandler),
+                                        FormatOps.WrapOrNull(errorHandler), FormatOps.WrapOrNull(logTag),
+                                        FormatOps.WrapOrNull(tags), done, processId, exitCode,
+                                        FormatOps.WrapOrNull(normalize, ellipsis, result),
+                                        FormatOps.WrapOrNull(normalize, ellipsis, error)),
+                                        typeof(Exec).Name, priority);
+                                }
+
+                                if (!attempted &&
+                                    (code != ReturnCode.Ok) && (result != null) && (error == null))
+                                {
+                                    error = result;
+                                    result = null;
+                                }
+
+                                ResultList setErrors = null;
+
+                                /* NO RESULT */
+                                ProcessOps.HandleCaptureResults(
+                                    interpreter, processIdVarName, exitCodeVarName,
+                                    stdOutVarName, stdErrVarName, processId, exitCode,
+                                    successExitCode, attempted, useShellExecute,
+                                    background, captureExitCode, captureOutput, setAll,
+                                    trimAll, carriageReturns, ref code, ref result,
+                                    ref error, ref setErrors);
+
+                                if (setErrors != null)
+                                {
+                                    //
+                                    // HACK: There should not be any errors during [set];
+                                    //       complain louder.
+                                    //
+                                    TraceOps.ExternalAdjustTracePriority(ref priority, 1);
+
+                                    TraceOps.DebugTrace(String.Format(
+                                        "Execute: interpreter = {0}, setErrors = {1}",
+                                        FormatOps.InterpreterNoThrow(interpreter),
+                                        FormatOps.WrapOrNull(setErrors)),
+                                        typeof(Exec).Name, priority);
+                                }
+                            }
+                            else
+                            {
+                                result = "wrong # args: should be \"exec ?options? arg ?arg ...?\"";
+                                code = ReturnCode.Error;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        result = "wrong # args: should be \"exec ?options? arg ?arg ...?\"";
+                        code = ReturnCode.Error;
+                    }
+                }
+                else
+                {
+                    result = "invalid argument list";
+                    code = ReturnCode.Error;
+                }
+            }
+            else
+            {
+                result = "invalid interpreter";
+                code = ReturnCode.Error;
+            }
+
+            return code;
+        }
+        #endregion
+    }
+}

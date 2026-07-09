@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="AGENT-README.txt" />
+    <File Path="icon-codebrix-128.png" />
+    <File Path="LICENSE" />
+    <File Path="LICENSE-MODIFICATIONS.txt" />
+    <File Path="README.md" />
+    <File Path="THIRD-PARTY-NOTICES.txt" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="tests/CodeBrix.Platform.TclTk.Tests/CodeBrix.Platform.TclTk.Tests.csproj" />
+  </Folder>
+  <Project Path="src/CodeBrix.Platform.TclTk/CodeBrix.Platform.TclTk.csproj" />
+</Solution>
