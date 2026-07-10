@@ -1,0 +1,88 @@
+# Auto-generated random canvas scenario (seed 55359).
+canvas -width 400 -height 300 -scrollregion {-100 -100 500 400}
+do create rectangle 111.5 25 86.5 145 -width 2
+do create rectangle 194.5 243.5 19.5 417.5 -width 5 -fill red -outline {}
+do create line 94.5 165 7 319 59.5 360 -width 7 -capstyle butt -joinstyle bevel -arrow last -arrowshape {10 12 5}
+do create rectangle 317 224 276.5 117 -width 8 -fill red
+do create rectangle 112 -32.5 382.5 278 -width 5
+do create rectangle 68 240 317.5 -8.5 -width 8 -fill red
+do create line 387 -19 175.5 275 99.5 287.5 -width 1 -capstyle butt -joinstyle bevel
+do create rectangle 129 244.5 348 43.5 -width 1
+do create line 225 255.5 7 -33 363 -31.5 -width 1 -capstyle round -joinstyle bevel
+do create rectangle 80.5 51 179 201 -width 1 -fill red -outline {}
+do create polygon 53.5 279.5 73 119.5 296 318.5 
+do create line 351 175.5 401 173 260.5 -57 -59 228.5 -width 2 -capstyle projecting -joinstyle round
+do create polygon -57 110 45.5 133 150 331 151.5 169.5 
+do raise 5
+do lower 3
+do lower 2
+q find all
+q bbox 1
+q coords 1
+q bbox 2
+q coords 2
+q bbox 3
+q coords 3
+q bbox 4
+q coords 4
+q bbox 5
+q coords 5
+q bbox 6
+q coords 6
+q bbox 7
+q coords 7
+q bbox 8
+q coords 8
+q bbox 9
+q coords 9
+q bbox 10
+q coords 10
+q bbox 11
+q coords 11
+q bbox 12
+q coords 12
+q bbox 13
+q coords 13
+q find closest -50 -50
+q find closest -50 100
+q find closest -50 250
+q find closest 50 -50
+q find closest 50 100
+q find closest 50 250
+q find closest 150 -50
+q find closest 150 100
+q find closest 150 250
+q find closest 250 -50
+q find closest 250 100
+q find closest 250 250
+q find closest 350 -50
+q find closest 350 100
+q find closest 350 250
+q find closest 62.5 -12 10
+q find closest 339 -18.5 0
+q find closest 142.5 219.5 10
+q find closest 139 157 5
+q find closest -1 145 0
+q find closest 33 -13.5 5
+q find overlapping -10.5 40 411 438
+q find overlapping 324.5 55.5 124.5 162.5
+q find enclosed 212.5 261 162 244.5
+q find enclosed 169 388 437 374
+q find overlapping 28 240.5 -56 99
+q find enclosed 361.5 240 212.5 101.5
+do move all -7 3
+do scale all 0 0 0.5 0.75
+q bbox 1
+q bbox 2
+q bbox 3
+q bbox 4
+q bbox 5
+q bbox 6
+q bbox 7
+q bbox 8
+q bbox 9
+q bbox 10
+q bbox 11
+q bbox 12
+q bbox 13
+q bbox all

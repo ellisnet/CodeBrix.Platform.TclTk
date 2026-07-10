@@ -1,0 +1,76 @@
+# Auto-generated random canvas scenario (seed 36906).
+canvas -width 400 -height 300 -scrollregion {-100 -100 500 400}
+do create line 94 54.5 -4 204 244 -32.5 160.5 109 309.5 326 -width 4.5 -capstyle projecting -joinstyle round
+do create line 281.5 303 346.5 -17.5 34.5 -60 -width 2 -capstyle projecting -joinstyle miter -arrow first -arrowshape {10 12 5} -smooth 1 -splinesteps 4
+do create line 296.5 -2.5 392.5 33.5 401.5 55.5 -width 4.5 -capstyle butt -joinstyle miter -arrow both -smooth 1 -splinesteps 12
+do create line 359 140.5 24.5 308 5 405.5 -33 263.5 -4 380 -width 7 -capstyle butt -joinstyle bevel
+do create rectangle 34.5 233 143 212.5 -width 8
+do create rectangle 130 -17 -16 292 -width 3.5
+do create polygon -41.5 12.5 78 73 379.5 161 295 214.5 
+do create polygon 15 -1 28.5 59.5 344.5 25.5 -smooth 1 -splinesteps 4
+do create line 21.5 154 -54 310 -width 1 -capstyle round -joinstyle round
+do create line 225 235 128 419.5 -width 4.5 -capstyle butt -joinstyle bevel
+do lower 9
+do raise 2 9
+do lower 10
+q find all
+q bbox 1
+q coords 1
+q bbox 2
+q coords 2
+q bbox 3
+q coords 3
+q bbox 4
+q coords 4
+q bbox 5
+q coords 5
+q bbox 6
+q coords 6
+q bbox 7
+q coords 7
+q bbox 8
+q coords 8
+q bbox 9
+q coords 9
+q bbox 10
+q coords 10
+q find closest -50 -50
+q find closest -50 100
+q find closest -50 250
+q find closest 50 -50
+q find closest 50 100
+q find closest 50 250
+q find closest 150 -50
+q find closest 150 100
+q find closest 150 250
+q find closest 250 -50
+q find closest 250 100
+q find closest 250 250
+q find closest 350 -50
+q find closest 350 100
+q find closest 350 250
+q find closest 259 258 2
+q find closest 57 106.5 0
+q find closest 207.5 -25.5 2
+q find closest 132.5 324 10
+q find closest 32.5 -38 10
+q find closest 122 324.5 0
+q find overlapping 419.5 201.5 152 150.5
+q find enclosed 196 51 99.5 404
+q find overlapping 421.5 105.5 224 6
+q find overlapping 396.5 88.5 244.5 430.5
+q find overlapping 255 142.5 409 34
+q find overlapping 104.5 62 258.5 90.5
+do move all 12.5 3
+do scale all 0 0 1.25 0.75
+q bbox 1
+q bbox 2
+q bbox 3
+q bbox 4
+q bbox 5
+q bbox 6
+q bbox 7
+q bbox 8
+q bbox 9
+q bbox 10
+q bbox all

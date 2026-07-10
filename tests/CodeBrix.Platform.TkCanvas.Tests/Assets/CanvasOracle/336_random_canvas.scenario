@@ -1,0 +1,76 @@
+# Auto-generated random canvas scenario (seed 104567).
+canvas -width 400 -height 300 -scrollregion {-100 -100 500 400}
+do create line 376 97 434.5 271 217.5 101.5 -22 252.5 -width 1 -capstyle projecting -joinstyle miter -smooth 1 -splinesteps 8
+do create rectangle 199 402.5 378.5 -2 -width 2
+do create polygon -2.5 155.5 111 13.5 172.5 -31 119.5 70.5 -outline black -width 1 -fill {} -smooth 1 -splinesteps 12
+do create rectangle 270 273 300.5 236 -width 1
+do create line 293.5 6.5 430.5 -19.5 -width 4.5 -capstyle projecting -joinstyle round
+do create line 105.5 17 186 317.5 61 224.5 -width 7 -capstyle projecting -joinstyle round -arrow first
+do create polygon 44 24 248 145 -21.5 233 270.5 126 
+do create line 351.5 105.5 77.5 -18.5 95 57 322.5 193 320.5 190.5 -width 7 -capstyle round -joinstyle round
+do create polygon 142 -25.5 147.5 -6.5 218 365.5 436 100 -outline black -width 2
+do create polygon 286 395.5 277 408.5 382 184.5 
+do raise 6
+do lower 5
+do raise 7 8
+q find all
+q bbox 1
+q coords 1
+q bbox 2
+q coords 2
+q bbox 3
+q coords 3
+q bbox 4
+q coords 4
+q bbox 5
+q coords 5
+q bbox 6
+q coords 6
+q bbox 7
+q coords 7
+q bbox 8
+q coords 8
+q bbox 9
+q coords 9
+q bbox 10
+q coords 10
+q find closest -50 -50
+q find closest -50 100
+q find closest -50 250
+q find closest 50 -50
+q find closest 50 100
+q find closest 50 250
+q find closest 150 -50
+q find closest 150 100
+q find closest 150 250
+q find closest 250 -50
+q find closest 250 100
+q find closest 250 250
+q find closest 350 -50
+q find closest 350 100
+q find closest 350 250
+q find closest 404 385 5
+q find closest 204 201 0
+q find closest 226 87.5 2
+q find closest 248.5 74.5 2
+q find closest 99.5 355 5
+q find closest 317 -38.5 2
+q find enclosed 206.5 35.5 60 138
+q find overlapping 392 420.5 395.5 398.5
+q find overlapping 161.5 127.5 250 291
+q find enclosed -32 159 415.5 -20.5
+q find enclosed 350 -44 204.5 118.5
+q find enclosed 92.5 -51.5 89 286
+do move all 12.5 -4
+do scale all 0 0 2 2
+q bbox 1
+q bbox 2
+q bbox 3
+q bbox 4
+q bbox 5
+q bbox 6
+q bbox 7
+q bbox 8
+q bbox 9
+q bbox 10
+q bbox all

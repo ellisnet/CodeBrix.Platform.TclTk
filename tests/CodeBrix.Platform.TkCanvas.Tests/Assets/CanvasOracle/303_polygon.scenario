@@ -1,0 +1,20 @@
+# Polygon autoclose, bbox, unfilled interior semantics, smoothing.
+canvas -width 500 -height 400
+do create polygon 10 10 100 10 55 80
+q coords 1
+q bbox 1
+do create polygon 150 10 240 10 195 80 -outline black -width 3
+q bbox 2
+do create polygon 10 100 100 100 100 180 10 180 10 100
+q coords 3
+q bbox 3
+do create polygon 150 100 240 100 195 180 -fill {}
+q find closest 195 130
+q find overlapping 190 125 200 135
+q find enclosed 140 90 250 190
+do create polygon 300 10 340 60 380 10 -smooth 1
+q bbox 5
+q find withtag all
+do create polygon 300 100 380 100 380 180 300 180 -joinstyle miter -outline black -width 7
+q bbox 6
+q find closest 296 96

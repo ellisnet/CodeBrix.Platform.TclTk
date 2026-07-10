@@ -1,0 +1,15 @@
+# find closest tie-breaking (topmost) and start-item cycling.
+canvas -width 400 -height 300
+do create rectangle 10 10 100 100 -fill red
+do create rectangle 10 10 100 100 -fill blue
+do create rectangle 10 10 100 100 -fill green
+q find closest 50 50
+q find closest 50 50 0 3
+q find closest 50 50 0 1
+q find closest 50 50 0 2
+do create line 200 10 200 100
+do create line 210 10 210 100
+q find closest 204 50
+q find closest 205 50
+q find closest 204 50 3
+q find closest 204 50 3 4

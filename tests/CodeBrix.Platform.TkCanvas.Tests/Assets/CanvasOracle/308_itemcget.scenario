@@ -1,0 +1,11 @@
+# Option readback spot checks (formatting-stable options only).
+canvas -width 400 -height 300 -closeenough 3.5
+do create line 10 10 100 100 -fill red -width 2.5 -tags {x y}
+q itemcget 1 -fill
+q itemcget 1 -tags
+q itemcget 1 -arrow
+q cget -closeenough
+do create rectangle 10 10 40 40 -fill blue
+q itemcget 2 -fill
+q itemcget 2 -outline
+q find closest 104 104

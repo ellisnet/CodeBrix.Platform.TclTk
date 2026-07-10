@@ -20,6 +20,7 @@ public sealed class WindowTree
     private EventModifiers _heldButtons;
     private TkScheduler _scheduler;
     private FontManager _fonts;
+    private Overlay.WindowManager _windowManager;
 
     internal WindowTree(TkWindow root)
     {
@@ -56,6 +57,25 @@ public sealed class WindowTree
             if (_fonts == null) { _fonts = new FontManager(); }
             return _fonts;
         }
+    }
+
+    /// <summary>
+    /// The tree's mini window-manager: overlay toplevels, the <c>wm</c>
+    /// surface, chrome interactions, and modal grabs (created lazily).
+    /// </summary>
+    public Overlay.WindowManager WindowManager
+    {
+        get
+        {
+            if (_windowManager == null) { _windowManager = new Overlay.WindowManager(this); }
+            return _windowManager;
+        }
+    }
+
+    /// <summary>The window manager if one was ever created, else null (no allocation).</summary>
+    internal Overlay.WindowManager WindowManagerIfCreated
+    {
+        get { return _windowManager; }
     }
 
     /// <summary>
@@ -99,6 +119,15 @@ public sealed class WindowTree
         if (window == null || window.IsDestroyed) { return; }
         tkEvent.Window = window;
 
+        // Widget-internal hook first (the C-event-handler analogue): it runs
+        // independently of the script bindings and cannot break them.
+        TkEventHandler classHandler = window.ClassEventHandler;
+        if (classHandler != null)
+        {
+            classHandler(tkEvent);
+            if (window.IsDestroyed) { return; }
+        }
+
         foreach (string tag in window.EffectiveBindTags())
         {
             TkEventHandler handler = Bindings.FindBest(tag, tkEvent);
@@ -128,6 +157,14 @@ public sealed class WindowTree
                 && type != TkEventType.Motion && type != TkEventType.MouseWheel)
         {
             throw new ArgumentException("not a pointer event type: " + type, nameof(type));
+        }
+
+        // The mini window-manager gets first crack: overlay chrome
+        // interactions (title-bar drags, the close box) are ITS events, not
+        // Tk's — like OS decorations, they never reach bindings.
+        if (_windowManager != null && _windowManager.InterceptPointer(type, rootX, rootY, button))
+        {
+            return;
         }
 
         TkWindow hit = HitTest(rootX, rootY);
@@ -340,6 +377,11 @@ public sealed class WindowTree
     {
         DispatchEvent(window, new TkEvent { Type = TkEventType.Destroy, KeySym = string.Empty, Character = string.Empty });
         Bindings.RemoveTag(window.PathName);
+
+        if (_windowManager != null)
+        {
+            _windowManager.WindowDestroyed(window);
+        }
 
         if (FocusWindow == window) { FocusWindow = null; }
         if (GrabWindow == window) { GrabWindow = null; }

@@ -1,0 +1,31 @@
+# Line bbox/closest: caps, joins, widths, arrows, smoothing.
+canvas -width 500 -height 400
+do create line 10 10 100 10
+q coords 1
+q bbox 1
+do create line 10 30 100 30 -width 5
+q bbox 2
+do create line 10 50 100 50 -width 5 -capstyle projecting
+q bbox 3
+do create line 10 100 60 150 110 100 -joinstyle miter -width 9
+q bbox 4
+do create line 10 200 60 250 110 200 -joinstyle bevel -width 9
+q bbox 5
+do create line 200 10 200 100 -arrow last
+q coords 6
+q bbox 6
+do create line 250 10 250 100 -arrow both -arrowshape {10 12 5} -width 3
+q coords 7
+q bbox 7
+q find closest 55 10
+q find closest 55 13
+q find closest 55 33
+do create line 300 10 340 60 380 10 -smooth 1
+q bbox 8
+q find closest 340 35
+q find closest 340 35 25
+do itemconfigure 6 -arrow none
+q coords 6
+do create line 10 300 60 350 110 300 -joinstyle round -width 9 -capstyle round
+q bbox 9
+q find closest 60 356

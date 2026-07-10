@@ -1,0 +1,15 @@
+# Scroll increments and confine clamping.
+canvas -width 200 -height 100 -scrollregion {0 0 500 300} -xscrollincrement 25 -yscrollincrement 20
+q xview
+do xview scroll 3 units
+q canvasx 0
+do xview moveto 0.9
+q canvasx 0
+q xview
+do configure -confine 0
+do yview moveto 2.0
+q canvasy 0
+do configure -confine 1
+do yview scroll 0 units
+q canvasy 0
+q yview

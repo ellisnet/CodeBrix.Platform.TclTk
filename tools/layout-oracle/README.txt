@@ -18,6 +18,13 @@ Files here:
                             The scenario line format is documented at the top
                             (kept in sync with the C# parser in
                             tests/.../Oracle/OracleScenario.cs).
+  capture_canvas.tcl        Runs one canvas scenario in wish and dumps each
+                            query result (kept in sync with
+                            tests/.../Oracle/CanvasOracleScenario.cs).
+                            Fixtures live in Assets/CanvasOracle/. Canvas
+                            scenarios must NOT contain text items: their
+                            geometry is font-dependent and would make the
+                            fixtures machine-specific.
   generate_fixtures.sh      Regenerates every *.expected from its *.scenario
                             by running wish. Requires tk + a display (X11);
                             windows are created off-screen and unmanaged, so
@@ -26,6 +33,9 @@ Files here:
                             generator; 1NN_random.scenario files.
   random_grid_scenarios.tcl Deterministic (seeded) random grid scenario
                             generator; 2NN_random_grid.scenario files.
+  random_canvas_scenarios.tcl Deterministic (seeded) random canvas scenario
+                            generator; 3NN_random_canvas.scenario files
+                            (offset 320, after the hand-authored 30N ones).
 
 Regenerating fixtures is only needed when scenarios change or a new Tk
 version becomes the reference oracle:

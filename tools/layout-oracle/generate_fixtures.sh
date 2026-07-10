@@ -38,4 +38,15 @@ if [ -d "$bindassets" ]; then
     done
 fi
 
+canvasassets="$here/../../tests/CodeBrix.Platform.TkCanvas.Tests/Assets/CanvasOracle"
+if [ -d "$canvasassets" ]; then
+    for scenario in "$canvasassets"/*.scenario; do
+        [ -e "$scenario" ] || break
+        expected="${scenario%.scenario}.expected"
+        wish "$here/capture_canvas.tcl" "$scenario" > "$expected"
+        count=$((count + 1))
+        echo "captured: $(basename "$expected")"
+    done
+fi
+
 echo "done: $count fixture(s) regenerated with $(echo 'puts [info patchlevel]' | tclsh)"

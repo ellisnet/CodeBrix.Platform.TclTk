@@ -1,0 +1,88 @@
+# Auto-generated random canvas scenario (seed 123020).
+canvas -width 400 -height 300 -scrollregion {-100 -100 500 400}
+do create rectangle 154 -39 153 118.5 -width 1 -fill red
+do create polygon 339.5 337 2 394.5 165 200.5 60.5 274 424.5 337.5 
+do create polygon 108 358 349 276 105.5 221.5 -41 298.5 278 252.5 -fill {}
+do create rectangle 419 434.5 242 202.5 -width 1 -fill red
+do create line 182 -17.5 -38 321.5 110.5 94.5 -width 4.5 -capstyle round -joinstyle bevel
+do create rectangle 363.5 37 377 428 -width 1
+do create line -47.5 421 203 297 -width 4.5 -capstyle round -joinstyle round
+do create polygon 118.5 -56.5 354 297 70.5 45 -outline black -width 1
+do create rectangle 243.5 179 358 -30.5 -width 1 -outline {}
+do create polygon 5.5 286.5 57.5 -39.5 260.5 368 -outline black -width 4
+do create rectangle 273.5 -56.5 17 391.5 -width 5 -outline {}
+do create polygon 232.5 368.5 225.5 429 286.5 147 129.5 197.5 
+do create rectangle -3 161 281.5 218 -width 1 -fill red
+do lower 11
+do raise 13
+do raise 8
+q find all
+q bbox 1
+q coords 1
+q bbox 2
+q coords 2
+q bbox 3
+q coords 3
+q bbox 4
+q coords 4
+q bbox 5
+q coords 5
+q bbox 6
+q coords 6
+q bbox 7
+q coords 7
+q bbox 8
+q coords 8
+q bbox 9
+q coords 9
+q bbox 10
+q coords 10
+q bbox 11
+q coords 11
+q bbox 12
+q coords 12
+q bbox 13
+q coords 13
+q find closest -50 -50
+q find closest -50 100
+q find closest -50 250
+q find closest 50 -50
+q find closest 50 100
+q find closest 50 250
+q find closest 150 -50
+q find closest 150 100
+q find closest 150 250
+q find closest 250 -50
+q find closest 250 100
+q find closest 250 250
+q find closest 350 -50
+q find closest 350 100
+q find closest 350 250
+q find closest 15.5 334 5
+q find closest 52.5 383.5 2
+q find closest 325 127 10
+q find closest 141.5 258.5 5
+q find closest -24 -28.5 2
+q find closest 274.5 41.5 5
+q find enclosed 53.5 160 98.5 147
+q find overlapping 120 404.5 204.5 -43
+q find enclosed 334 254 -43.5 -57
+q find enclosed 1.5 274 292 259.5
+q find enclosed 38.5 -56 126.5 389
+q find enclosed 231 305.5 214.5 245.5
+do move all 5 -4
+do scale all 0 0 0.5 2
+q bbox 1
+q bbox 2
+q bbox 3
+q bbox 4
+q bbox 5
+q bbox 6
+q bbox 7
+q bbox 8
+q bbox 9
+q bbox 10
+q bbox 11
+q bbox 12
+q bbox 13
+q bbox all

@@ -1,0 +1,30 @@
+# Tags, addtag, dtag, raise/lower, above/below, delete.
+canvas -width 400 -height 300
+do create rectangle 10 10 50 50 -tags {a b}
+do create rectangle 20 20 60 60 -tags b
+do create rectangle 30 30 70 70
+q gettags 1
+q find withtag b
+do addtag c withtag b
+q gettags 2
+do dtag b c
+q gettags 1
+q gettags 2
+q find all
+do raise 1
+q find all
+do lower 3 1
+q find all
+do raise 2 3
+q find all
+q find above 3
+q find below 3
+do addtag e overlapping 25 25 35 35
+q find withtag e
+do dtag e
+q find withtag e
+do delete 2
+q find all
+q find withtag b
+do raise b
+q find all

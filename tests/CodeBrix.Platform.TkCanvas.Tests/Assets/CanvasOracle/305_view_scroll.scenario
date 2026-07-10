@@ -1,0 +1,28 @@
+# View transform: xview/yview fractions, moveto, scroll, canvasx/y, scan.
+canvas -width 200 -height 100 -scrollregion {0 0 1000 500}
+q xview
+q yview
+q canvasx 0
+q canvasx 10
+do xview moveto 0.25
+q xview
+q canvasx 0
+do xview scroll 2 units
+q xview
+q canvasx 0
+do xview scroll 1 pages
+q xview
+q canvasx 0
+do yview moveto 0.5
+q yview
+q canvasy 5
+do scan mark 100 50
+do scan dragto 90 45
+q canvasx 0
+q canvasy 0
+q xview
+do scan mark 100 50
+do scan dragto 90 45 5
+q canvasx 0
+q canvasx 7 10
+q canvasy -13 10

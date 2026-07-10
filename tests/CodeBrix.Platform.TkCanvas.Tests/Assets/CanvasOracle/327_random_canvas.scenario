@@ -1,0 +1,84 @@
+# Auto-generated random canvas scenario (seed 49208).
+canvas -width 400 -height 300 -scrollregion {-100 -100 500 400}
+do create polygon 145 426 349.5 125.5 11.5 310.5 -outline black -width 6.5 -fill {} -smooth 1 -splinesteps 8
+do create rectangle -4.5 -37.5 33.5 60 -width 2 -outline {}
+do create rectangle 164 233.5 107 7 -width 1
+do create rectangle 407 52.5 248 183 -width 2
+do create polygon 64.5 221 427 242.5 332 -38 -outline black -width 4 -fill {}
+do create rectangle 52.5 430 194 226.5 -width 5
+do create line 371.5 182 26 -30 -33 309 -width 1 -capstyle butt -joinstyle round -arrow both -arrowshape {10 12 5}
+do create line 136 421.5 232.5 360.5 -width 3 -capstyle butt -joinstyle round
+do create rectangle -35 203.5 -42 284 -width 3.5
+do create line 68 79.5 -28 360.5 -width 3 -capstyle round -joinstyle miter
+do create rectangle 302 259.5 66 123 -width 5 -fill red
+do create rectangle 83 -18 405 203 -width 1
+do lower 9
+do lower 8 5
+do lower 10
+q find all
+q bbox 1
+q coords 1
+q bbox 2
+q coords 2
+q bbox 3
+q coords 3
+q bbox 4
+q coords 4
+q bbox 5
+q coords 5
+q bbox 6
+q coords 6
+q bbox 7
+q coords 7
+q bbox 8
+q coords 8
+q bbox 9
+q coords 9
+q bbox 10
+q coords 10
+q bbox 11
+q coords 11
+q bbox 12
+q coords 12
+q find closest -50 -50
+q find closest -50 100
+q find closest -50 250
+q find closest 50 -50
+q find closest 50 100
+q find closest 50 250
+q find closest 150 -50
+q find closest 150 100
+q find closest 150 250
+q find closest 250 -50
+q find closest 250 100
+q find closest 250 250
+q find closest 350 -50
+q find closest 350 100
+q find closest 350 250
+q find closest 213 39 0
+q find closest 54.5 35 0
+q find closest 27 214.5 10
+q find closest 343 295.5 0
+q find closest 168 79 5
+q find closest 90 197.5 0
+q find overlapping 152 104 39.5 190
+q find enclosed 32.5 -18 15.5 285
+q find overlapping -41 194 215 401
+q find overlapping -32.5 92 289.5 206
+q find overlapping 124.5 67.5 290.5 114.5
+q find overlapping 203 223.5 219.5 15
+do move all 5 3
+do scale all 0 0 1.25 0.5
+q bbox 1
+q bbox 2
+q bbox 3
+q bbox 4
+q bbox 5
+q bbox 6
+q bbox 7
+q bbox 8
+q bbox 9
+q bbox 10
+q bbox 11
+q bbox 12
+q bbox all

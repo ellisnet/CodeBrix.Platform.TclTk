@@ -140,6 +140,48 @@ public sealed class TkWindow
     }
 
     /// <summary>
+    /// The widget built on this window, or null for a bare window. Set by
+    /// the widget's constructor; the toolkit render pass and pointer
+    /// refinement reach the widget through it (the analogue of Tk's
+    /// per-window instance data — identity only, widget STATE stays in the
+    /// widget).
+    /// </summary>
+    public Widgets.IWidget Widget { get; set; }
+
+    /// <summary>
+    /// The window-manager state when this window is an overlay toplevel
+    /// (created through the tree's <see cref="Overlay.WindowManager"/>), or
+    /// null for an ordinary window. Overlay toplevels are children of the
+    /// root window but are excluded from the base layout: the layout pass
+    /// sizes them from <c>wm geometry</c> / their requested size, and they
+    /// always stack above base content.
+    /// </summary>
+    internal Overlay.OverlayState Overlay;
+
+    /// <summary>
+    /// Moves a child to the end of the child list — the top of the sibling
+    /// stacking order (hit-testing and painting treat later siblings as
+    /// higher). The window manager uses it to raise overlay toplevels.
+    /// </summary>
+    /// <param name="child">The child to move.</param>
+    internal void MoveChildToEnd(TkWindow child)
+    {
+        if (_children.Remove(child))
+        {
+            _children.Add(child);
+        }
+    }
+
+    /// <summary>
+    /// The widget-internal event hook, run BEFORE the window's bind tags
+    /// when an event is dispatched — the analogue of a Tk C event handler
+    /// (<c>Tk_CreateEventHandler</c>), which fires independently of script
+    /// bindings. The canvas uses it for current-item picking and item-level
+    /// binding dispatch; its result cannot suppress the bind-tag walk.
+    /// </summary>
+    internal Events.TkEventHandler ClassEventHandler;
+
+    /// <summary>
     /// The width this window last reported through a <c>&lt;Configure&gt;</c>
     /// event (used by the layout driver to fire Configure only on change).
     /// </summary>

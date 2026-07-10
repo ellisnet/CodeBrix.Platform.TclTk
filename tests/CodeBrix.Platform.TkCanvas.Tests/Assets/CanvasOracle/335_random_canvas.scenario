@@ -1,0 +1,72 @@
+# Auto-generated random canvas scenario (seed 98416).
+canvas -width 400 -height 300 -scrollregion {-100 -100 500 400}
+do create rectangle 412.5 258 310 83.5 -width 3.5 -outline {}
+do create rectangle 57.5 90.5 303 120.5 -width 8
+do create polygon 437.5 7.5 227.5 57.5 319 408.5 -outline black -width 4
+do create polygon 422.5 -48 115.5 345.5 151 -13 252.5 109.5 
+do create line 224.5 -16 307.5 68 391.5 -27.5 165.5 420 -51.5 12.5 -width 1 -capstyle round -joinstyle miter -arrow both -arrowshape {10 12 5}
+do create line 110.5 4.5 94 86.5 -width 3 -capstyle projecting -joinstyle miter -arrow last
+do create rectangle 24.5 280.5 388.5 393 -width 8
+do create line -32 -9.5 -35 -23.5 -width 2 -capstyle butt -joinstyle round
+do create rectangle 4 279.5 418.5 107.5 -width 3.5 -outline {}
+do raise 3 2
+do lower 5 2
+do raise 5
+q find all
+q bbox 1
+q coords 1
+q bbox 2
+q coords 2
+q bbox 3
+q coords 3
+q bbox 4
+q coords 4
+q bbox 5
+q coords 5
+q bbox 6
+q coords 6
+q bbox 7
+q coords 7
+q bbox 8
+q coords 8
+q bbox 9
+q coords 9
+q find closest -50 -50
+q find closest -50 100
+q find closest -50 250
+q find closest 50 -50
+q find closest 50 100
+q find closest 50 250
+q find closest 150 -50
+q find closest 150 100
+q find closest 150 250
+q find closest 250 -50
+q find closest 250 100
+q find closest 250 250
+q find closest 350 -50
+q find closest 350 100
+q find closest 350 250
+q find closest 56 196 0
+q find closest 226.5 24.5 10
+q find closest 124.5 426.5 10
+q find closest 336.5 387 10
+q find closest 201 227.5 5
+q find closest 139 321.5 0
+q find overlapping 317.5 115.5 -11.5 330
+q find overlapping 149 125 289 112.5
+q find enclosed 217.5 12.5 363 170
+q find enclosed 138 440 20.5 0.5
+q find enclosed 91 130.5 295.5 48.5
+q find overlapping -11 361.5 303.5 -45
+do move all 5 -4
+do scale all 0 0 1.25 0.5
+q bbox 1
+q bbox 2
+q bbox 3
+q bbox 4
+q bbox 5
+q bbox 6
+q bbox 7
+q bbox 8
+q bbox 9
+q bbox all

@@ -1,0 +1,92 @@
+# Auto-generated random canvas scenario (seed 61510).
+canvas -width 400 -height 300 -scrollregion {-100 -100 500 400}
+do create line 196.5 297 201 46.5 279 153 139 389.5 -width 3 -capstyle butt -joinstyle bevel -arrow both
+do create rectangle 341.5 211.5 284 345 -width 1 -fill red
+do create polygon 274 399 395 108.5 273.5 80 200.5 369 -outline black -width 2 -smooth 1 -splinesteps 4
+do create line 118 214 430.5 187 91 321.5 279 311.5 -width 1 -capstyle butt -joinstyle round
+do create line -14 -22 368 173.5 -width 2 -capstyle butt -joinstyle round
+do create polygon 239.5 409.5 184 8.5 196.5 180.5 71.5 369.5 
+do create polygon 193.5 20.5 -29 394 338.5 -6 171 -25 365.5 230.5 -outline black -width 6.5 -fill {} -smooth 1 -splinesteps 8
+do create polygon 205 422.5 -27.5 113.5 249 -50 
+do create line 368 396.5 143.5 240 0.5 219 316 55 30.5 315 -width 7 -capstyle projecting -joinstyle round
+do create line 43 285 319.5 8.5 -width 7 -capstyle butt -joinstyle round
+do create polygon 379.5 386 219 330.5 20.5 439 
+do create polygon 244 410 246.5 161.5 70 376 
+do create rectangle -42 206 45.5 296 -width 1
+do create line 127 33.5 124 33 353 280 422.5 72.5 199.5 188 -width 2 -capstyle butt -joinstyle bevel -arrow last -arrowshape {10 12 5}
+do lower 14 12
+do lower 11 12
+do raise 2 1
+q find all
+q bbox 1
+q coords 1
+q bbox 2
+q coords 2
+q bbox 3
+q coords 3
+q bbox 4
+q coords 4
+q bbox 5
+q coords 5
+q bbox 6
+q coords 6
+q bbox 7
+q coords 7
+q bbox 8
+q coords 8
+q bbox 9
+q coords 9
+q bbox 10
+q coords 10
+q bbox 11
+q coords 11
+q bbox 12
+q coords 12
+q bbox 13
+q coords 13
+q bbox 14
+q coords 14
+q find closest -50 -50
+q find closest -50 100
+q find closest -50 250
+q find closest 50 -50
+q find closest 50 100
+q find closest 50 250
+q find closest 150 -50
+q find closest 150 100
+q find closest 150 250
+q find closest 250 -50
+q find closest 250 100
+q find closest 250 250
+q find closest 350 -50
+q find closest 350 100
+q find closest 350 250
+q find closest -57.5 283 10
+q find closest 175.5 85 0
+q find closest 47.5 273.5 0
+q find closest -47 213 10
+q find closest -16.5 330 5
+q find closest 145.5 181 10
+q find enclosed 246.5 -59 43.5 164.5
+q find enclosed 196 128.5 98 356
+q find overlapping 106.5 290.5 313.5 157.5
+q find overlapping 244 311 330 317.5
+q find enclosed 392.5 245 256 347.5
+q find overlapping 218 138.5 392.5 273.5
+do move all -7 -4
+do scale all 0 0 1.25 0.75
+q bbox 1
+q bbox 2
+q bbox 3
+q bbox 4
+q bbox 5
+q bbox 6
+q bbox 7
+q bbox 8
+q bbox 9
+q bbox 10
+q bbox 11
+q bbox 12
+q bbox 13
+q bbox 14
+q bbox all

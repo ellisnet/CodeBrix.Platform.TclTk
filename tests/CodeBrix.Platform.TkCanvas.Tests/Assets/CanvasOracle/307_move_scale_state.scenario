@@ -1,0 +1,26 @@
+# move/moveto/scale and item -state search behavior.
+canvas -width 400 -height 300
+do create rectangle 10 10 50 50
+do create line 100 100 200 150 -width 2
+do move 1 5.5 -3
+q coords 1
+q bbox 1
+do moveto 1 100 {}
+q bbox 1
+do moveto 1 {} 30
+q bbox 1
+q coords 1
+do scale 2 0 0 0.5 2
+q coords 2
+do scale all 10 10 2 2
+q coords 1
+q coords 2
+do create rectangle 200 10 240 40 -state hidden
+q find closest 220 25
+q find overlapping 195 5 245 45
+do create rectangle 200 60 240 90 -state disabled
+q find closest 220 75
+q bbox 4
+do itemconfigure 3 -state normal
+q find closest 220 25
+q bbox 3

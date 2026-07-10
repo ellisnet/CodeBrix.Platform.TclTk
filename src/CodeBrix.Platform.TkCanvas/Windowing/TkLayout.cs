@@ -50,12 +50,46 @@ public static class TkLayout
         root.Y = 0;
         root.IsDisplayed = true;
 
+        ArrangeOverlays(root);
+
         for (int pass = 0; pass < MaxPasses; pass++)
         {
             if (!ArrangeTree(root)) { break; }
         }
 
         FireConfigureEvents(root);
+    }
+
+    /// <summary>
+    /// Sizes and places overlay toplevels: no geometry manager owns them, so
+    /// the layout root sizes each from its <c>wm geometry</c> (or its
+    /// requested size), applies its <c>wm</c> position, honors withdrawal,
+    /// and clamps frames into the root bounds (§11.4).
+    /// </summary>
+    private static void ArrangeOverlays(TkWindow root)
+    {
+        bool any = false;
+        foreach (TkWindow child in root.Children)
+        {
+            Overlay.OverlayState overlay = child.Overlay;
+            if (overlay == null) { continue; }
+            any = true;
+
+            int width = overlay.GeometryWidth ?? child.RequestedWidth;
+            int height = overlay.GeometryHeight ?? child.RequestedHeight;
+            child.Width = (width < 1) ? 1 : width;
+            child.Height = (height < 1) ? 1 : height;
+            if (overlay.GeometryX.HasValue) { child.X = overlay.GeometryX.Value; }
+            if (overlay.GeometryY.HasValue) { child.Y = overlay.GeometryY.Value; }
+            child.IsDisplayed = !overlay.Withdrawn;
+        }
+
+        if (any)
+        {
+            Events.WindowTree tree = root.Tree;
+            Overlay.WindowManager manager = tree.WindowManagerIfCreated;
+            if (manager != null) { manager.ClampOverlays(); }
+        }
     }
 
     /// <summary>

@@ -1,0 +1,60 @@
+# Auto-generated random canvas scenario (seed 12302).
+canvas -width 400 -height 300 -scrollregion {-100 -100 500 400}
+do create rectangle 312.5 292 362 208.5 -width 1 -fill red
+do create rectangle 330.5 397 235.5 213.5 -width 2
+do create line 252.5 324 289 79 300.5 311.5 -23.5 24 -width 10 -capstyle butt -joinstyle round
+do create rectangle 392 126.5 424.5 -28.5 -width 2 -fill red -outline {}
+do create rectangle 391.5 38.5 70 299 -width 2
+do create rectangle 6.5 -32 62.5 128.5 -width 8
+do lower 4 2
+do raise 2 2
+do raise 2 3
+q find all
+q bbox 1
+q coords 1
+q bbox 2
+q coords 2
+q bbox 3
+q coords 3
+q bbox 4
+q coords 4
+q bbox 5
+q coords 5
+q bbox 6
+q coords 6
+q find closest -50 -50
+q find closest -50 100
+q find closest -50 250
+q find closest 50 -50
+q find closest 50 100
+q find closest 50 250
+q find closest 150 -50
+q find closest 150 100
+q find closest 150 250
+q find closest 250 -50
+q find closest 250 100
+q find closest 250 250
+q find closest 350 -50
+q find closest 350 100
+q find closest 350 250
+q find closest 72.5 32 0
+q find closest 83 -28.5 0
+q find closest 254 91 2
+q find closest 185 388 2
+q find closest 74.5 198.5 10
+q find closest 391 256.5 0
+q find overlapping 131.5 320 151 86
+q find enclosed 416 76 160 220
+q find enclosed 274.5 270 192.5 155.5
+q find overlapping 74 302.5 142 -27.5
+q find overlapping -24.5 326.5 432 381.5
+q find enclosed 123.5 140.5 -2.5 35
+do move all 5 -4
+do scale all 0 0 2 2
+q bbox 1
+q bbox 2
+q bbox 3
+q bbox 4
+q bbox 5
+q bbox 6
+q bbox all
