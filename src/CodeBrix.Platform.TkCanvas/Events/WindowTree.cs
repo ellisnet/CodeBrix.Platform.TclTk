@@ -78,6 +78,21 @@ public sealed class WindowTree
         get { return _windowManager; }
     }
 
+    private Menus.MenuManager _menuManager;
+
+    /// <summary>
+    /// The tree's menu system: popup/cascade menus and the menubar, and the
+    /// modal pointer routing while a menu is posted (created lazily).
+    /// </summary>
+    public Menus.MenuManager Menus
+    {
+        get
+        {
+            if (_menuManager == null) { _menuManager = new Menus.MenuManager(this); }
+            return _menuManager;
+        }
+    }
+
     /// <summary>
     /// Notifies the scheduler that geometry-affecting state changed, so a
     /// coalesced relayout is pending. Mutations occurring INSIDE the layout
@@ -163,6 +178,14 @@ public sealed class WindowTree
         // interactions (title-bar drags, the close box) are ITS events, not
         // Tk's — like OS decorations, they never reach bindings.
         if (_windowManager != null && _windowManager.InterceptPointer(type, rootX, rootY, button))
+        {
+            return;
+        }
+
+        // A posted menu chain is modal: it consumes pointer events (tracking
+        // the active entry, opening cascades, invoking, and dismissing) before
+        // anything underneath sees them.
+        if (_menuManager != null && _menuManager.InterceptPointer(type, rootX, rootY, button))
         {
             return;
         }
@@ -381,6 +404,10 @@ public sealed class WindowTree
         if (_windowManager != null)
         {
             _windowManager.WindowDestroyed(window);
+        }
+        if (_menuManager != null)
+        {
+            _menuManager.WindowDestroyed(window);
         }
 
         if (FocusWindow == window) { FocusWindow = null; }

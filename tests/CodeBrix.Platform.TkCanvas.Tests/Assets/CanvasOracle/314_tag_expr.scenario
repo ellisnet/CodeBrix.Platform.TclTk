@@ -1,0 +1,16 @@
+# Canvas tag-expression searching (&&, ||, ^, !, parens).
+canvas -width 400 -height 300
+do create rectangle 10 10 50 50 -tags {a b}
+do create rectangle 60 10 100 50 -tags {b c}
+do create rectangle 110 10 150 50 -tags {a c}
+do create rectangle 160 10 200 50 -tags {a b c}
+q find withtag a&&b
+q find withtag a||c
+q find withtag {b && !a}
+q find withtag {a^c}
+q find withtag {(a||b)&&c}
+q find withtag !a
+do addtag marked withtag a&&c
+q find withtag marked
+do dtag 4 b
+q gettags 4

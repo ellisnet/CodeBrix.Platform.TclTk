@@ -200,6 +200,13 @@ public static class TkLayout
             if (GridManager.Instance.Arrange(window)) { changed = true; }
         }
 
+        // Widgets that manage their own children (e.g. panedwindow) arrange
+        // them here, after pack/grid content and before descending.
+        if (window.ArrangeContent != null)
+        {
+            if (window.ArrangeContent()) { changed = true; }
+        }
+
         foreach (TkWindow child in window.Children)
         {
             if (ArrangeTree(child)) { changed = true; }

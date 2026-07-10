@@ -1,0 +1,15 @@
+# Arc item, pieslice style: bbox extreme-point inclusion across quadrants.
+canvas -width 400 -height 300
+do create arc 50 50 150 150 -start 30 -extent 120 -style pieslice -outline black -width 2
+q type 1
+q coords 1
+q bbox 1
+q itemcget 1 -style
+do create arc 60 60 260 200 -start 0 -extent 359 -style pieslice
+q bbox 2
+do create arc 40 40 140 140 -start 200 -extent 100 -style pieslice
+q bbox 3
+do move 1 15 10
+q coords 1
+q bbox 1
+q find overlapping 0 0 400 300

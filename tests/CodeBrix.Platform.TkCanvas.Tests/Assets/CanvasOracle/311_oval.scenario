@@ -1,0 +1,21 @@
+# Oval item: geometry, bbox bloat, move/scale, find closest/overlapping/enclosed.
+canvas -width 400 -height 300
+do create oval 50 50 150 120 -outline black -width 3
+q type 1
+q coords 1
+q bbox 1
+q find closest 100 85
+q find overlapping 40 40 160 130
+q find enclosed 40 40 160 130
+do create oval 200 100 260 160 -fill red -outline ""
+q bbox 2
+q find closest 230 130
+q find closest 230 300
+do move 1 10 5
+q coords 1
+q bbox 1
+do scale 1 0 0 2 2
+q coords 1
+q bbox 1
+q itemcget 2 -outline
+q itemcget 1 -fill

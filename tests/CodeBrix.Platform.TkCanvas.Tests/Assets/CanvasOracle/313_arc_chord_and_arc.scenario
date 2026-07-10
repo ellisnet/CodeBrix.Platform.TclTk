@@ -1,0 +1,16 @@
+# Arc item, chord and arc styles: bbox + find + coords readback + scale.
+canvas -width 400 -height 300
+do create arc 200 50 300 150 -start 0 -extent 270 -style chord -outline black
+q type 1
+q bbox 1
+q itemcget 1 -style
+do create arc 50 180 150 260 -start 45 -extent 90 -style arc -outline black -width 3
+q bbox 2
+q itemcget 2 -style
+q coords 2
+do scale 2 0 0 2 2
+q coords 2
+q bbox 2
+do create arc 60 60 160 120 -start 10 -extent 160 -style chord -fill blue
+q find closest 110 90
+q find enclosed 0 0 400 300

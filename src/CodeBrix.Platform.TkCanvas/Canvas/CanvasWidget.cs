@@ -158,6 +158,11 @@ public sealed class CanvasWidget : IWidget
             { "rectangle", () => new RectangleItem() },
             { "polygon", () => new PolygonItem() },
             { "text", () => new TextItem() },
+            { "oval", () => new OvalItem() },
+            { "arc", () => new ArcItem() },
+            { "bitmap", () => new BitmapItem() },
+            { "image", () => new ImageItem() },
+            { "window", () => new WindowItem() },
         };
     }
 
@@ -285,6 +290,23 @@ public sealed class CanvasWidget : IWidget
             if (_byId.TryGetValue(id, out byId))
             {
                 yield return byId;
+            }
+            yield break;
+        }
+
+        // A spec that uses tag-expression operators (&& || ^ ! ()) is a
+        // boolean tag expression (tkCanvas.c TagSearchEvalExpr); a plain word
+        // is a literal tag, and "all" matches everything.
+        if (CanvasTagExpression.IsExpression(tagOrId))
+        {
+            CanvasTagExpression expr = CanvasTagExpression.Parse(tagOrId);
+            foreach (CanvasItem item in _items.ToArray())
+            {
+                if (item.Canvas != this) { continue; }
+                if (expr.Evaluate(item.HasTag))
+                {
+                    yield return item;
+                }
             }
             yield break;
         }
@@ -1715,7 +1737,10 @@ public sealed class CanvasWidget : IWidget
     {
         switch (option)
         {
-            case "-width": return "1.0";
+            case "-width":
+                // Anchor items (window) default 0; everything else 1.0.
+                return (item is AnchoredCanvasItem) ? "0" : "1.0";
+            case "-height": return (item is AnchoredCanvasItem) ? "0" : "";
             case "-splinesteps": return "12";
             case "-smooth": return "0";
             case "-arrow": return "none";
@@ -1728,12 +1753,19 @@ public sealed class CanvasWidget : IWidget
             case "-tags": return "";
             case "-dash": return "";
             case "-text": return "";
+            case "-start": return "0.0";
+            case "-extent": return "90.0";
+            case "-style": return "pieslice";
+            case "-activewidth": return "0.0";
+            case "-disabledwidth": return "0.0";
             case "-font": return (item is TextItem) ? "TkDefaultFont" : "";
             case "-fill":
                 // Tk 8.6's Unix BLACK default reads back as "#000000".
-                return (item is RectangleItem) ? "" : "#000000";
+                // Rectangle, oval, arc default to no fill; line/text/polygon to black.
+                return (item is RectangleItem || item is OvalItem || item is ArcItem)
+                        ? "" : "#000000";
             case "-outline":
-                return (item is RectangleItem) ? "#000000" : "";
+                return (item is RectangleItem || item is OvalItem || item is ArcItem) ? "#000000" : "";
             default: return "";
         }
     }

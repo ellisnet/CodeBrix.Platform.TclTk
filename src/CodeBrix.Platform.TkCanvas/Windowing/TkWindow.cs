@@ -173,6 +173,18 @@ public sealed class TkWindow
     }
 
     /// <summary>
+    /// An optional hook that lets a widget arrange its OWN child content
+    /// during the layout pass — for widgets that manage their children
+    /// directly instead of through <c>pack</c>/<c>grid</c> (the analogue of a
+    /// Tk widget that is its own geometry manager, e.g. <c>panedwindow</c>).
+    /// The layout driver calls it after this window's pack/grid content is
+    /// arranged and before descending into the children; it returns whether
+    /// any child geometry changed. The widget sizes those children (and sets
+    /// their <see cref="IsDisplayed"/>) from this window's allocated size.
+    /// </summary>
+    internal System.Func<bool> ArrangeContent;
+
+    /// <summary>
     /// The widget-internal event hook, run BEFORE the window's bind tags
     /// when an event is dispatched — the analogue of a Tk C event handler
     /// (<c>Tk_CreateEventHandler</c>), which fires independently of script
