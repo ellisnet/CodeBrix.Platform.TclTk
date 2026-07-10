@@ -1,0 +1,16 @@
+# Auto-generated random pack scenario (seed 142542).
+window .w1 110 88
+window .w1.w2 102 91
+window .w3 120 26
+window .w1.w2.w4 61 118
+window .w1.w2.w5 68 118
+window .w1.w6 102 101
+window .w1.w7 116 110
+border .w1.w7 6
+pack .w1 -side left -expand 1 -padx 1 -pady 4
+pack .w1.w2 -side right
+pack .w3 -side right -fill x -expand 1 -padx 0
+pack .w1.w2.w4 -side right -anchor ne -padx 3
+pack .w1.w2.w5 -side top -fill x
+pack .w1.w6 -side left -fill both -pady 4 -ipadx 4
+pack .w1.w7 -side right -expand 1 -anchor se -ipadx 4

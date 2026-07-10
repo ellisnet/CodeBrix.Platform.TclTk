@@ -1,0 +1,46 @@
+# Every anchor position of a small frame inside its own fixed container.
+window .c1 80 60
+window .c1.w 20 10
+window .c2 80 60
+window .c2.w 20 10
+window .c3 80 60
+window .c3.w 20 10
+window .c4 80 60
+window .c4.w 20 10
+window .c5 80 60
+window .c5.w 20 10
+window .c6 80 60
+window .c6.w 20 10
+window .c7 80 60
+window .c7.w 20 10
+window .c8 80 60
+window .c8.w 20 10
+window .c9 80 60
+window .c9.w 20 10
+packpropagate .c1 0
+packpropagate .c2 0
+packpropagate .c3 0
+packpropagate .c4 0
+packpropagate .c5 0
+packpropagate .c6 0
+packpropagate .c7 0
+packpropagate .c8 0
+packpropagate .c9 0
+pack .c1 -side left
+pack .c2 -side left
+pack .c3 -side left
+pack .c4 -side left
+pack .c5 -side left
+pack .c6 -side left
+pack .c7 -side left
+pack .c8 -side left
+pack .c9 -side left
+pack .c1.w -side top -expand 1 -anchor n
+pack .c2.w -side top -expand 1 -anchor ne
+pack .c3.w -side top -expand 1 -anchor e
+pack .c4.w -side top -expand 1 -anchor se
+pack .c5.w -side top -expand 1 -anchor s
+pack .c6.w -side top -expand 1 -anchor sw
+pack .c7.w -side top -expand 1 -anchor w
+pack .c8.w -side top -expand 1 -anchor nw
+pack .c9.w -side top -expand 1 -anchor center

@@ -1,0 +1,10 @@
+# Fill x / y / both / none inside a forced-size root.
+window .a 60 20
+window .b 60 20
+window .c 30 100
+window .d 30 100
+pack .a -side top -fill x
+pack .b -side top -fill none
+pack .c -side left -fill y
+pack .d -side left -fill both
+rootsize 240 220

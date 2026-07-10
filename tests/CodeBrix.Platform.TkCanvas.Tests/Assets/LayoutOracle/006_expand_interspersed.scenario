@@ -1,0 +1,13 @@
+# Expandable left/right frames interspersed with top/bottom frames:
+# exercises the tricky XExpansion minimum-over-checkpoints logic.
+window .a 40 30
+window .t1 200 20
+window .b 40 30
+window .t2 260 20
+window .c 40 30
+pack .a -side left -expand 1
+pack .t1 -side top
+pack .b -side left -expand 1
+pack .t2 -side bottom
+pack .c -side right -expand 1
+rootsize 400 200

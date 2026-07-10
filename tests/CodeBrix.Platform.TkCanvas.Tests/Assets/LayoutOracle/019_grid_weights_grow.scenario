@@ -1,0 +1,11 @@
+# Unequal column weights absorb extra space (integer leftovers land per Tk).
+window .a 40 30
+window .b 40 30
+window .c 40 30
+grid .a -row 0 -column 0 -sticky ew
+grid .b -row 0 -column 1 -sticky ew
+grid .c -row 0 -column 2 -sticky ew
+gridcolumn . 0 -weight 0
+gridcolumn . 1 -weight 1
+gridcolumn . 2 -weight 3
+rootsize 331 60

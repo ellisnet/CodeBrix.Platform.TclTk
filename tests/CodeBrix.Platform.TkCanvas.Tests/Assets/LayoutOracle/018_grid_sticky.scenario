@@ -1,0 +1,19 @@
+# Sticky variants in oversized weighted cells.
+window .a 30 20
+window .b 30 20
+window .c 30 20
+window .d 30 20
+window .e 30 20
+window .f 30 20
+grid .a -row 0 -column 0 -sticky nsew
+grid .b -row 0 -column 1 -sticky n
+grid .c -row 0 -column 2 -sticky se
+grid .d -row 1 -column 0 -sticky ew
+grid .e -row 1 -column 1 -sticky ns
+grid .f -row 1 -column 2
+gridcolumn . 0 -weight 1
+gridcolumn . 1 -weight 1
+gridcolumn . 2 -weight 1
+gridrow . 0 -weight 1
+gridrow . 1 -weight 2
+rootsize 300 200

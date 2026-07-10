@@ -1,0 +1,7 @@
+# pack -in a sibling holder frame: coordinates translate to the real parent.
+window .holder 10 10
+window .w1 60 22
+window .w2 40 18
+pack .holder -side top -padx 6 -pady 5
+pack .w1 -in .holder -side top
+pack .w2 -in .holder -side left -padx 3

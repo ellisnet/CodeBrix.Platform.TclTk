@@ -1,0 +1,7 @@
+# Explicit bindtags: reorder and subset; unlisted tags never fire.
+window .a
+bind .a <ButtonPress-1> L-instance
+bind Frame <ButtonPress-1> L-class
+bind all <ButtonPress-1> L-all
+bindtags .a all .a
+event .a buttonpress 1 3 4

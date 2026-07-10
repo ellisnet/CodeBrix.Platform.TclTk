@@ -1,0 +1,9 @@
+# Modifier demands: unmet modifiers fall back to the generic binding;
+# extra modifiers still satisfy a lesser demand.
+window .a
+bind .a <ButtonPress-3> L-plain
+bind .a <Shift-ButtonPress-3> L-shift
+event .a buttonpress 3 1 1
+event .a buttonpress 3 2 2 shift
+event .a buttonpress 3 3 3 shift,control
+event .a buttonpress 3 4 4 control

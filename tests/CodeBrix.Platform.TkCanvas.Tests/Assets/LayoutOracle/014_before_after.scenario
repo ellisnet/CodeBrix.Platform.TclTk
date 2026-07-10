@@ -1,0 +1,12 @@
+# -before/-after reorder the packing list; forget removes an entry.
+window .a 50 20
+window .b 50 25
+window .c 50 30
+window .d 50 35
+window .e 50 15
+pack .a -side top
+pack .b -side top
+pack .c -side top -before .a
+pack .d -side top -after .b
+pack .e -side top
+packforget .b

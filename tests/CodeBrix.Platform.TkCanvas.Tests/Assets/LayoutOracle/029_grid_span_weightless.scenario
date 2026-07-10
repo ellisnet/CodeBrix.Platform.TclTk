@@ -1,0 +1,10 @@
+# A wide spanner over weightless columns: slack spreads evenly (Tk's
+# noWeights path in constraint resolution).
+window .r0c0 30 20
+window .r0c1 30 20
+window .r0c2 30 20
+window .wide 240 25
+grid .r0c0 -row 0 -column 0
+grid .r0c1 -row 0 -column 1
+grid .r0c2 -row 0 -column 2
+grid .wide -row 1 -column 0 -columnspan 3

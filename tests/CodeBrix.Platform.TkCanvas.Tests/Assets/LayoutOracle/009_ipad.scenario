@@ -1,0 +1,7 @@
+# Internal padding grows the window beyond its request; with and without fill.
+window .a 30 15
+window .b 30 15
+window .c 30 15
+pack .a -side top -ipadx 8 -ipady 5
+pack .b -side top -ipadx 8 -ipady 5 -fill x
+pack .c -side top

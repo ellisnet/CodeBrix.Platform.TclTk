@@ -1,0 +1,13 @@
+# Rebinding replaces; unbinding removes; destroying a window drops its
+# instance bindings (a recreated window with the same path starts clean).
+window .a
+bind .a <ButtonPress-1> L-old
+bind .a <ButtonPress-1> L-new
+event .a buttonpress 1 1 1
+unbind .a <ButtonPress-1>
+event .a buttonpress 1 2 2
+bind .a <ButtonPress-2> L-dying
+destroywin .a
+window .a
+bind all <ButtonPress-2> L-all-after
+event .a buttonpress 2 3 3

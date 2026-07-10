@@ -1,0 +1,11 @@
+# Extreme shrink: cells collapse; content in zero-size cells unmaps.
+window .a 80 40
+window .b 80 40
+window .c 80 40
+grid .a -row 0 -column 0 -padx 2
+grid .b -row 1 -column 0 -pady 1
+grid .c -row 2 -column 0
+gridrow . 0 -weight 1
+gridrow . 1 -weight 1
+gridrow . 2 -weight 1
+rootsize 90 46

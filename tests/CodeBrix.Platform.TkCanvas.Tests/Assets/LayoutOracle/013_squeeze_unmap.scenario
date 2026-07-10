@@ -1,0 +1,10 @@
+# Root forced too small: late content loses its space and is unmapped.
+window .a 80 40
+window .b 80 40
+window .c 80 40
+window .d 80 40
+pack .a -side top
+pack .b -side top
+pack .c -side top
+pack .d -side top
+rootsize 100 95

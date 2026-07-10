@@ -1,0 +1,8 @@
+# An interior fixed-size frame: propagation off keeps its own request.
+window .panel 120 90
+window .panel.a 200 10
+window .panel.b 20 10
+packpropagate .panel 0
+pack .panel -side left
+pack .panel.a -side top
+pack .panel.b -side top -expand 1

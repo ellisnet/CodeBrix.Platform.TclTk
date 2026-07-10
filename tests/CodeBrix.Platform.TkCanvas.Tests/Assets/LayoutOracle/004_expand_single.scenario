@@ -1,0 +1,8 @@
+# A single expanding frame absorbs the extra cavity space.
+window .top 100 30
+window .mid 100 40
+window .bot 100 25
+pack .top -side top
+pack .mid -side top -expand 1
+pack .bot -side bottom
+rootsize 150 300

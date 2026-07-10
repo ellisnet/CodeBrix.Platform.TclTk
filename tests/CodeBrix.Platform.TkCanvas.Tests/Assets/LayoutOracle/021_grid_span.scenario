@@ -1,0 +1,10 @@
+# Spanning content pushes boundaries; crosses weighted and unweighted slots.
+window .a 50 25
+window .b 50 25
+window .wide 220 30
+window .tall 40 90
+grid .a -row 0 -column 0
+grid .b -row 0 -column 1
+grid .wide -row 1 -column 0 -columnspan 3 -sticky ew
+grid .tall -row 0 -column 2 -rowspan 2 -sticky ns
+gridcolumn . 1 -weight 1

@@ -1,0 +1,8 @@
+# Three expanding frames share leftover space (integer division leftovers).
+window .a 50 20
+window .b 50 20
+window .c 50 20
+pack .a -side top -expand 1
+pack .b -side top -expand 1
+pack .c -side top -expand 1
+rootsize 120 250

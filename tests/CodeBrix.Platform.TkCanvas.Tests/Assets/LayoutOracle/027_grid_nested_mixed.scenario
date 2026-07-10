@@ -1,0 +1,11 @@
+# Managers mixed across DIFFERENT containers: pack outside, grid inside.
+window .outer 10 10
+window .outer.g1 50 20
+window .outer.g2 45 28
+window .outer.g3 62 24
+window .side 25 60
+pack .outer -side left -padx 3
+pack .side -side right
+grid .outer.g1 -row 0 -column 0 -sticky w
+grid .outer.g2 -row 0 -column 1 -rowspan 2 -sticky ns
+grid .outer.g3 -row 1 -column 0 -ipadx 2

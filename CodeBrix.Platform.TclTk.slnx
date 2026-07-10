@@ -10,7 +10,9 @@
   <Folder Name="/Tests/">
     <Project Path="tests/CodeBrix.Platform.TclTk.Tests/CodeBrix.Platform.TclTk.Tests.csproj" />
     <Project Path="tests/CodeBrix.Platform.TclTk.Extras.Tests/CodeBrix.Platform.TclTk.Extras.Tests.csproj" />
+    <Project Path="tests/CodeBrix.Platform.TkCanvas.Tests/CodeBrix.Platform.TkCanvas.Tests.csproj" />
   </Folder>
   <Project Path="src/CodeBrix.Platform.TclTk/CodeBrix.Platform.TclTk.csproj" />
   <Project Path="src/CodeBrix.Platform.TclTk.Extras/CodeBrix.Platform.TclTk.Extras.csproj" />
+  <Project Path="src/CodeBrix.Platform.TkCanvas/CodeBrix.Platform.TkCanvas.csproj" />
 </Solution>

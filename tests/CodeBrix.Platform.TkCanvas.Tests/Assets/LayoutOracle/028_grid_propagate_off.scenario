@@ -1,0 +1,10 @@
+# Fixed-size gridded panel: propagation off keeps its own request.
+window .panel 150 100
+window .panel.a 200 30
+window .panel.b 40 30
+gridpropagate .panel 0
+pack .panel -side top
+grid .panel.a -row 0 -column 0 -sticky ew
+grid .panel.b -row 1 -column 0
+gridcolumn .panel 0 -weight 1
+gridrow .panel 1 -weight 1

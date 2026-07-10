@@ -26,9 +26,10 @@ optional NATIVE Tcl/Tk library this engine can bridge to. Keep them distinct.
 CodeBrix.Platform.TclTk is the interpreter member of a three-package family
 built from this one repository: CodeBrix.Platform.TclTk (this interpreter),
 CodeBrix.Platform.TclTk.Extras (interpreter-side command extensions, in this
-repository — see the EXTRAS section below), and the planned
-CodeBrix.Platform.TkCanvas (a Tk-widget-toolkit-on-Skia). Each ships as its OWN
-NuGet package; the family publishes together at one shared version.
+repository — see the EXTRAS section below), and CodeBrix.Platform.TkCanvas
+(a Tk-widget-toolkit-on-Skia, under construction in src/ — see the TKCANVAS
+section below). Each ships as its OWN NuGet package; the family publishes
+together at one shared version.
 
 
 INSTALLATION
@@ -240,11 +241,41 @@ CodeBrix family conventions with no exceptions: XML doc comments on, no
 warning suppression, file-scoped namespaces, InternalsVisibleTo its Tests
 project.
 
+THE TKCANVAS LIBRARY (CodeBrix.Platform.TkCanvas) — UNDER CONSTRUCTION
+----------------------------------------------------------------------
+src/CodeBrix.Platform.TkCanvas builds the third NuGet package of this
+repository: CodeBrix.Platform.TkCanvas.BsdLicenseForever — a retained-mode
+reimplementation of the classic Tk widget toolkit drawn onto a SkiaSharp
+surface. Unlike the ported interpreter, it is entirely original CodeBrix code
+and follows ALL standard family conventions (XML docs on, NRT off, no
+suppressions, file-scoped namespaces, InternalsVisibleTo its Tests project).
+Dependencies: the co-built .TclTk, SkiaSharp (pinned to the same version the
+CodeBrix.Platform Skia runtime heads resolve), and CodeBrix.Imaging (core).
+It has NO Uno/CodeBrix.Platform dependency: the host supplies an
+ITkDispatcher adapter (see Events/ITkDispatcher.cs) bridging to its UI
+thread.
+
+Foundation built so far (2026-07-09): the TkWindow tree + synchronous layout
+driver (Windowing/), the pack and grid geometry managers — faithful ports of
+Tk 8.6.16 tkPack.c/tkGrid.c, byte-identical to real wish on the vendored
+oracle fixtures (Layout/), the bindtags/event-pattern/focus/grab dispatch
+system (Events/), the update-flush scheduler with after timers
+(Events/TkScheduler.cs), the font-measurement seam where the painter and
+"font measure" share one SKFont (Fonts/), and the IWidget/WidgetOptions
+contracts (Widgets/). Widgets, the canvas widget, menus/dialogs, images, and
+the host control are still to come (plan sub-phases B.5–B.11).
+
+The layout/bind behavior oracle lives in tools/layout-oracle/: scenario files
+run through REAL Tk (wish) to capture fixtures, which the xUnit tests replay
+headlessly. Regenerate with tools/layout-oracle/generate_fixtures.sh (needs
+tk + a display); the tests themselves never run wish.
+
 TESTING
 -------
-Tests live in tests/CodeBrix.Platform.TclTk.Tests (the interpreter) and
-tests/CodeBrix.Platform.TclTk.Extras.Tests (the Extras shims), both
-xUnit v3 + SilverAssertions. Run them with:
+Tests live in tests/CodeBrix.Platform.TclTk.Tests (the interpreter),
+tests/CodeBrix.Platform.TclTk.Extras.Tests (the Extras shims), and
+tests/CodeBrix.Platform.TkCanvas.Tests (the toolkit, including the vendored
+real-Tk oracle fixtures), all xUnit v3 + SilverAssertions. Run them with:
 
     dotnet test CodeBrix.Platform.TclTk.slnx
 

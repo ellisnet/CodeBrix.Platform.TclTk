@@ -1,0 +1,14 @@
+# Enter/Leave/FocusIn/FocusOut generated directly at windows.
+window .a
+window .a.b
+bind .a <Enter> L-enter-a
+bind .a.b <Enter> L-enter-b
+bind .a <Leave> L-leave-a
+bind .a <FocusIn> L-focusin-a
+bind .a <FocusOut> L-focusout-a
+bind Frame <FocusIn> L-class-focusin
+event .a enter
+event .a.b enter
+event .a leave
+event .a focusin
+event .a focusout

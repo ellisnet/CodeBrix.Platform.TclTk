@@ -1,0 +1,7 @@
+# Container internal border (frame -borderwidth) keeps content inside it.
+window .box 100 80
+window .box.inner 40 30
+border .box 7
+pack .box -side top -fill both -expand 1
+pack .box.inner -side top -fill both -expand 1
+rootsize 160 120

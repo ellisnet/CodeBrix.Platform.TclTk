@@ -1,0 +1,8 @@
+# Asymmetric -padx/-pady (left:right, top:bottom) with corner anchors.
+window .a 40 20
+window .b 40 20
+window .c 40 20
+pack .a -side top -padx 5:15 -pady 3:9 -anchor w
+pack .b -side top -padx 12:2 -pady 7:1 -anchor e
+pack .c -side top -padx 4:4 -pady 6:6 -fill x
+rootsize 140 160

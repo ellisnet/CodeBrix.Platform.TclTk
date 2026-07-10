@@ -1,0 +1,9 @@
+# A 2x2 grid at natural size.
+window .a 60 30
+window .b 40 25
+window .c 55 45
+window .d 35 20
+grid .a -row 0 -column 0
+grid .b -row 0 -column 1
+grid .c -row 1 -column 0
+grid .d -row 1 -column 1

@@ -1,0 +1,10 @@
+# Slot minsize and slot pad combine with content pads and ipads.
+window .a 30 18
+window .b 25 22
+border . 0
+grid .a -row 0 -column 0 -padx 4:9 -pady 3 -ipadx 5
+grid .b -row 1 -column 1 -ipady 6 -pady 2:7
+gridcolumn . 0 -minsize 80
+gridcolumn . 1 -pad 12
+gridrow . 0 -pad 8
+gridrow . 1 -minsize 60

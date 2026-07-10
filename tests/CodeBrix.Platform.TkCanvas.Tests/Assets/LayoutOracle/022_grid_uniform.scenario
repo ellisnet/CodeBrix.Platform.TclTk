@@ -1,0 +1,13 @@
+# Uniform groups equalize columns; weights scale within the group.
+window .a 30 20
+window .b 75 20
+window .c 42 20
+window .d 20 20
+grid .a -row 0 -column 0
+grid .b -row 0 -column 1
+grid .c -row 0 -column 2
+grid .d -row 0 -column 3
+gridcolumn . 0 -uniform g1
+gridcolumn . 1 -uniform g1
+gridcolumn . 2 -uniform g2 -weight 1
+gridcolumn . 3 -uniform g2 -weight 2

@@ -1,0 +1,11 @@
+# Three-level nesting: requested sizes bubble bottom-up to size the root.
+window .outer 10 10
+window .outer.mid 10 10
+window .outer.mid.a 60 25
+window .outer.mid.b 45 35
+window .outer.side 30 30
+pack .outer -side top
+pack .outer.mid -side left -padx 4 -pady 2
+pack .outer.mid.a -side top -pady 1
+pack .outer.mid.b -side top
+pack .outer.side -side left

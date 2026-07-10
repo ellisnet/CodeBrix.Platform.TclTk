@@ -1,0 +1,19 @@
+# A mixed layout: borders, pads, fills, expands, nesting, forced size.
+window .toolbar 10 28
+window .toolbar.b1 24 24
+window .toolbar.b2 24 24
+window .toolbar.b3 24 24
+window .status 10 18
+window .body 10 10
+window .body.tree 90 10
+window .body.canvas 10 10
+border .toolbar 2
+pack .toolbar -side top -fill x
+pack .toolbar.b1 -side left -padx 2:1 -pady 2
+pack .toolbar.b2 -side left -padx 1
+pack .toolbar.b3 -side right -padx 3
+pack .status -side bottom -fill x -pady 1
+pack .body -side top -fill both -expand 1
+pack .body.tree -side left -fill y -padx 2
+pack .body.canvas -side right -fill both -expand 1 -ipadx 4
+rootsize 320 240

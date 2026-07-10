@@ -1,0 +1,11 @@
+# Shrinking below natural size: weighted slots give space back down to minsize.
+window .a 90 40
+window .b 90 40
+window .c 90 40
+grid .a -row 0 -column 0 -sticky ew
+grid .b -row 0 -column 1 -sticky ew
+grid .c -row 0 -column 2 -sticky ew
+gridcolumn . 0 -weight 1 -minsize 70
+gridcolumn . 1 -weight 1
+gridcolumn . 2 -weight 2
+rootsize 200 55

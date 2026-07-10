@@ -1,0 +1,22 @@
+# Auto-generated random grid scenario (seed 418916).
+window .w1 56 62
+window .w2 36 19
+window .w3 83 21
+window .w4 85 58
+window .w5 83 76
+window .w6 90 25
+window .w7 91 77
+window .w8 35 49
+grid .w1 -row 0 -column 2 -pady 6
+grid .w2 -row 1 -column 2 -sticky new -pady 0
+grid .w3 -row 0 -column 2
+grid .w4 -row 1 -column 1 -padx 5:5 -ipadx 1
+grid .w5 -row 0 -column 1 -sticky n
+grid .w6 -row 0 -column 2 -ipadx 4
+grid .w7 -row 0 -column 0 -columnspan 3 -padx 1:2 -pady 3 -ipadx 1
+grid .w8 -row 0 -column 2 -pady 7 -ipady 1
+gridcolumn . 0 -weight 3 -minsize 10 -uniform ua
+gridcolumn . 1 -weight 2 -minsize 64 -uniform ua
+gridcolumn . 2 -weight 1
+gridanchor . s
+rootsize 145 297

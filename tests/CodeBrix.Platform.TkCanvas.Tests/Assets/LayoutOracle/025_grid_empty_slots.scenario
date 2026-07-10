@@ -1,0 +1,8 @@
+# Fully empty rows/columns: only configured constraints give them size.
+window .a 45 25
+window .b 45 25
+grid .a -row 0 -column 0
+grid .b -row 2 -column 2
+gridcolumn . 1 -minsize 33
+gridrow . 1 -minsize 21
+gridcolumn . 4 -minsize 17

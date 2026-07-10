@@ -1,0 +1,9 @@
+# One frame per side, packing order top/bottom/left/right; natural root size.
+window .t 90 30
+window .b 70 25
+window .l 40 80
+window .r 35 65
+pack .t -side top
+pack .b -side bottom
+pack .l -side left
+pack .r -side right

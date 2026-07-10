@@ -1,0 +1,8 @@
+# Virtual events by name.
+window .a
+bind .a <<ListboxSelect>> L-lbselect
+bind .a <<TreeviewSelect>> L-tvselect
+bind all <<ListboxSelect>> L-all-lbselect
+event .a virtual ListboxSelect
+event .a virtual TreeviewSelect
+event .a virtual SomethingUnbound

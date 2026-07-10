@@ -1,0 +1,7 @@
+# Weightless layout smaller than the container obeys grid anchor.
+window .a 40 30
+window .b 40 30
+grid .a -row 0 -column 0
+grid .b -row 1 -column 1
+gridanchor . center
+rootsize 260 180

@@ -1,0 +1,9 @@
+# A binding that breaks stops the remaining bind tags.
+window .a
+bind .a <ButtonPress-1> L-instance break
+bind Frame <ButtonPress-1> L-class
+bind all <ButtonPress-1> L-all
+bind .a <ButtonPress-2> L2-instance
+bind all <ButtonPress-2> L2-all
+event .a buttonpress 1 5 5
+event .a buttonpress 2 6 6

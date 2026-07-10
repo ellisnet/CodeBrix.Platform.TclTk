@@ -1,0 +1,9 @@
+# MouseWheel delta substitution and Motion with held-button modifier.
+window .a
+bind .a <MouseWheel> L-wheel
+bind .a <Motion> L-motion
+bind .a <B1-Motion> L-b1motion
+event .a wheel 120
+event .a wheel -240
+event .a motion 10 12
+event .a motion 14 16 b1

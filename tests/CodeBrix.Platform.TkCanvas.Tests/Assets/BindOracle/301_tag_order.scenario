@@ -1,0 +1,7 @@
+# Default bindtag order: instance, class, toplevel (root), all.
+window .a
+bind .a <ButtonPress-1> L-instance
+bind Frame <ButtonPress-1> L-class
+bind . <ButtonPress-1> L-root
+bind all <ButtonPress-1> L-all
+event .a buttonpress 1 5 7
