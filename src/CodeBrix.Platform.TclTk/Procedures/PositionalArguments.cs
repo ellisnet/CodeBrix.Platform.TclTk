@@ -101,6 +101,9 @@ namespace CodeBrix.Platform.TclTk._Procedures //was previously: Eagle._Procedure
                     return ReturnCode.Error;
                 }
 
+                bool wasTrampolineTarget = TailcallOps.CaptureTargetFlag(
+                    interpreter);
+
                 ProcedureFlags procedureFlags = ProcedureFlags.None;
 
                 if (ScriptOps.MaybeCheckProcedureCaller(
@@ -461,6 +464,15 @@ namespace CodeBrix.Platform.TclTk._Procedures //was previously: Eagle._Procedure
                                 interpreter.PopProcedureCallFrame(frame, ref savedFrame);
                             }
                         }
+
+                        //
+                        // NOTE: The procedure frame has been popped; run any
+                        //       tailcall it scheduled at the caller's level
+                        //       (see TailcallOps).
+                        //
+                        TailcallOps.MaybeInvokePending(
+                            interpreter, noPushFrame ? null : frame,
+                            wasTrampolineTarget, ref code, ref result);
                     }
 
                 done:

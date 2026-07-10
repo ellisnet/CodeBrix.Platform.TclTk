@@ -851,9 +851,22 @@ namespace CodeBrix.Platform.TclTk._Components.Private //was previously: Eagle._C
                     case StreamTranslation.cr:
                         return CarriageReturnCharList;
                     case StreamTranslation.crlf:
+                        return CarriageReturnLineFeedCharList;
                     case StreamTranslation.platform:
                     case StreamTranslation.auto:
-                        return CarriageReturnLineFeedCharList;
+                        //
+                        // BUGFIX: "platform" and "auto" OUTPUT translation must
+                        //         use the host-native end-of-line sequence (as
+                        //         standard Tcl does): CR/LF on Windows, but LF on
+                        //         Unix. These were previously hardcoded to CR/LF,
+                        //         which produced CRLF files on Unix even though
+                        //         the default channel translation is "auto" (so
+                        //         e.g. plain "open $f w" wrote CRLF instead of LF).
+                        //         This mirrors GetEnvironmentOutputTranslation().
+                        //
+                        return PlatformOps.IsWindowsOperatingSystem()
+                            ? CarriageReturnLineFeedCharList
+                            : LineFeedCharList;
                     default:
                         return null;
                 }
@@ -1400,8 +1413,6 @@ namespace CodeBrix.Platform.TclTk._Components.Private //was previously: Eagle._C
                         return inCount;
                     }
                 case StreamTranslation.crlf:
-                case StreamTranslation.platform:
-                case StreamTranslation.auto:
                     {
                         int newCount = offset + inCount;
                         int inIndex = offset;
@@ -1416,6 +1427,50 @@ namespace CodeBrix.Platform.TclTk._Components.Private //was previously: Eagle._C
                         }
 
                         return outIndex;
+                    }
+                case StreamTranslation.platform:
+                case StreamTranslation.auto:
+                    {
+                        //
+                        // BUGFIX: "platform"/"auto" OUTPUT translation must use
+                        //         the host-native end-of-line like standard Tcl:
+                        //         CR/LF on Windows, but bare LF on Unix.
+                        //         Previously these shared the "crlf" case and
+                        //         always inserted a carriage-return, so the
+                        //         default channel translation ("auto") wrote
+                        //         CRLF files on Unix (e.g. plain "open $f w").
+                        //
+                        if (!PlatformOps.IsWindowsOperatingSystem())
+                        {
+                            //
+                            // NOTE: Unix host EOL is LF; emit bytes unchanged
+                            //       (identical to the "lf" case).
+                            //
+                            Array.Copy(
+                                inBuffer, 0, outBuffer, offset, inCount);
+
+                            return inCount;
+                        }
+                        else
+                        {
+                            //
+                            // NOTE: Windows host EOL is CR/LF (identical to the
+                            //       "crlf" case).
+                            //
+                            int newCount = offset + inCount;
+                            int inIndex = offset;
+                            int outIndex = 0;
+
+                            for (; inIndex < newCount; )
+                            {
+                                if (inBuffer[inIndex] == ChannelOps.LineFeed)
+                                    outBuffer[outIndex++] = ChannelOps.CarriageReturn;
+
+                                outBuffer[outIndex++] = inBuffer[inIndex++];
+                            }
+
+                            return outIndex;
+                        }
                     }
                 case StreamTranslation.protocol: /* NOTE: Enforce CR/LF. */
                     {

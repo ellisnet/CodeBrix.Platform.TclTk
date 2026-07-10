@@ -23,9 +23,12 @@ Note the deliberate distinction preserved from upstream: "TclTk" refers to THIS
 managed engine, while "Tcl" (e.g. TclBridge, TclApi, TclWrapper) refers to the
 optional NATIVE Tcl/Tk library this engine can bridge to. Keep them distinct.
 
-CodeBrix.Platform.TclTk is the Tcl half of the eventual .TclTk library; a
-companion CodeBrix.Platform.TkCanvas project (the Tk/canvas half) will later be
-added and shipped in the same NuGet package.
+CodeBrix.Platform.TclTk is the interpreter member of a three-package family
+built from this one repository: CodeBrix.Platform.TclTk (this interpreter),
+CodeBrix.Platform.TclTk.Extras (interpreter-side command extensions, in this
+repository — see the EXTRAS section below), and the planned
+CodeBrix.Platform.TkCanvas (a Tk-widget-toolkit-on-Skia). Each ships as its OWN
+NuGet package; the family publishes together at one shared version.
 
 
 INSTALLATION
@@ -135,12 +138,120 @@ desktop-GUI, .NET-Framework-only, native-interop, and enterprise code-signing
 features from upstream are compiled out.
 
 
+PORT-ADDED TCL 8.5/8.6 FEATURES (not present in upstream Eagle)
+---------------------------------------------------------------
+Four core-language features that upstream Eagle lacks (its lineage targets
+Tcl 8.4-era semantics) were implemented by this port, validated line-by-line
+against real tclsh 8.6 as the behavioral oracle:
+
+  * "binary" command - format / scan (the full field-specifier
+    mini-language: a A b B h H c s S t i I n w W m f r R d q Q x X @, counts,
+    "*", and the "u" flag) plus encode / decode for base64, hex, and
+    uuencode with -maxlen / -wrapchar / -strict. Implementation:
+    Commands/Binary.cs + Components/Private/BinaryOps.cs. Known deliberate
+    divergences: integers wider than 64 bits wrap instead of erroring (the
+    engine has no bignum; consistent with engine-wide parsing), and inputs
+    that PANIC or SEGFAULT stock tclsh 8.6.16 (X0-then-write, counts over
+    int.MaxValue) are handled gracefully.
+
+  * "tailcall" command - full Tcl 8.6 semantics: recorded on the procedure
+    frame, fires only on normal return (a catch sees the return code but the
+    tailcall still fires; error/break discard it), target resolved in the
+    current namespace but executed at the caller's level, and chained
+    tailcalls (self/mutual recursion) do not grow the stack (trampoline
+    hand-off). Implementation: Commands/Tailcall.cs +
+    Components/Private/TailcallOps.cs + small hooks in the four
+    procedure/lambda Execute methods and Commands/Apply.cs.
+
+  * "trace" command - variable traces (read / write / unset, element and
+    whole-array, legacy trace variable / vdelete / vinfo forms), command
+    traces (rename / delete via the [rename] command), and execution traces
+    (enter / leave / enterstep / leavestep). Implementation:
+    Commands/Trace.cs + Components/Private/ScriptTraceOps.cs, riding the
+    engine's own ITrace machinery for variables and a zero-cost-when-unused
+    hook in Engine.Execute for execution traces. Known deliberate
+    divergences: the variable "array" operation is accepted but never fires
+    (no engine hook exists for it); command delete traces fire only for
+    deletions performed via [rename]; a FAILING write trace on a
+    never-defined variable rolls the variable back instead of leaving the
+    half-written value.
+
+  * "{*}" argument expansion (Tcl 8.5) - a word beginning with {*} followed
+    by non-whitespace is split, after substitution, into separate command
+    words; a lone {*} stays the literal "*". Implementation: a prefix check
+    in Parser.ParseCommand (TokenFlags.Expand) plus expansion at the
+    argument-building loop in Engine. This unblocks DRAKON's export_pdf.tcl
+    and mwindow.tcl idioms.
+
+The development oracle scripts comparing all of this against real tclsh
+live with the validation harness (see ~/ClaudeHome/tcltk-validation-harness
+on the dev machine); the distilled cases are permanent xUnit tests in
+tests/CodeBrix.Platform.TclTk.Tests (BinaryFormatTests, BinaryScanTests,
+BinaryEncodeDecodeTests, TailcallCommandTests, TraceCommandTests,
+ArgumentExpansionTests).
+
+
+THE EXTRAS LIBRARY (CodeBrix.Platform.TclTk.Extras)
+---------------------------------------------------
+src/CodeBrix.Platform.TclTk.Extras builds the second NuGet package of this
+repository: CodeBrix.Platform.TclTk.Extras.BsdLicenseForever (root namespace
+CodeBrix.Platform.TclTk.Extras). It contains interpreter-side Tcl command
+shims — NOT Tk/GUI code — that map classic Tcl package surfaces onto CodeBrix
+libraries, so existing Tcl programs (DRAKON Editor being the driving consumer)
+run unmodified:
+
+  * "sqlite3 NAME PATH" (Sqlite/ folder) - tclsqlite-compatible database
+    command over CodeBrix.Sqlite. Handle verbs: eval (flat-list and per-row
+    script modes), onecolumn, changes, close. Binding rules replicate
+    tclsqlite exactly: :name/@name/$name host parameters resolve from the
+    CALLER's Tcl frame (commands push no call frame); an UNSET variable binds
+    SQL NULL; a set-but-empty variable binds '' TEXT; SQL NULL reads back as
+    "". String-repped Tcl values bind as TEXT (never sniffed into numbers), so
+    numeric-looking text like "007" survives byte-for-byte. The open path is
+    PRAGMA-neutral (no WAL, no foreign-key enforcement, rollback journal) so
+    written files are interchangeable with stock-Tcl-written SQLite files
+    (e.g. DRAKON .drn files). The SQL text always passes through verbatim.
+
+  * "pdf4tcl::new / ::loadBaseTrueTypeFont / ::createFont" plus the pdf4tcl
+    0.7 object surface (Pdf/ folder) - startPage, setFont, setFillColor,
+    setStrokeColor, setLineStyle, getStringWidth, text, line, rectangle,
+    polygon, write, destroy - over CodeBrix.PdfDocuments. The
+    pdf4tcl::paper_sizes and pdf4tcl::units Tcl array variables are published
+    too. Coordinates replicate pdf4tcl's Trans/TransR model: user coordinates
+    are margin-box-relative; -orient 1 (default) means top-left origin
+    y-down. Text -x/-y is the BASELINE origin. -filled 1 fills AND strokes
+    unless -stroke 0. Deliberately ignored (accepted, never thrown): text
+    -angle/-xangle/-yangle, page -rotate, -compress.
+
+Entry point (the only public type):
+
+    using CodeBrix.Platform.TclTk.Extras;
+
+    Result error = null;
+    TclTkExtras.RegisterAll(interpreter, ref error);      // or
+    TclTkExtras.RegisterSqlite3(interpreter, ref error);  // or
+    TclTkExtras.RegisterPdf4Tcl(interpreter, ref error);
+
+Registration also runs "package provide sqlite3 3.45.0" / "package provide
+pdf4tcl 0.7", so Tcl "package require" lines succeed.
+
+Unlike the ported interpreter, the Extras project follows ALL standard
+CodeBrix family conventions with no exceptions: XML doc comments on, no
+warning suppression, file-scoped namespaces, InternalsVisibleTo its Tests
+project.
+
 TESTING
 -------
-Tests live in tests/CodeBrix.Platform.TclTk.Tests (xUnit v3 + SilverAssertions).
-Run them with:
+Tests live in tests/CodeBrix.Platform.TclTk.Tests (the interpreter) and
+tests/CodeBrix.Platform.TclTk.Extras.Tests (the Extras shims), both
+xUnit v3 + SilverAssertions. Run them with:
 
     dotnet test CodeBrix.Platform.TclTk.slnx
 
 A smoke test creates an Interpreter and evaluates a script, verifying the
 embedded script library loads and type resolution works after the rebrand.
+The Extras tests cover the full shim surface (sqlite3 verbs, binding/NULL
+rules, pdf4tcl drawing/measure/write) and include integration tests that
+open real .drn files from a stock DRAKON Editor checkout at
+~/GitHome/drakon_editor (those tests skip when the checkout is absent) and
+font tests that use a system TrueType font (skipped when none is found).

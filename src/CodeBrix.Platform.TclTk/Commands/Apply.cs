@@ -137,6 +137,9 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
                 {
                     int argumentCount = arguments.Count;
 
+                    bool wasTrampolineTarget = TailcallOps.CaptureTargetFlag(
+                        interpreter);
+
                     if (argumentCount >= 2)
                     {
                         //
@@ -540,6 +543,15 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
                                                                     interpreter.PopProcedureCallFrame(frame, ref savedFrame);
                                                                 }
                                                             }
+
+                                                            //
+                                                            // NOTE: The lambda frame has been popped; run any
+                                                            //       tailcall it scheduled at the caller's level
+                                                            //       (see TailcallOps).
+                                                            //
+                                                            TailcallOps.MaybeInvokePending(
+                                                                interpreter, isInline ? null : frame,
+                                                                wasTrampolineTarget, ref code, ref result);
                                                         }
                                                     }
                                                     finally

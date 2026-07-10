@@ -5618,6 +5618,29 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
 
                             token.Start = index;
 
+                            //
+                            // NOTE: Tcl 8.5 argument expansion: a word that
+                            //       begins with "{*}" immediately followed
+                            //       by a non-whitespace character has the
+                            //       prefix stripped here and is flagged so
+                            //       the engine splits its substituted value
+                            //       into separate command words (see
+                            //       TokenFlags.Expand).  A lone "{*}" stays
+                            //       an ordinary braced word.
+                            //
+                            if ((characters >= 4) &&
+                                (text[index] == Characters.OpenBrace) &&
+                                (text[index + 1] == Characters.Asterisk) &&
+                                (text[index + 2] == Characters.CloseBrace) &&
+                                !Char.IsWhiteSpace(text[index + 3]))
+                            {
+                                token.Flags |= TokenFlags.Expand;
+
+                                index += 3; characters -= 3;
+
+                                token.Start = index;
+                            }
+
                             parseState.Tokens.Add(token, parseState);
 
                             parseState.CommandWords++;

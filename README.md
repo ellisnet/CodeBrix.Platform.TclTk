@@ -58,6 +58,45 @@ using (Interpreter interpreter = Interpreter.Create(ref result))
 }
 ```
 
+## CodeBrix.Platform.TclTk.Extras
+
+This repository also builds the companion `CodeBrix.Platform.TclTk.Extras.BsdLicenseForever`
+NuGet package: interpreter-side Tcl command extensions that let existing Tcl programs which
+expect the classic `sqlite3` and `pdf4tcl` packages run unmodified on the managed interpreter.
+
+* `sqlite3 NAME PATH` — a tclsqlite-compatible database command (handle verbs `eval`,
+  `onecolumn`, `changes`, `close`; caller-scope `:name` parameter binding; unset-variable →
+  SQL NULL; NULL → empty-string read-back), backed by
+  [CodeBrix.Sqlite](https://www.nuget.org/packages/CodeBrix.Sqlite.ApacheLicenseForever)
+  on a PRAGMA-neutral plaintext path, so SQLite files it writes are interchangeable with
+  files written by stock Tcl applications
+* `pdf4tcl::new` / `pdf4tcl::loadBaseTrueTypeFont` / `pdf4tcl::createFont` and the pdf4tcl 0.7
+  drawing surface (`startPage`, `setFont`, `setFillColor`, `setStrokeColor`, `setLineStyle`,
+  `getStringWidth`, `text`, `line`, `rectangle`, `polygon`, `write`, `destroy`), backed by
+  [CodeBrix.PdfDocuments](https://www.nuget.org/packages/CodeBrix.PdfDocuments.MitLicenseForever)
+
+```csharp
+using CodeBrix.Platform.TclTk._Components.Public;
+using CodeBrix.Platform.TclTk.Extras;
+
+Result result = null;
+
+using (Interpreter interpreter = Interpreter.Create(ref result))
+{
+    Result error = null;
+    TclTkExtras.RegisterAll(interpreter, ref error);
+
+    interpreter.EvaluateScript(
+        "sqlite3 db :memory:\n" +
+        "db eval {create table t (a integer, b text)}\n" +
+        "set b hello\n" +
+        "db eval {insert into t values (1, :b)}\n" +
+        "db onecolumn {select b from t}", ref result);
+
+    System.Console.WriteLine(result); // hello
+}
+```
+
 ## Provenance
 
 CodeBrix.Platform.TclTk is a port of the [Eagle](https://github.com/mistachkin/eagle) project

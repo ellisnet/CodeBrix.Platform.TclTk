@@ -2344,7 +2344,13 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
 
                     try
                     {
-                        foreach (ITrace trace in traces)
+                        //
+                        // NOTE: Enumerate a snapshot: a trace may remove
+                        //       itself from the list while firing (e.g. a
+                        //       script-level unset trace destroying itself,
+                        //       matching stock Tcl).
+                        //
+                        foreach (ITrace trace in traces.ToArray())
                         {
                             if (trace == null)
                                 continue;
@@ -2396,11 +2402,13 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                 }
                 else
                 {
-                    result = String.Format(
-                        "cannot fire traces, variable {0} is busy",
-                        FormatOps.VariableName(name, null));
-
-                    return ReturnCode.Error;
+                    //
+                    // NOTE: Traces are already firing for this variable;
+                    //       nested accesses proceed without re-firing,
+                    //       matching stock Tcl, which disables a
+                    //       variable's traces while one of them executes.
+                    //
+                    return ReturnCode.Ok;
                 }
             }
             finally

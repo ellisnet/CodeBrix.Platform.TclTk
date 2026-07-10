@@ -230,6 +230,14 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
                         delete, false, hidden, hiddenOnly,
                         ref localResult) == ReturnCode.Ok)
                 {
+                    //
+                    // NOTE: Fire any script-level command (rename / delete)
+                    //       traces and re-key the trace registries (see the
+                    //       "trace" command and ScriptTraceOps).
+                    //
+                    ScriptTraceOps.HandleRenameOrDelete(
+                        interpreter, oldName, newName);
+
                     result = String.Empty;
                     return ReturnCode.Ok;
                 }

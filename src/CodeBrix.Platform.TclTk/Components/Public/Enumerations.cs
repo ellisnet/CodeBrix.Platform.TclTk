@@ -25321,6 +25321,13 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
 #endif
 
         /// <summary>
+        /// The word begins with the Tcl 8.5 "{*}" argument expansion
+        /// prefix: after substitution, its value is split as a list and
+        /// each element becomes a separate word of the command.
+        /// </summary>
+        Expand = 0x4,
+
+        /// <summary>
         /// A reserved flag bit; this value is reserved for future use
         /// and should not be used.
         /// </summary>

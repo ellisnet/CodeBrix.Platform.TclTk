@@ -15063,6 +15063,93 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
             ref Result result
             ) /* THREAD-SAFE, RE-ENTRANT */
         {
+            //
+            // NOTE: Script-level execution traces (see the "trace" command
+            //       and ScriptTraceOps): the state reference is null until
+            //       the first trace is added, so this check is a single
+            //       field read on the hot path.
+            //
+            ScriptTraceState traceState =
+                ScriptTraceOps.GetActiveState(interpreter);
+
+            if (traceState == null)
+            {
+                return ExecuteCore(
+                    name, execute, interpreter, clientData, arguments,
+                    engineFlags, substitutionFlags, eventFlags,
+                    expressionFlags,
+#if RESULT_LIMITS
+                    executeResultLimit,
+#endif
+                    ref usable, ref result);
+            }
+
+            ReturnCode traceCode;
+            int stepCount = 0;
+
+            traceCode = ScriptTraceOps.FireEnterTraces(
+                traceState, interpreter, name, arguments, ref stepCount,
+                ref result);
+
+            if (traceCode != ReturnCode.Ok)
+            {
+                //
+                // NOTE: Deactivate any step traces activated before the
+                //       failure and abort the command.
+                //
+                if (stepCount > 0)
+                {
+                    traceState.ActiveStepTraces.RemoveRange(
+                        traceState.ActiveStepTraces.Count - stepCount,
+                        stepCount);
+                }
+
+                return traceCode;
+            }
+
+            traceCode = ExecuteCore(
+                name, execute, interpreter, clientData, arguments,
+                engineFlags, substitutionFlags, eventFlags,
+                expressionFlags,
+#if RESULT_LIMITS
+                executeResultLimit,
+#endif
+                ref usable, ref result);
+
+            if (usable)
+            {
+                ScriptTraceOps.FireLeaveTraces(
+                    traceState, interpreter, name, arguments, stepCount,
+                    ref traceCode, ref result);
+            }
+
+            return traceCode;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method is the core implementation behind the central
+        /// execution entry point above; it must only be called by that
+        /// method, which layers the script-level execution traces on top.
+        /// </summary>
+        private static ReturnCode ExecuteCore(
+            string name,
+            IExecute execute,
+            Interpreter interpreter,
+            IClientData clientData,
+            ArgumentList arguments,
+            EngineFlags engineFlags,
+            SubstitutionFlags substitutionFlags,
+            EventFlags eventFlags,
+            ExpressionFlags expressionFlags,
+#if RESULT_LIMITS
+            int executeResultLimit,
+#endif
+            ref bool usable,
+            ref Result result
+            ) /* THREAD-SAFE, RE-ENTRANT */
+        {
             ReturnCode code;
 
             ///////////////////////////////////////////////////////////////////////////////////
@@ -18977,6 +19064,42 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                                 engineData = localResult.EngineData;
 
                             //
+                            // NOTE: Tcl 8.5 argument expansion: when this
+                            //       word carried the "{*}" prefix (see
+                            //       TokenFlags.Expand), split its value as
+                            //       a list and append each element as a
+                            //       separate argument.
+                            //
+                            if ((token.Flags & TokenFlags.Expand) ==
+                                    TokenFlags.Expand)
+                            {
+                                if (localResult != null)
+                                {
+                                    StringList expandList = null;
+                                    Result expandError = null;
+
+                                    if (ListOps.GetOrCopyOrSplitList(
+                                            interpreter, localResult, true,
+                                            ref expandList,
+                                            ref expandError) != ReturnCode.Ok)
+                                    {
+                                        result = expandError;
+                                        code = ReturnCode.Error;
+                                        goto error;
+                                    }
+
+                                    foreach (string element in expandList)
+                                    {
+                                        arguments.Add(Argument.GetOrCreate(
+                                            interpreter, (Result)element,
+                                            noCacheArgument));
+                                    }
+                                }
+
+                                continue;
+                            }
+
+                            //
                             // NOTE: Append the result value to the list of
                             //       arguments for the command to be executed.
                             //
@@ -19006,6 +19129,15 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
 
                             arguments.Add(argument);
                         }
+
+                        //
+                        // NOTE: Argument expansion may leave an empty
+                        //       command (every word expanded to nothing);
+                        //       like stock Tcl, skip it entirely, leaving
+                        //       the previous result in place.
+                        //
+                        if (arguments.Count == 0)
+                            goto emptyCommand;
 
                         bool exit = false;
                         int engineLevels = interpreter.EnterEngineLevel(); /* REALLY: Command level? */
@@ -19288,6 +19420,9 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                         //
                         if (exit)
                             goto ok;
+
+                    emptyCommand:
+                        ;
                     }
 
                     //

@@ -54,4 +54,18 @@ internal static class TclTkTest
         ReturnCode code = interpreter.EvaluateScript(script, ref result);
         return (code, result == null ? null : result.ToString());
     }
+
+    /// <summary>
+    /// Creates a fresh interpreter, evaluates a script that is expected to fail,
+    /// asserts the Error return code, and returns the error message.
+    /// </summary>
+    public static string EvalOnceError(string script)
+    {
+        using Interpreter interpreter = CreateInterpreter();
+        (ReturnCode code, string value) = TryEval(interpreter, script);
+        code.Should().Be(ReturnCode.Error,
+            "script should fail: <" + script + "> -> " +
+            (value ?? "<null>"));
+        return value;
+    }
 }

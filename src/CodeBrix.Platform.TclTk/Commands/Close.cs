@@ -9,6 +9,8 @@
  * RCS: @(#) $Id: $
  */
 
+using System;
+
 using CodeBrix.Platform.TclTk._Attributes;
 using CodeBrix.Platform.TclTk._Components.Public;
 using CodeBrix.Platform.TclTk._Containers.Public;
@@ -94,6 +96,20 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
                         code = interpreter.RemoveChannel(
                             arguments[1], ChannelType.None, false, true, true,
                             ref result);
+
+                        //
+                        // BUGFIX: RemoveChannel only assigns "result" on its
+                        //         failure paths; on success it leaves the
+                        //         caller's prior result in place. Standard Tcl
+                        //         "close" yields an empty string, so reset it
+                        //         here on success (matching the "flush" command
+                        //         idiom). Without this, the common idiom
+                        //         "catch { ...; close $fp } msg" leaves msg set
+                        //         to the previous command's result instead of
+                        //         "", which callers treat as an error.
+                        //
+                        if (code == ReturnCode.Ok)
+                            result = String.Empty;
                     }
                     else
                     {

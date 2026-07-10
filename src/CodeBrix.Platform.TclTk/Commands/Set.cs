@@ -10,6 +10,7 @@
  */
 
 using CodeBrix.Platform.TclTk._Attributes;
+using CodeBrix.Platform.TclTk._Components.Private;
 using CodeBrix.Platform.TclTk._Components.Public;
 using CodeBrix.Platform.TclTk._Containers.Public;
 using CodeBrix.Platform.TclTk._Interfaces.Public;
@@ -110,7 +111,38 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
                                 arguments[2].Value, null, ref result);
 
                             if (code == ReturnCode.Ok)
-                                result = arguments[2];
+                            {
+                                //
+                                // NOTE: A script-level write trace (see the
+                                //       "trace" command) may have modified
+                                //       the stored value; stock Tcl returns
+                                //       the final value, so re-read it when
+                                //       any script traces exist.
+                                //
+                                if (ScriptTraceOps.HasAnyVariableTraces(
+                                        interpreter))
+                                {
+                                    Result value = null;
+                                    Result error = null;
+
+                                    if (interpreter.GetVariableValue(
+                                            VariableFlags.DirectGetValueMask |
+                                            VariableFlags.NonTrace,
+                                            arguments[1], ref value,
+                                            ref error) == ReturnCode.Ok)
+                                    {
+                                        result = value;
+                                    }
+                                    else
+                                    {
+                                        result = arguments[2];
+                                    }
+                                }
+                                else
+                                {
+                                    result = arguments[2];
+                                }
+                            }
                         }
                     }
                     else
