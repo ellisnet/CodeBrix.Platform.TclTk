@@ -98,7 +98,7 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
                         {
                             try
                             {
-                                result = channel.OneEndOfStream;
+                                result = interpreter.BooleanToResult(channel.OneEndOfStream);
                             }
                             catch (Exception e)
                             {

@@ -1479,7 +1479,8 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
                                             string path = (arguments.Count == 3) ?
                                                 (string)arguments[2] : String.Empty;
 
-                                            result = (interpreter.DoesChildInterpreterExist(path) == ReturnCode.Ok);
+                                            result = interpreter.BooleanToResult(
+                                                interpreter.DoesChildInterpreterExist(path) == ReturnCode.Ok);
                                         }
                                         else
                                         {
@@ -1987,7 +1988,7 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
                                             {
                                                 lock (childInterpreter.InternalSyncRoot) /* TRANSACTIONAL */
                                                 {
-                                                    result = childInterpreter.InternalIsSafe();
+                                                    result = interpreter.BooleanToResult(childInterpreter.InternalIsSafe());
                                                 }
                                             }
                                         }

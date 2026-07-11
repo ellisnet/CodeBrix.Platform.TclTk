@@ -4,6 +4,7 @@ using CodeBrix.Platform.TkCanvas.Canvas;
 using CodeBrix.Platform.TkCanvas.Events;
 using CodeBrix.Platform.TkCanvas.Fonts;
 using CodeBrix.Platform.TkCanvas.Rendering;
+using CodeBrix.Platform.TkCanvas.Theming;
 using CodeBrix.Platform.TkCanvas.Windowing;
 
 using SkiaSharp;
@@ -154,7 +155,7 @@ public sealed class RadiobuttonWidget : WidgetBase
         {
             paint.IsAntialias = true;
             paint.Style = SKPaintStyle.Fill;
-            paint.Color = SKColors.White;
+            paint.Color = ResolveColor("-selectcolor", Theme.SelectColor);
             canvas.DrawPath(path, paint);
             paint.Style = SKPaintStyle.Stroke;
             paint.StrokeWidth = 1;
@@ -176,7 +177,7 @@ public sealed class RadiobuttonWidget : WidgetBase
             {
                 paint.IsAntialias = true;
                 paint.Style = SKPaintStyle.Fill;
-                paint.Color = new SKColor(0x1a, 0x1a, 0x1a);
+                paint.Color = TkTheme.Color(Theme.IndicatorForeground);
                 canvas.DrawPath(path, paint);
             }
         }
@@ -186,8 +187,10 @@ public sealed class RadiobuttonWidget : WidgetBase
         TkFont font = Font;
         FontMetrics metrics = Fonts.Metrics(font);
         SKColor fg;
-        string fgSpec = Disabled ? Options.Get("-disabledforeground", "#a3a3a3")
-                : Options.Get("-foreground", Options.Get("-fg", "black"));
+        string fgSpec = Disabled ? ResolveOption("-disabledforeground", Theme.DisabledForeground)
+                : Options.IsSet("-fg") && !Options.IsSet("-foreground")
+                        ? Options.Get("-fg")
+                        : ResolveOption("-foreground", Theme.Foreground);
         if (!TkColor.TryParse(fgSpec, out fg)) { fg = SKColors.Black; }
         using (SKFont skFont = Fonts.GetSkFont(font))
         using (var paint = new SKPaint())

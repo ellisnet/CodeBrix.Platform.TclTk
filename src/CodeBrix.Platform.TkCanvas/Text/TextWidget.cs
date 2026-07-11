@@ -28,7 +28,7 @@ namespace CodeBrix.Platform.TkCanvas.Text;
 /// scope, per the plan: Tk undo and embedded windows (DRAKON does its own
 /// undo at the model level).
 /// </summary>
-public sealed class TextWidget : IWidget
+public sealed class TextWidget : IWidget, ITextInputTarget
 {
     private sealed class Mark
     {
@@ -61,6 +61,7 @@ public sealed class TextWidget : IWidget
             new Dictionary<string, TextTag>(StringComparer.Ordinal);
 
     private List<DisplaySegment> _display;
+    private int _displayWidth = -1;
     private int _topDisplayLine;
     private TextPosition _selectionAnchor;
     private bool _hasSelectionAnchor;
@@ -80,13 +81,21 @@ public sealed class TextWidget : IWidget
         window.Widget = this;
         window.Focusable = true;
 
+        // The sel tag carries no explicit -background: painting falls back to
+        // the tree theme's selection color, so a theme switch recolors the
+        // selection live (an explicit "tag configure sel" still wins).
         var sel = new TextTag("sel");
-        sel.Options.Set("-background", "#c3c3c3");
         _tags.Add(sel);
         _tagsByName["sel"] = sel;
 
         _marks["insert"] = new Mark("insert", new TextPosition(1, 0), false);
         _marks["current"] = new Mark("current", new TextPosition(1, 0), false);
+
+        Theming.OptionDatabase database = window.Tree.OptionDatabaseIfCreated;
+        if (database != null && !database.IsEmpty)
+        {
+            database.ApplyTo(Options, window);
+        }
 
         RegisterClassBindings(window.Tree.Bindings);
         Measure();
@@ -104,11 +113,41 @@ public sealed class TextWidget : IWidget
     /// <inheritdoc/>
     public WidgetOptions Options { get; } = new WidgetOptions();
 
+    private ITextInputSink _inputSink;
+    private string _composition = "";
+
     /// <summary>
-    /// The hidden-input-element seam (stubbed until the interactive B.8a
-    /// tail); may stay null in headless use.
+    /// The hidden-input-element seam: a widget-level override, falling back
+    /// to the tree-wide <see cref="WindowTree.InputSink"/> the host attaches;
+    /// may stay null in headless use.
     /// </summary>
-    public ITextInputSink InputSink { get; set; }
+    public ITextInputSink InputSink
+    {
+        get { return (_inputSink != null) ? _inputSink : Window.Tree.InputSink; }
+        set { _inputSink = value; }
+    }
+
+    /// <summary>The live IME pre-edit string, empty outside composition.</summary>
+    public string Composition
+    {
+        get { return _composition; }
+    }
+
+    /// <inheritdoc/>
+    public void CommitText(string text)
+    {
+        SetComposition(null);
+        InsertAtCaret(text);
+    }
+
+    /// <inheritdoc/>
+    public void SetComposition(string preedit)
+    {
+        string value = preedit ?? "";
+        if (value == _composition) { return; }
+        _composition = value;
+        Window.Tree.Scheduler.ScheduleRepaint();
+    }
 
     /// <summary>Raised with the horizontal scroll fractions (<c>-xscrollcommand</c>).</summary>
     public event Action<double, double> XScrollChanged;
@@ -862,7 +901,11 @@ public sealed class TextWidget : IWidget
 
     private List<DisplaySegment> DisplayLines()
     {
-        if (_display != null) { return _display; }
+        // The wrap layout depends on the window width: recompute when the
+        // window has been resized since the cache was built (a text widget
+        // filled before its first layout pass must re-flow afterwards).
+        if (_display != null && _displayWidth == ContentWidth) { return _display; }
+        _displayWidth = ContentWidth;
 
         var display = new List<DisplaySegment>();
         string wrap = Options.Get("-wrap", "char");
@@ -1066,8 +1109,9 @@ public sealed class TextWidget : IWidget
     public void Paint(SKCanvas canvas)
     {
         int inset = Inset;
+        Theming.TkTheme theme = Window.Tree.Theme;
         SKColor background;
-        if (!TkColor.TryParse(Options.Get("-background", "white"), out background))
+        if (!TkColor.TryParse(Options.Get("-background", theme.FieldBackground), out background))
         {
             background = SKColors.White;
         }
@@ -1084,7 +1128,7 @@ public sealed class TextWidget : IWidget
                 new SKRect(0, 0, Window.Width, Window.Height),
                 Options.GetInt("-borderwidth", 1),
                 ReliefPainter.Parse(Options.Get("-relief", "sunken")),
-                TkRenderer.StageBackground);
+                Theming.TkTheme.Color(theme.Background));
 
         FontManager fonts = Fonts;
         TkFont font = Font;
@@ -1111,7 +1155,7 @@ public sealed class TextWidget : IWidget
                 while (cursor < segment.End)
                 {
                     int runEnd = segment.End;
-                    string foreground = Options.Get("-foreground", "black");
+                    string foreground = Options.Get("-foreground", theme.FieldForeground);
                     string runBackground = null;
                     bool underline = false;
                     bool overstrike = false;
@@ -1122,6 +1166,7 @@ public sealed class TextWidget : IWidget
                         if (!tag.Covers(position)) { continue; }
                         if (tag.Options.IsSet("-foreground")) { foreground = tag.Options.Get("-foreground"); }
                         if (tag.Options.IsSet("-background")) { runBackground = tag.Options.Get("-background"); }
+                        else if (tag.Name == "sel") { runBackground = theme.SelectBackground; }
                         if (tag.Options.GetBool("-underline")) { underline = true; }
                         if (tag.Options.GetBool("-overstrike")) { overstrike = true; }
                     }
@@ -1176,7 +1221,11 @@ public sealed class TextWidget : IWidget
                     cursor = runEnd;
                 }
 
-                // The caret.
+                // The caret — preceded, during IME composition, by the live
+                // pre-edit string drawn as separate state at the caret
+                // position (underlined, on the widget background; a
+                // first-pass rendering that overlays rather than reflows the
+                // rest of the line).
                 if (focused && caret.Line == segment.Line
                         && caret.Char >= segment.Start
                         && (caret.Char < segment.End
@@ -1185,7 +1234,32 @@ public sealed class TextWidget : IWidget
                     string prefix = _lines[segment.Line - 1]
                             .Substring(segment.Start, caret.Char - segment.Start);
                     float caretX = inset + fonts.Measure(font, prefix);
-                    paint.Color = SKColors.Black;
+
+                    if (_composition.Length > 0)
+                    {
+                        float compWidth = fonts.Measure(font, _composition);
+                        SKColor compBg;
+                        if (!TkColor.TryParse(Options.Get("-background", theme.FieldBackground), out compBg))
+                        {
+                            compBg = SKColors.White;
+                        }
+                        paint.Color = compBg;
+                        paint.Style = SKPaintStyle.Fill;
+                        canvas.DrawRect(new SKRect(caretX, top, caretX + compWidth, top + lineHeight), paint);
+
+                        paint.Color = Theming.TkTheme.Color(
+                                Options.Get("-foreground", theme.FieldForeground));
+                        paint.IsAntialias = true;
+                        canvas.DrawText(_composition, caretX, top + metrics.Ascent,
+                                SKTextAlign.Left, skFont, paint);
+                        paint.IsAntialias = false;
+                        canvas.DrawRect(new SKRect(caretX, top + metrics.Ascent + 1,
+                                caretX + compWidth, top + metrics.Ascent + 2), paint);
+                        caretX += compWidth;
+                    }
+
+                    paint.Color = Theming.TkTheme.Color(
+                            Options.Get("-insertbackground", theme.InsertBackground));
                     canvas.DrawRect(new SKRect(caretX, top, caretX + 2, top + lineHeight), paint);
                 }
             }
@@ -1205,6 +1279,241 @@ public sealed class TextWidget : IWidget
     {
         bindings.Bind("Text", "<ButtonPress-1>", HandleButtonPress);
         bindings.Bind("Text", "<B1-Motion>", HandleDragSelect);
+        bindings.Bind("Text", "<KeyPress>", HandleKeyPress);
+        bindings.Bind("Text", "<FocusIn>", HandleFocusIn);
+        bindings.Bind("Text", "<FocusOut>", HandleFocusOut);
+        bindings.Bind("Text", "<Configure>", HandleConfigure);
+    }
+
+    private static DispatchResult HandleConfigure(TkEvent tkEvent)
+    {
+        // The wrap layout depends on the widget width; when the widget is
+        // resized (its content flows through nested grids only after the
+        // toplevel settles its size), drop the cached line layout and
+        // repaint so text does not stay wrapped at a stale width.
+        var widget = tkEvent.Window.Widget as TextWidget;
+        if (widget == null) { return DispatchResult.Continue; }
+        widget._display = null;
+        widget.Window.Tree.Scheduler.ScheduleRepaint();
+        return DispatchResult.Continue;
+    }
+
+    private static DispatchResult HandleFocusIn(TkEvent tkEvent)
+    {
+        var widget = tkEvent.Window.Widget as TextWidget;
+        if (widget == null) { return DispatchResult.Continue; }
+        ITextInputSink sink = widget.InputSink;
+        if (sink != null)
+        {
+            sink.Attach(widget);
+            widget.NotifySinkCaret();
+        }
+        widget.Window.Tree.Scheduler.ScheduleRepaint();
+        return DispatchResult.Continue;
+    }
+
+    private static DispatchResult HandleFocusOut(TkEvent tkEvent)
+    {
+        var widget = tkEvent.Window.Widget as TextWidget;
+        if (widget == null) { return DispatchResult.Continue; }
+        widget.SetComposition(null);
+        ITextInputSink sink = widget.InputSink;
+        if (sink != null) { sink.Detach(); }
+        widget.Window.Tree.Scheduler.ScheduleRepaint();
+        return DispatchResult.Continue;
+    }
+
+    // ------------------------------------------------------------------
+    // Class behavior: key-driven editing (the Tk Text-class key bindings
+    // DRAKON's editing relies on; committed PRINTABLE text normally arrives
+    // through the input sink — the Character path here serves hosts and
+    // tests that route plain keystrokes as key events)
+    // ------------------------------------------------------------------
+
+    private static DispatchResult HandleKeyPress(TkEvent tkEvent)
+    {
+        var widget = tkEvent.Window.Widget as TextWidget;
+        if (widget == null) { return DispatchResult.Continue; }
+
+        bool shift = (tkEvent.State & EventModifiers.Shift) != 0;
+        bool control = (tkEvent.State & EventModifiers.Control) != 0;
+
+        switch (tkEvent.KeySym)
+        {
+            case "Left":
+                widget.MoveCaret(control ? "insert - 1 chars wordstart" : "insert - 1 chars", shift);
+                return DispatchResult.Break;
+            case "Right":
+                widget.MoveCaret(control ? "insert + 1 chars wordend" : "insert + 1 chars", shift);
+                return DispatchResult.Break;
+            case "Up":
+                widget.MoveCaret("insert - 1 lines", shift);
+                return DispatchResult.Break;
+            case "Down":
+                widget.MoveCaret("insert + 1 lines", shift);
+                return DispatchResult.Break;
+            case "Home":
+                widget.MoveCaret(control ? "1.0" : "insert linestart", shift);
+                return DispatchResult.Break;
+            case "End":
+                widget.MoveCaret(control ? "end - 1 chars" : "insert lineend", shift);
+                return DispatchResult.Break;
+            case "Prior":
+                widget.MoveCaret("insert - " + Math.Max(1, widget.VisibleLines) + " lines", shift);
+                return DispatchResult.Break;
+            case "Next":
+                widget.MoveCaret("insert + " + Math.Max(1, widget.VisibleLines) + " lines", shift);
+                return DispatchResult.Break;
+            case "BackSpace":
+                if (!widget.DeleteSelectionIfAny())
+                {
+                    TextPosition caret = widget._marks["insert"].Position;
+                    if (caret > new TextPosition(1, 0))
+                    {
+                        widget.Delete("insert - 1 chars", "insert");
+                    }
+                }
+                widget.See("insert");
+                return DispatchResult.Break;
+            case "Delete":
+                if (!widget.DeleteSelectionIfAny())
+                {
+                    if (widget._marks["insert"].Position < widget.ParseIndex("end - 1 chars"))
+                    {
+                        widget.Delete("insert", "insert + 1 chars");
+                    }
+                }
+                widget.See("insert");
+                return DispatchResult.Break;
+            case "Return":
+            case "KP_Enter":
+                widget.CommitText("\n");
+                return DispatchResult.Break;
+            case "Tab":
+                widget.CommitText("\t");
+                return DispatchResult.Break;
+            default:
+                break;
+        }
+
+        if (control)
+        {
+            switch (tkEvent.KeySym)
+            {
+                case "c":
+                    widget.CopySelectionToClipboard(false);
+                    return DispatchResult.Break;
+                case "x":
+                    widget.CopySelectionToClipboard(true);
+                    return DispatchResult.Break;
+                case "v":
+                    widget.PasteFromClipboard();
+                    return DispatchResult.Break;
+                default:
+                    return DispatchResult.Continue;
+            }
+        }
+
+        if (!string.IsNullOrEmpty(tkEvent.Character)
+                && tkEvent.Character[0] >= ' ' && tkEvent.Character[0] != (char)0x7F)
+        {
+            widget.CommitText(tkEvent.Character);
+            return DispatchResult.Break;
+        }
+        return DispatchResult.Continue;
+    }
+
+    /// <summary>
+    /// Moves the insert mark to an index expression, either collapsing the
+    /// selection (plain movement) or extending it from the anchor
+    /// (Shift-movement) — the model under the Text-class arrow bindings.
+    /// </summary>
+    /// <param name="indexExpr">The target index expression.</param>
+    /// <param name="extend">Whether to extend the selection.</param>
+    public void MoveCaret(string indexExpr, bool extend)
+    {
+        TextPosition target;
+        try
+        {
+            target = ParseIndex(indexExpr);
+        }
+        catch (ArgumentException)
+        {
+            return;
+        }
+        TextPosition last = ParseIndex("end - 1 chars");
+        if (target > last) { target = last; }
+        if (target < new TextPosition(1, 0)) { target = new TextPosition(1, 0); }
+
+        TextTag sel = GetTag("sel");
+        if (extend)
+        {
+            if (!_hasSelectionAnchor)
+            {
+                _selectionAnchor = _marks["insert"].Position;
+                _hasSelectionAnchor = true;
+            }
+            sel.ClearRanges();
+            if (target != _selectionAnchor)
+            {
+                TextPosition start = (target < _selectionAnchor) ? target : _selectionAnchor;
+                TextPosition end = (target < _selectionAnchor) ? _selectionAnchor : target;
+                sel.AddRange(start, end);
+            }
+        }
+        else
+        {
+            sel.ClearRanges();
+            _hasSelectionAnchor = false;
+        }
+
+        MarkSet("insert", target.ToString());
+        See("insert");
+        Window.Tree.Scheduler.ScheduleRepaint();
+    }
+
+    /// <summary>Deletes the selection when one exists.</summary>
+    /// <returns>True when a selection was deleted.</returns>
+    public bool DeleteSelectionIfAny()
+    {
+        TextTag sel = GetTag("sel");
+        if (sel.Boundaries.Count < 2) { return false; }
+        Delete(sel.Boundaries[0].ToString(), sel.Boundaries[sel.Boundaries.Count - 1].ToString());
+        sel.ClearRanges();
+        _hasSelectionAnchor = false;
+        return true;
+    }
+
+    /// <summary>
+    /// Copies (or, for a cut, also deletes) the selection through the
+    /// tree's clipboard — the Control-c/Control-x class behavior.
+    /// </summary>
+    /// <param name="cut">Whether to delete the selection after copying.</param>
+    public void CopySelectionToClipboard(bool cut)
+    {
+        TextTag sel = GetTag("sel");
+        if (sel.Boundaries.Count < 2) { return; }
+        string selected = Get(sel.Boundaries[0].ToString(),
+                sel.Boundaries[sel.Boundaries.Count - 1].ToString());
+        Clipboard.ClipboardManager clipboard = Window.Tree.Clipboard;
+        clipboard.Clear();
+        clipboard.Append(selected);
+        if (cut) { DeleteSelectionIfAny(); }
+    }
+
+    /// <summary>Pastes the clipboard text at the caret — the Control-v class behavior.</summary>
+    public void PasteFromClipboard()
+    {
+        string text;
+        try
+        {
+            text = Window.Tree.Clipboard.Get();
+        }
+        catch (InvalidOperationException)
+        {
+            return;
+        }
+        if (text.Length > 0) { CommitText(text); }
     }
 
     private static DispatchResult HandleButtonPress(TkEvent tkEvent)

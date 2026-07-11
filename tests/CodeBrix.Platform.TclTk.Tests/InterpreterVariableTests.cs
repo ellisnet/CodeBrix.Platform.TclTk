@@ -87,4 +87,38 @@ public class InterpreterVariableTests
         //Assert
         result.Should().Be("15");
     }
+
+    [Fact]
+    public void Qualified_variable_names_fall_back_to_the_global_namespace()
+    {
+        //Stock Tcl resolves a relatively-qualified name in the current
+        //  namespace first, THEN the global namespace (namespace manual,
+        //  NAME RESOLUTION) — probed on real tclsh 8.6.16. Both the write
+        //  and the read below must land on ::colors::canvas_bg when
+        //  ::gprops::colors does not exist.
+        using Interpreter interpreter = TclTkTest.CreateInterpreter();
+        TclTkTest.Eval(interpreter, "namespace eval colors { variable canvas_bg white }");
+
+        TclTkTest.Eval(interpreter,
+            "namespace eval gprops { set colors::canvas_bg blue }");
+        TclTkTest.Eval(interpreter, "set ::colors::canvas_bg").Should().Be("blue");
+
+        TclTkTest.Eval(interpreter,
+            "namespace eval gprops { set colors::canvas_bg }").Should().Be("blue");
+    }
+
+    [Fact]
+    public void Qualified_variable_names_prefer_the_current_namespace_when_both_exist()
+    {
+        //Arrange — the same name exists both nested and globally
+        //  (probed on real tclsh 8.6.16: the current namespace wins).
+        using Interpreter interpreter = TclTkTest.CreateInterpreter();
+        TclTkTest.Eval(interpreter, "namespace eval colors { variable x global }");
+        TclTkTest.Eval(interpreter, "namespace eval gprops { namespace eval colors {} }");
+        TclTkTest.Eval(interpreter, "set ::gprops::colors::x nested");
+
+        //Act + Assert
+        TclTkTest.Eval(interpreter,
+            "namespace eval gprops { set colors::x }").Should().Be("nested");
+    }
 }

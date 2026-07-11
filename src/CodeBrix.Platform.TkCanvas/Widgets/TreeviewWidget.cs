@@ -6,6 +6,7 @@ using CodeBrix.Platform.TkCanvas.Canvas;
 using CodeBrix.Platform.TkCanvas.Events;
 using CodeBrix.Platform.TkCanvas.Fonts;
 using CodeBrix.Platform.TkCanvas.Rendering;
+using CodeBrix.Platform.TkCanvas.Theming;
 using CodeBrix.Platform.TkCanvas.Windowing;
 
 using SkiaSharp;
@@ -29,6 +30,12 @@ public sealed class TreeItem
 
     /// <summary>Whether the node is expanded (<c>-open</c>).</summary>
     public bool Open { get; set; }
+
+    /// <summary>
+    /// The photo-image name drawn before the tree-column text (<c>-image</c>),
+    /// or empty. An unresolvable name simply paints nothing.
+    /// </summary>
+    public string Image { get; set; } = "";
 
     /// <summary>The parent item id (empty string for a top-level item).</summary>
     public string Parent { get; internal set; } = "";
@@ -95,7 +102,7 @@ public sealed class TreeviewWidget : WidgetBase
 
     private protected override string DefaultBackground
     {
-        get { return "white"; }
+        get { return Theme.FieldBackground; }
     }
 
     /// <summary>The data (non-tree) column ids in display order (<c>-columns</c>).</summary>
@@ -382,9 +389,19 @@ public sealed class TreeviewWidget : WidgetBase
         int treeWidth = TreeColumnWidth;
 
         SKColor selBg;
-        if (!TkColor.TryParse("#4a6984", out selBg)) { selBg = new SKColor(0x4A, 0x69, 0x84); }
+        if (!TkColor.TryParse(ResolveOption("-selectbackground", Theme.ListSelectBackground), out selBg))
+        {
+            selBg = new SKColor(0x4A, 0x69, 0x84);
+        }
+        SKColor selFg;
+        if (!TkColor.TryParse(ResolveOption("-selectforeground", Theme.ListSelectForeground), out selFg))
+        {
+            selFg = SKColors.White;
+        }
         SKColor fg;
-        if (!TkColor.TryParse(Options.Get("-foreground", "black"), out fg)) { fg = SKColors.Black; }
+        if (!TkColor.TryParse(ResolveOption("-foreground", Theme.FieldForeground), out fg)) { fg = SKColors.Black; }
+        SKColor headingBg = TkTheme.Color(Theme.HeadingBackground);
+        SKColor headingFg = TkTheme.Color(Theme.HeadingForeground);
 
         int headingH = HeadingHeight;
         using (SKFont skFont = Fonts.GetSkFont(font))
@@ -395,11 +412,11 @@ public sealed class TreeviewWidget : WidgetBase
             {
                 var headRect = new SKRect(inset, inset, Window.Width - inset, inset + headingH);
                 paint.Style = SKPaintStyle.Fill;
-                paint.Color = new SKColor(0xE0, 0xE0, 0xE0);
+                paint.Color = headingBg;
                 paint.IsAntialias = false;
                 canvas.DrawRect(headRect, paint);
-                ReliefPainter.DrawBorder(canvas, headRect, 1, Relief.Raised, new SKColor(0xE0, 0xE0, 0xE0));
-                paint.Color = SKColors.Black;
+                ReliefPainter.DrawBorder(canvas, headRect, 1, Relief.Raised, headingBg);
+                paint.Color = headingFg;
                 paint.IsAntialias = true;
                 string treeHead;
                 _headings.TryGetValue("#0", out treeHead);
@@ -436,7 +453,7 @@ public sealed class TreeviewWidget : WidgetBase
                 float indent = inset + 4 + depth * 16;
                 paint.IsAntialias = true;
                 paint.Style = SKPaintStyle.Fill;
-                paint.Color = selected ? SKColors.White : fg;
+                paint.Color = selected ? selFg : fg;
 
                 // Expander triangle for parents.
                 if (item.Children.Count > 0)
@@ -444,7 +461,17 @@ public sealed class TreeviewWidget : WidgetBase
                     canvas.DrawText(item.Open ? "▾" : "▸", indent - 14, top + 2 + metrics.Ascent,
                             SKTextAlign.Left, skFont, paint);
                 }
-                canvas.DrawText(item.Text, indent, top + 2 + metrics.Ascent, SKTextAlign.Left, skFont, paint);
+
+                // Item image (Tk draws it between the indent and the text,
+                // vertically centred in the row).
+                float textX = indent;
+                Images.PhotoImage itemImage = ResolveItemImage(item);
+                if (itemImage != null && itemImage.Width > 0)
+                {
+                    itemImage.Draw(canvas, indent, top + (rowHeight - itemImage.Height) / 2f);
+                    textX += itemImage.Width + 4;
+                }
+                canvas.DrawText(item.Text, textX, top + 2 + metrics.Ascent, SKTextAlign.Left, skFont, paint);
 
                 for (int c = 0; c < _columns.Count && c < item.Values.Count; c++)
                 {
@@ -453,6 +480,13 @@ public sealed class TreeviewWidget : WidgetBase
                 }
             }
         }
+    }
+
+    private Images.PhotoImage ResolveItemImage(TreeItem item)
+    {
+        if (item.Image.Length == 0) { return null; }
+        Images.ImageManager images = Window.Tree.ImagesIfCreated;
+        return (images != null) ? images.Find(item.Image) : null;
     }
 
     private void Repaint()

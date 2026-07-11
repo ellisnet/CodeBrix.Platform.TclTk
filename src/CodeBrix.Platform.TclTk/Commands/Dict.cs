@@ -301,8 +301,8 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
                                 goto done;
                             }
 
-                            result = dictionary.CanTraverse(interpreter,
-                                arguments.GetRange(3, argumentCount - 3), true);
+                            result = interpreter.BooleanToResult(dictionary.CanTraverse(interpreter,
+                                arguments.GetRange(3, argumentCount - 3), true));
                         }
                         else
                         {

@@ -1,0 +1,53 @@
+# tk_setPalette derived shades (Tk palette.tcl math, 16-bit components)
+palette blue
+query background
+query foreground
+query activeBackground
+query activeForeground
+query disabledForeground
+query highlightBackground
+query highlightColor
+query insertBackground
+query selectBackground
+query selectForeground
+query troughColor
+optclear
+palette #112233
+query background
+query foreground
+query activeBackground
+query disabledForeground
+query selectBackground
+query troughColor
+optclear
+palette #d9d9d9
+query foreground
+query activeBackground
+query disabledForeground
+query selectBackground
+optclear
+palette white
+query foreground
+query activeBackground
+query disabledForeground
+query selectBackground
+optclear
+palette black
+query foreground
+query activeBackground
+query disabledForeground
+query selectBackground
+optclear
+palette #4a6984
+query foreground
+query activeBackground
+query disabledForeground
+query selectBackground
+optclear
+palette background #204060 foreground #e0e0ff selectBackground #ff0000
+query background
+query foreground
+query activeBackground
+query disabledForeground
+query selectBackground
+query troughColor

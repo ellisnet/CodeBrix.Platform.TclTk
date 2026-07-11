@@ -115,7 +115,10 @@ public sealed class LabelframeWidget : WidgetBase
         }
 
         SKColor fg;
-        if (!TkColor.TryParse(Options.Get("-foreground", Options.Get("-fg", "black")), out fg))
+        string fgSpec = Options.IsSet("-fg") && !Options.IsSet("-foreground")
+                ? Options.Get("-fg")
+                : ResolveOption("-foreground", Theme.Foreground);
+        if (!TkColor.TryParse(fgSpec, out fg))
         {
             fg = SKColors.Black;
         }

@@ -1,0 +1,33 @@
+# priority beats recency; recency breaks ties; no pattern specificity
+frame .f Frame
+frame .f.child Button
+frame .b1 Button
+add *Button.foreground blue widgetDefault
+add *foreground red widgetDefault
+get .b1 foreground Foreground
+optclear
+add *foreground red widgetDefault
+add *Button.foreground blue widgetDefault
+get .b1 foreground Foreground
+optclear
+add *Button.foreground blue widgetDefault
+add *foreground red userDefault
+get .b1 foreground Foreground
+optclear
+add *foreground red 30
+add *foreground green 70
+get .b1 foreground Foreground
+add *foreground purple 70
+get .b1 foreground Foreground
+optclear
+add *foreground red widgetDefault
+add *foreground blue widgetDefault
+get .b1 foreground Foreground
+optclear
+add *b1.foreground yellow widgetDefault
+add *Button.foreground blue widgetDefault
+get .b1 foreground Foreground
+optclear
+add *Button.foreground blue widgetDefault
+add *b1.foreground yellow widgetDefault
+get .b1 foreground Foreground

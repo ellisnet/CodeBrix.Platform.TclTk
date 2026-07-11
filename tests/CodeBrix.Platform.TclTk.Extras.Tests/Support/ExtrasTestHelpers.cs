@@ -15,10 +15,24 @@ namespace CodeBrix.Platform.TclTk.Extras.Tests.Support;
 internal static class ExtrasTestHelpers
 {
     /// <summary>Creates an interpreter with BOTH Extras command sets registered.</summary>
+    /// <summary>
+    /// The boolean-result mode helper-created interpreters use. Normally the
+    /// engine default (<see cref="BooleanResultMode.EagleCompat" />); a
+    /// diagnostic run can set <c>TCLTK_TEST_BOOLEAN_MODE=TclshCompat</c> to
+    /// force the whole suite into TclshCompat to surface any real functional
+    /// regression under that mode.
+    /// </summary>
+    public static readonly BooleanResultMode BooleanMode =
+        string.Equals(
+            System.Environment.GetEnvironmentVariable("TCLTK_TEST_BOOLEAN_MODE"),
+            "TclshCompat", System.StringComparison.OrdinalIgnoreCase)
+            ? BooleanResultMode.TclshCompat
+            : BooleanResultMode.EagleCompat;
+
     public static Interpreter CreateInterpreter()
     {
         Result result = null;
-        Interpreter interpreter = Interpreter.Create(ref result);
+        Interpreter interpreter = Interpreter.Create(ref result, BooleanMode);
 
         interpreter.Should().NotBeNull(
             "interpreter creation should succeed; failure result: " + AsString(result));

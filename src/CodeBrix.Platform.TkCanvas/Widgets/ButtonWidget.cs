@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 using CodeBrix.Platform.TkCanvas.Canvas;
 using CodeBrix.Platform.TkCanvas.Events;
@@ -105,24 +106,44 @@ public sealed class ButtonWidget : WidgetBase
     /// <inheritdoc/>
     public override void Measure()
     {
-        TkFont font = Font;
-        int textWidth;
-        int textHeight;
-        WidgetText.MeasureBlock(Fonts, font, Options.Get("-text", ""), out textWidth, out textHeight);
+        int contentWidth;
+        int contentHeight;
 
-        int contentWidth = textWidth;
-        int contentHeight = textHeight;
-        int chars = Options.GetInt("-width", 0);
-        if (chars > 0)
+        Images.PhotoImage image = ResolveImage();
+        if (image != null)
         {
-            int charWidth = Fonts.Measure(font, "0");
-            if (charWidth < 1) { charWidth = 1; }
-            contentWidth = chars * charWidth;
+            // An image replaces the text, and -width/-height (when given)
+            // are pixel sizes rather than character/line counts — Tk's rule.
+            contentWidth = image.Width;
+            contentHeight = image.Height;
+            int pixels;
+            if (TclString.TryParsePixels(Options.Get("-width", ""), out pixels) && pixels > 0)
+            {
+                contentWidth = pixels;
+            }
+            if (TclString.TryParsePixels(Options.Get("-height", ""), out pixels) && pixels > 0)
+            {
+                contentHeight = pixels;
+            }
         }
-        int lines = Options.GetInt("-height", 0);
-        if (lines > 0)
+        else
         {
-            contentHeight = lines * Fonts.Metrics(font).LineSpace;
+            TkFont font = Font;
+            WidgetText.MeasureBlock(Fonts, font, Options.Get("-text", ""),
+                    out contentWidth, out contentHeight);
+
+            int chars = Options.GetInt("-width", 0);
+            if (chars > 0)
+            {
+                int charWidth = Fonts.Measure(font, "0");
+                if (charWidth < 1) { charWidth = 1; }
+                contentWidth = chars * charWidth;
+            }
+            int lines = Options.GetInt("-height", 0);
+            if (lines > 0)
+            {
+                contentHeight = lines * Fonts.Metrics(font).LineSpace;
+            }
         }
 
         int inset = Inset;
@@ -136,10 +157,13 @@ public sealed class ButtonWidget : WidgetBase
     public override void Paint(SKCanvas canvas)
     {
         SKColor background = BackgroundColor;
-        if (_active && !Disabled && Options.IsSet("-activebackground"))
+        if (_active && !Disabled)
         {
             SKColor active;
-            if (TkColor.TryParse(Options.Get("-activebackground"), out active)) { background = active; }
+            if (TkColor.TryParse(ResolveOption("-activebackground", Theme.ActiveBackground), out active))
+            {
+                background = active;
+            }
         }
 
         // The pressed button sinks; otherwise its configured (raised) relief.
@@ -157,18 +181,27 @@ public sealed class ButtonWidget : WidgetBase
         Relief relief = _pressed ? Rendering.Relief.Sunken : Relief;
         ReliefPainter.DrawBorder(canvas, borderRect, BorderWidth, relief, background);
 
-        string text = Options.Get("-text", "");
-        if (text.Length == 0) { return; }
-
         int inset = Inset;
         var content = new SKRect(
                 inset + PadX, inset + PadY,
                 Window.Width - inset - PadX, Window.Height - inset - PadY);
         // The pressed button nudges its label down-right by one pixel, like Tk.
         if (_pressed) { content.Offset(1, 1); }
+        CanvasAnchor anchor = CanvasAnchorMath.Parse(Options.Get("-anchor", "center"));
+
+        Images.PhotoImage image = ResolveImage();
+        if (image != null)
+        {
+            float left, top;
+            PlaceAnchored(anchor, content, image.Width, image.Height, out left, out top);
+            image.Draw(canvas, left, top);
+            return;
+        }
+
+        string text = Options.Get("-text", "");
+        if (text.Length == 0) { return; }
 
         SKColor color = ForegroundColor();
-        CanvasAnchor anchor = CanvasAnchorMath.Parse(Options.Get("-anchor", "center"));
         string justify = Options.Get("-justify", "center");
         WidgetText.DrawBlock(canvas, Fonts, Font, text, content, anchor, justify, color);
     }
@@ -178,18 +211,43 @@ public sealed class ButtonWidget : WidgetBase
         string spec;
         if (Disabled)
         {
-            spec = Options.Get("-disabledforeground", "#a3a3a3");
+            spec = ResolveOption("-disabledforeground", Theme.DisabledForeground);
         }
-        else if (_active && Options.IsSet("-activeforeground"))
+        else if (_active)
         {
-            spec = Options.Get("-activeforeground");
+            spec = ResolveOption("-activeforeground",
+                    Options.IsSet("-fg") ? Options.Get("-fg") : ResolveOption("-foreground", Theme.ActiveForeground));
+        }
+        else if (Options.IsSet("-fg") && !Options.IsSet("-foreground"))
+        {
+            spec = Options.Get("-fg");
         }
         else
         {
-            spec = Options.Get("-foreground", Options.Get("-fg", "black"));
+            spec = ResolveOption("-foreground", Theme.ButtonForeground);
         }
         SKColor color;
         return TkColor.TryParse(spec, out color) ? color : SKColors.Black;
+    }
+
+    /// <inheritdoc/>
+    private protected override string DefaultBackground
+    {
+        get { return Theme.ButtonBackground; }
+    }
+
+    /// <inheritdoc/>
+    private protected override IReadOnlyCollection<string> StyleStates
+    {
+        get
+        {
+            var states = new List<string>(3);
+            if (Disabled) { states.Add("disabled"); }
+            if (_pressed) { states.Add("pressed"); }
+            if (_active) { states.Add("active"); }
+            if (Window.Tree.FocusWindow == Window) { states.Add("focus"); }
+            return states;
+        }
     }
 
     private void Repaint()

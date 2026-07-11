@@ -2,18 +2,14 @@
     x:Class="DRAKON.Brix.Views.MainPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:vm="using:DRAKON.Brix.ViewModels"
+    xmlns:tkhost="using:CodeBrix.Platform.TkCanvas.Hosting"
     FontFamily="{StaticResource OpenSansFont}"
     Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
 
-    <Page.DataContext>
-        <vm:MainViewModel />
-    </Page.DataContext>
-
+    <!-- The entire DRAKON Editor UI is built by its own (unmodified) Tcl
+         through the TkCanvas command bridge; this page only hosts the
+         single Tk surface. -->
     <Grid>
-        <TextBlock Text="{Binding Greeting}"
-                   FontSize="24"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center" />
+        <tkhost:TkHostView x:Name="TkHost" />
     </Grid>
 </Page>

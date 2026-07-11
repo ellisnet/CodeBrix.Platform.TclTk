@@ -1,0 +1,21 @@
+# configure + map resolution: first matching spec wins, negation, empty spec
+configure TButton -background #123456
+lookup TButton -background
+map TButton -background {active #654321 disabled #aaaaaa}
+lookup TButton -background active
+lookup TButton -background disabled
+lookup TButton -background {active disabled}
+map TButton -background {{active disabled} #111111 active #654321}
+lookup TButton -background {active disabled}
+lookup TButton -background active
+lookup TButton -background
+configure TButton -foreground #00aa00
+map TButton -foreground {{!disabled} #00ff00}
+lookup TButton -foreground {}
+lookup TButton -foreground disabled
+map TLabel -background {{} #999999}
+lookup TLabel -background {}
+lookup TLabel -background active
+map TEntry -foreground {focus #222222 {focus !disabled} #333333}
+lookup TEntry -foreground focus
+lookup TButton -nonexistent {} fallbackval

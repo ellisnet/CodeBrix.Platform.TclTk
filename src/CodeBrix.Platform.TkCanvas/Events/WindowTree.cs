@@ -93,6 +93,127 @@ public sealed class WindowTree
         }
     }
 
+    private Images.ImageManager _imageManager;
+
+    /// <summary>
+    /// The tree's photo-image registry: the <c>image</c> command model and
+    /// the resolver every widget's <c>-image</c> option goes through
+    /// (created lazily).
+    /// </summary>
+    public Images.ImageManager Images
+    {
+        get
+        {
+            if (_imageManager == null) { _imageManager = new Images.ImageManager(this); }
+            return _imageManager;
+        }
+    }
+
+    /// <summary>The image manager if one was ever created, else null (no allocation).</summary>
+    internal Images.ImageManager ImagesIfCreated
+    {
+        get { return _imageManager; }
+    }
+
+    /// <summary>
+    /// The host's hidden-input-element bridge (the §3.13 IME sink), or null
+    /// in headless use. The <c>text</c> and <c>entry</c> widgets attach
+    /// themselves to it as they gain and lose focus.
+    /// </summary>
+    public Text.ITextInputSink InputSink { get; set; }
+
+    private Clipboard.ClipboardManager _clipboard;
+
+    /// <summary>
+    /// The tree's clipboard: the toolkit-wide <c>clipboard</c> command
+    /// model, bridged to the OS through the
+    /// <see cref="Clipboard.ITkClipboard"/> host seam (created lazily).
+    /// </summary>
+    public Clipboard.ClipboardManager Clipboard
+    {
+        get
+        {
+            if (_clipboard == null) { _clipboard = new Clipboard.ClipboardManager(); }
+            return _clipboard;
+        }
+    }
+
+    private Theming.TkTheme _theme;
+
+    /// <summary>
+    /// The tree's color scheme (the plan's B.12a). Never null: with no theme
+    /// set, the classic Tk theme is in effect — the default look IS the
+    /// classic theme, so every theme change is round-trippable. Assigning
+    /// repaints the tree.
+    /// </summary>
+    public Theming.TkTheme Theme
+    {
+        get
+        {
+            if (_theme == null) { _theme = Theming.TkTheme.CreateClassic(); }
+            return _theme;
+        }
+        set
+        {
+            _theme = value ?? Theming.TkTheme.CreateClassic();
+            Scheduler.ScheduleRepaint();
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds the theme from a base color or palette entries and applies it
+    /// — the toolkit-side <c>tk_setPalette</c> (see
+    /// <see cref="Theming.TkTheme.FromPalette"/>).
+    /// </summary>
+    /// <param name="args">A single background color, or option-name/value pairs.</param>
+    public void SetPalette(IReadOnlyList<string> args)
+    {
+        Theme = Theming.TkTheme.FromPalette(args);
+    }
+
+    private Theming.OptionDatabase _optionDatabase;
+
+    /// <summary>
+    /// The tree's option database (<c>option add/get/clear</c>, the plan's
+    /// B.12b) — consulted when widgets are created, for options not
+    /// explicitly configured (created lazily).
+    /// </summary>
+    public Theming.OptionDatabase OptionDatabase
+    {
+        get
+        {
+            if (_optionDatabase == null) { _optionDatabase = new Theming.OptionDatabase(); }
+            return _optionDatabase;
+        }
+    }
+
+    /// <summary>The option database if one was ever created, else null (no allocation).</summary>
+    internal Theming.OptionDatabase OptionDatabaseIfCreated
+    {
+        get { return _optionDatabase; }
+    }
+
+    private Theming.TtkStyleEngine _styles;
+
+    /// <summary>
+    /// The tree's <c>ttk::style</c> engine (the plan's B.12c) — style tables,
+    /// state maps, and named ttk themes (created lazily).
+    /// </summary>
+    public Theming.TtkStyleEngine Styles
+    {
+        get
+        {
+            if (_styles == null) { _styles = new Theming.TtkStyleEngine(this); }
+            return _styles;
+        }
+    }
+
+    /// <summary>The style engine if one was ever created, else null (no allocation).</summary>
+    internal Theming.TtkStyleEngine StylesIfCreated
+    {
+        get { return _styles; }
+    }
+
     /// <summary>
     /// Notifies the scheduler that geometry-affecting state changed, so a
     /// coalesced relayout is pending. Mutations occurring INSIDE the layout

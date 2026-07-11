@@ -63,7 +63,7 @@ public sealed class ListboxWidget : WidgetBase
 
     private protected override string DefaultBackground
     {
-        get { return "white"; }
+        get { return Theme.FieldBackground; }
     }
 
     /// <summary>The number of items — <c>size</c>.</summary>
@@ -289,17 +289,17 @@ public sealed class ListboxWidget : WidgetBase
         int rows = VisibleRows();
 
         SKColor selBg;
-        if (!TkColor.TryParse(Options.Get("-selectbackground", "#4a6984"), out selBg))
+        if (!TkColor.TryParse(ResolveOption("-selectbackground", Theme.ListSelectBackground), out selBg))
         {
             selBg = new SKColor(0x4A, 0x69, 0x84);
         }
         SKColor selFg;
-        if (!TkColor.TryParse(Options.Get("-selectforeground", "white"), out selFg))
+        if (!TkColor.TryParse(ResolveOption("-selectforeground", Theme.ListSelectForeground), out selFg))
         {
             selFg = SKColors.White;
         }
         SKColor fg;
-        if (!TkColor.TryParse(Options.Get("-foreground", "black"), out fg)) { fg = SKColors.Black; }
+        if (!TkColor.TryParse(ResolveOption("-foreground", Theme.FieldForeground), out fg)) { fg = SKColors.Black; }
 
         using (SKFont skFont = Fonts.GetSkFont(font))
         using (var paint = new SKPaint())

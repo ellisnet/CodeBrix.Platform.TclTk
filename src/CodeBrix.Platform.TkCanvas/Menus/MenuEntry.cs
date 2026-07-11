@@ -51,6 +51,19 @@ public sealed class MenuEntry
     /// <summary>The submenu a cascade entry opens, or null.</summary>
     public MenuWidget Submenu { get; set; }
 
+    /// <summary>
+    /// The photo-image name drawn with the entry (<c>-image</c>), or empty.
+    /// An unresolvable name simply paints nothing.
+    /// </summary>
+    public string Image { get; set; } = "";
+
+    /// <summary>
+    /// How image and label combine (<c>-compound</c>). Only <c>left</c> —
+    /// the form DRAKON uses — affects drawing (image to the label's left);
+    /// other values are accepted and stored.
+    /// </summary>
+    public string Compound { get; set; } = "";
+
     /// <summary>Whether a checkbutton/radiobutton entry is currently selected.</summary>
     public bool Selected { get; set; }
 }

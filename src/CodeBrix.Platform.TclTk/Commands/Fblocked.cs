@@ -114,9 +114,9 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
             try
             {
                 if (channel.IsNetworkStream)
-                    result = !channel.DataAvailable;
+                    result = interpreter.BooleanToResult(!channel.DataAvailable);
                 else
-                    result = false;
+                    result = interpreter.BooleanToResult(false);
 
                 return ReturnCode.Ok;
             }

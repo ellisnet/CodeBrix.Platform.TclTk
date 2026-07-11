@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using CodeBrix.Platform.TkCanvas.Canvas;
 using CodeBrix.Platform.TkCanvas.Fonts;
 using CodeBrix.Platform.TkCanvas.Rendering;
+using CodeBrix.Platform.TkCanvas.Theming;
 using CodeBrix.Platform.TkCanvas.Windowing;
 
 using SkiaSharp;
@@ -31,6 +32,15 @@ public abstract class WidgetBase : IWidget
         Window = window;
         window.ClassName = className;
         window.Widget = this;
+
+        // The option database applies at widget CREATION, for options not
+        // explicitly configured — adding entries later does not restyle
+        // existing widgets (Tk's behavior, see §B.12b).
+        OptionDatabase database = window.Tree.OptionDatabaseIfCreated;
+        if (database != null && !database.IsEmpty)
+        {
+            database.ApplyTo(Options, window);
+        }
     }
 
     /// <inheritdoc/>
@@ -46,6 +56,97 @@ public abstract class WidgetBase : IWidget
     private protected FontManager Fonts
     {
         get { return Window.Tree.Fonts; }
+    }
+
+    /// <summary>The tree's color scheme — every default color reads through it.</summary>
+    private protected TkTheme Theme
+    {
+        get { return Window.Tree.Theme; }
+    }
+
+    /// <summary>
+    /// The widget's ttk style class (<c>TButton</c>, <c>TLabel</c>, ...) used
+    /// when no <c>-style</c> is configured. Classes with no ttk counterpart
+    /// (Listbox, Menu, Canvas, Text) resolve under their own name.
+    /// </summary>
+    private protected virtual string TtkClassName
+    {
+        get
+        {
+            switch (ClassName)
+            {
+                case "Listbox":
+                case "Treeview":
+                case "Menu":
+                case "Canvas":
+                case "Text":
+                case "Toplevel":
+                    return ClassName;
+                default:
+                    // Classes already carrying a ttk-style name (TCombobox,
+                    // TSeparator) resolve under themselves.
+                    if (ClassName.Length > 1 && ClassName[0] == 'T' && char.IsUpper(ClassName[1]))
+                    {
+                        return ClassName;
+                    }
+                    return "T" + ClassName;
+            }
+        }
+    }
+
+    /// <summary>The style this widget resolves under (<c>-style</c> or the class style).</summary>
+    private protected string StyleName
+    {
+        get
+        {
+            string style = Options.Get("-style", "");
+            return (style.Length != 0) ? style : TtkClassName;
+        }
+    }
+
+    /// <summary>
+    /// The widget's current ttk state names for style-map matching
+    /// (<c>active</c>, <c>pressed</c>, <c>disabled</c>, <c>focus</c>, ...) —
+    /// null means the normal state.
+    /// </summary>
+    private protected virtual IReadOnlyCollection<string> StyleStates
+    {
+        get { return null; }
+    }
+
+    /// <summary>
+    /// Resolves one option through the full styling stack: an explicitly
+    /// configured value (which includes creation-time option-database values)
+    /// wins; otherwise a <c>ttk::style</c> map entry matching the current
+    /// states, then a style configure value, then the theme default.
+    /// </summary>
+    /// <param name="option">The option name (with its dash).</param>
+    /// <param name="themeDefault">The theme's default for this option.</param>
+    /// <returns>The resolved value.</returns>
+    private protected string ResolveOption(string option, string themeDefault)
+    {
+        if (Options.IsSet(option)) { return Options.Get(option); }
+        TtkStyleEngine styles = Window.Tree.StylesIfCreated;
+        if (styles != null)
+        {
+            string value = styles.Lookup(StyleName, option, StyleStates);
+            if (value != null) { return value; }
+        }
+        return themeDefault;
+    }
+
+    /// <summary>
+    /// Resolves a color option through <see cref="ResolveOption"/> and parses
+    /// it (unparseable text paints black, like <see cref="TkColor"/>).
+    /// </summary>
+    /// <param name="option">The option name (with its dash).</param>
+    /// <param name="themeDefault">The theme's default for this option.</param>
+    /// <returns>The resolved color.</returns>
+    private protected SKColor ResolveColor(string option, string themeDefault)
+    {
+        SKColor color;
+        TkColor.TryParse(ResolveOption(option, themeDefault), out color);
+        return color;
     }
 
     /// <summary>The default <c>-borderwidth</c> when unset (widget-specific).</summary>
@@ -66,10 +167,10 @@ public abstract class WidgetBase : IWidget
         get { return 0; }
     }
 
-    /// <summary>The default <c>-background</c> when unset — Tk's classic gray.</summary>
+    /// <summary>The default <c>-background</c> when unset — the theme's widget background.</summary>
     private protected virtual string DefaultBackground
     {
-        get { return "#d9d9d9"; }
+        get { return Theme.Background; }
     }
 
     /// <summary>The configured border width (<c>-borderwidth</c>/<c>-bd</c>).</summary>
@@ -107,13 +208,15 @@ public abstract class WidgetBase : IWidget
         get { return ReliefPainter.Parse(Options.Get("-relief", DefaultRelief)); }
     }
 
-    /// <summary>The configured background color, or the widget default.</summary>
+    /// <summary>The configured background color, or the styled/theme default.</summary>
     private protected SKColor BackgroundColor
     {
         get
         {
             SKColor color;
-            string spec = Options.Get("-background", Options.Get("-bg", DefaultBackground));
+            string spec = Options.IsSet("-bg") && !Options.IsSet("-background")
+                    ? Options.Get("-bg")
+                    : ResolveOption("-background", DefaultBackground);
             return TkColor.TryParse(spec, out color) ? color : new SKColor(0xD9, 0xD9, 0xD9);
         }
     }
@@ -147,6 +250,68 @@ public abstract class WidgetBase : IWidget
     {
     }
 
+    /// <summary>
+    /// Resolves the widget's <c>-image</c> option against the tree's image
+    /// registry. Null when no image is set or the name does not resolve —
+    /// callers then fall back to their text content (accept-and-no-op).
+    /// </summary>
+    /// <returns>The photo image, or null.</returns>
+    private protected Images.PhotoImage ResolveImage()
+    {
+        string name = Options.Get("-image", "");
+        if (name.Length == 0) { return null; }
+        Images.ImageManager images = Window.Tree.ImagesIfCreated;
+        return (images != null) ? images.Find(name) : null;
+    }
+
+    /// <summary>
+    /// Computes the top-left corner that places fixed-size content inside a
+    /// rectangle per a Tk anchor (<c>nw</c> = top-left, <c>center</c> =
+    /// centred, ...) — the widget-content analogue of the canvas anchor math.
+    /// </summary>
+    /// <param name="anchor">The anchor.</param>
+    /// <param name="content">The rectangle to place into.</param>
+    /// <param name="width">The content width.</param>
+    /// <param name="height">The content height.</param>
+    /// <param name="left">The computed left edge.</param>
+    /// <param name="top">The computed top edge.</param>
+    private protected static void PlaceAnchored(CanvasAnchor anchor, SKRect content,
+            int width, int height, out float left, out float top)
+    {
+        switch (anchor)
+        {
+            case CanvasAnchor.NW:
+            case CanvasAnchor.W:
+            case CanvasAnchor.SW:
+                left = content.Left;
+                break;
+            case CanvasAnchor.NE:
+            case CanvasAnchor.E:
+            case CanvasAnchor.SE:
+                left = content.Right - width;
+                break;
+            default:
+                left = content.Left + (content.Width - width) / 2f;
+                break;
+        }
+        switch (anchor)
+        {
+            case CanvasAnchor.NW:
+            case CanvasAnchor.N:
+            case CanvasAnchor.NE:
+                top = content.Top;
+                break;
+            case CanvasAnchor.SW:
+            case CanvasAnchor.S:
+            case CanvasAnchor.SE:
+                top = content.Bottom - height;
+                break;
+            default:
+                top = content.Top + (content.Height - height) / 2f;
+                break;
+        }
+    }
+
     /// <inheritdoc/>
     public abstract void Measure();
 
@@ -176,7 +341,7 @@ public abstract class WidgetBase : IWidget
         if (highlight > 0)
         {
             SKColor ring;
-            string spec = Options.Get("-highlightbackground", DefaultBackground);
+            string spec = Options.Get("-highlightbackground", Theme.HighlightBackground);
             if (!TkColor.TryParse(spec, out ring)) { ring = background; }
             DrawHighlightRing(canvas, rect, highlight, ring);
         }

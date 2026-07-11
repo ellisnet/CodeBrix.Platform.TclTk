@@ -4,6 +4,7 @@ using CodeBrix.Platform.TkCanvas.Canvas;
 using CodeBrix.Platform.TkCanvas.Events;
 using CodeBrix.Platform.TkCanvas.Fonts;
 using CodeBrix.Platform.TkCanvas.Rendering;
+using CodeBrix.Platform.TkCanvas.Theming;
 using CodeBrix.Platform.TkCanvas.Windowing;
 
 using SkiaSharp;
@@ -162,7 +163,7 @@ public sealed class CheckbuttonWidget : WidgetBase
         {
             paint.IsAntialias = false;
             paint.Style = SKPaintStyle.Fill;
-            paint.Color = SKColors.White;
+            paint.Color = ResolveColor("-selectcolor", Theme.SelectColor);
             canvas.DrawRect(box, paint);
         }
         ReliefPainter.DrawBorder(canvas, box, 2, Relief.Sunken, BackgroundColor);
@@ -174,7 +175,7 @@ public sealed class CheckbuttonWidget : WidgetBase
                 paint.IsAntialias = true;
                 paint.Style = SKPaintStyle.Stroke;
                 paint.StrokeWidth = 2;
-                paint.Color = new SKColor(0x1a, 0x1a, 0x1a);
+                paint.Color = TkTheme.Color(Theme.IndicatorForeground);
                 canvas.DrawLine(box.Left + 3, box.MidY, box.MidX - 1, box.Bottom - 3, paint);
                 canvas.DrawLine(box.MidX - 1, box.Bottom - 3, box.Right - 2, box.Top + 2, paint);
             }
@@ -185,8 +186,10 @@ public sealed class CheckbuttonWidget : WidgetBase
         TkFont font = Font;
         FontMetrics metrics = Fonts.Metrics(font);
         SKColor fg;
-        string fgSpec = Disabled ? Options.Get("-disabledforeground", "#a3a3a3")
-                : Options.Get("-foreground", Options.Get("-fg", "black"));
+        string fgSpec = Disabled ? ResolveOption("-disabledforeground", Theme.DisabledForeground)
+                : Options.IsSet("-fg") && !Options.IsSet("-foreground")
+                        ? Options.Get("-fg")
+                        : ResolveOption("-foreground", Theme.Foreground);
         if (!TkColor.TryParse(fgSpec, out fg)) { fg = SKColors.Black; }
         using (SKFont skFont = Fonts.GetSkFont(font))
         using (var paint = new SKPaint())

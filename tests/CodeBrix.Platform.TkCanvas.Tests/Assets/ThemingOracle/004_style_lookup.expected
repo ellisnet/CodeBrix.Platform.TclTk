@@ -1,0 +1,13 @@
+lookup TButton -background => #123456
+lookup TButton -background active => #654321
+lookup TButton -background disabled => #aaaaaa
+lookup TButton -background active disabled => #654321
+lookup TButton -background active disabled => #111111
+lookup TButton -background active => #654321
+lookup TButton -background => #123456
+lookup TButton -foreground  => #00ff00
+lookup TButton -foreground disabled => #00aa00
+lookup TLabel -background  => #999999
+lookup TLabel -background active => #999999
+lookup TEntry -foreground focus => #222222
+lookup TButton -nonexistent  fallbackval => fallbackval

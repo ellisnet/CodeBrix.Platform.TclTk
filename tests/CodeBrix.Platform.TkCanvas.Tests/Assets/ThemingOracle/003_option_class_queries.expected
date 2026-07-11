@@ -1,0 +1,3 @@
+get .b1 foreground Foreground => magenta
+get .b1 foreground Foreground => magenta
+get .b1 foreground Foreground => red

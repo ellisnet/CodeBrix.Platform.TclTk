@@ -100,13 +100,17 @@ public static class TkColor
 
     private static Dictionary<string, uint> BuildNames()
     {
-        // X11 rgb.txt values (the table Tk resolves against on Unix).
+        // Tk 8.6's TIP-403 "Web colors" list: the X11 rgb.txt values EXCEPT
+        // the four names where CSS and X11 conflict — green, gray/grey,
+        // maroon, purple — which Tk 8.6+ resolves to the CSS values (probed
+        // against wish 8.6.16: green=#008000, gray/grey=#808080,
+        // maroon=#800000, purple=#800080).
         return new Dictionary<string, uint>(StringComparer.Ordinal)
         {
             { "black", 0x000000 }, { "white", 0xFFFFFF },
-            { "red", 0xFF0000 }, { "green", 0x00FF00 }, { "blue", 0x0000FF },
+            { "red", 0xFF0000 }, { "green", 0x008000 }, { "blue", 0x0000FF },
             { "yellow", 0xFFFF00 }, { "cyan", 0x00FFFF }, { "magenta", 0xFF00FF },
-            { "gray", 0xBEBEBE }, { "grey", 0xBEBEBE },
+            { "gray", 0x808080 }, { "grey", 0x808080 },
             { "darkgray", 0xA9A9A9 }, { "darkgrey", 0xA9A9A9 },
             { "dimgray", 0x696969 }, { "dimgrey", 0x696969 },
             { "lightgray", 0xD3D3D3 }, { "lightgrey", 0xD3D3D3 },
@@ -114,7 +118,7 @@ public static class TkColor
             { "whitesmoke", 0xF5F5F5 }, { "snow", 0xFFFAFA },
             { "ivory", 0xFFFFF0 }, { "beige", 0xF5F5DC },
             { "linen", 0xFAF0E6 }, { "antiquewhite", 0xFAEBD7 },
-            { "darkred", 0x8B0000 }, { "maroon", 0xB03060 },
+            { "darkred", 0x8B0000 }, { "maroon", 0x800000 },
             { "firebrick", 0xB22222 }, { "brown", 0xA52A2A },
             { "indianred", 0xCD5C5C }, { "salmon", 0xFA8072 },
             { "lightsalmon", 0xFFA07A }, { "coral", 0xFF7F50 },
@@ -150,7 +154,7 @@ public static class TkColor
             { "midnightblue", 0x191970 }, { "slateblue", 0x6A5ACD },
             { "mediumslateblue", 0x7B68EE }, { "darkslateblue", 0x483D8B },
             { "blueviolet", 0x8A2BE2 }, { "indigo", 0x4B0082 },
-            { "purple", 0xA020F0 }, { "mediumpurple", 0x9370DB },
+            { "purple", 0x800080 }, { "mediumpurple", 0x9370DB },
             { "darkviolet", 0x9400D3 }, { "darkorchid", 0x9932CC },
             { "mediumorchid", 0xBA55D3 }, { "orchid", 0xDA70D6 },
             { "violet", 0xEE82EE }, { "plum", 0xDDA0DD },

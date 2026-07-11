@@ -1,0 +1,4 @@
+lookup TButton -background  none => none
+lookup TButton -background => #abcdef
+lookup TButton -background => #123456
+lookup TButton -background  none => #123456

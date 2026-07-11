@@ -1,0 +1,14 @@
+# suffix fallback chain + root style; maps along the chain beat configures
+configure TButton -background #123456
+lookup Fancy.TButton -background
+configure Fancy.TButton -background #777777
+lookup Fancy.TButton -background
+configure . -foreground #010203
+lookup TLabel -foreground
+lookup Zork.TZork -foreground
+map TButton -background {active #111111}
+configure Extra.TButton -background #999999
+lookup Extra.TButton -background active
+map Extra.TButton -foreground {active #222222}
+configure Extra.TButton -foreground #888888
+lookup Extra.TButton -foreground active

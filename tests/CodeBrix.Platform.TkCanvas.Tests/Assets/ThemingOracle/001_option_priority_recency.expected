@@ -1,0 +1,8 @@
+get .b1 foreground Foreground => red
+get .b1 foreground Foreground => blue
+get .b1 foreground Foreground => red
+get .b1 foreground Foreground => green
+get .b1 foreground Foreground => purple
+get .b1 foreground Foreground => blue
+get .b1 foreground Foreground => blue
+get .b1 foreground Foreground => yellow

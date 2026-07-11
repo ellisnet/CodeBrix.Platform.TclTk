@@ -1,0 +1,34 @@
+# star depth, tight paths, appname root matching, class components
+appname myapp
+frame .f Frame
+frame .f.child Button
+frame .f.g Frame
+frame .f.g.b Button
+frame .b1 Button
+add *child.foreground green widgetDefault
+get .f.child foreground Foreground
+optclear
+add *f*foreground cyan widgetDefault
+get .f.child foreground Foreground
+get .b1 foreground Foreground
+optclear
+add *Frame.child.foreground brown widgetDefault
+get .f.child foreground Foreground
+optclear
+add *Frame*Button.foreground gold widgetDefault
+get .f.g.b foreground Foreground
+get .b1 foreground Foreground
+optclear
+add *background pink widgetDefault
+get . background Background
+optclear
+add *foreground red widgetDefault
+add .f.child.foreground green userDefault
+get .f.child foreground Foreground
+optclear
+add *foreground red widgetDefault
+add myapp.f.child.foreground green userDefault
+get .f.child foreground Foreground
+optclear
+add myapp*foreground orange widgetDefault
+get .f.g.b foreground Foreground

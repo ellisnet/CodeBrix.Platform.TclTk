@@ -6,6 +6,7 @@ using CodeBrix.Platform.TkCanvas.Events;
 using CodeBrix.Platform.TkCanvas.Fonts;
 using CodeBrix.Platform.TkCanvas.Overlay;
 using CodeBrix.Platform.TkCanvas.Rendering;
+using CodeBrix.Platform.TkCanvas.Theming;
 using CodeBrix.Platform.TkCanvas.Windowing;
 
 using SkiaSharp;
@@ -65,7 +66,7 @@ public sealed class ComboboxWidget : WidgetBase
 
     private protected override string DefaultBackground
     {
-        get { return "white"; }
+        get { return Theme.FieldBackground; }
     }
 
     private const int ArrowWidth = 18;
@@ -152,7 +153,7 @@ public sealed class ComboboxWidget : WidgetBase
         using (var paint = new SKPaint())
         {
             SKColor fg;
-            if (!TkColor.TryParse(Options.Get("-foreground", "black"), out fg)) { fg = SKColors.Black; }
+            if (!TkColor.TryParse(ResolveOption("-foreground", Theme.FieldForeground), out fg)) { fg = SKColors.Black; }
             paint.Color = fg;
             paint.IsAntialias = true;
             canvas.DrawText(_value, inset + 2, baseline, SKTextAlign.Left, skFont, paint);
@@ -161,14 +162,15 @@ public sealed class ComboboxWidget : WidgetBase
         // Drop-down arrow button on the right edge.
         var arrow = new SKRect(Window.Width - inset - ArrowWidth, inset,
                 Window.Width - inset, Window.Height - inset);
+        SKColor arrowBg = TkTheme.Color(Theme.ButtonBackground);
         using (var paint = new SKPaint())
         {
             paint.IsAntialias = false;
             paint.Style = SKPaintStyle.Fill;
-            paint.Color = new SKColor(0xD9, 0xD9, 0xD9);
+            paint.Color = arrowBg;
             canvas.DrawRect(arrow, paint);
         }
-        ReliefPainter.DrawBorder(canvas, arrow, 2, Relief.Raised, new SKColor(0xD9, 0xD9, 0xD9));
+        ReliefPainter.DrawBorder(canvas, arrow, 2, Relief.Raised, arrowBg);
 
         var tri = new SKPathBuilder();
         float cx = arrow.MidX;
@@ -181,7 +183,7 @@ public sealed class ComboboxWidget : WidgetBase
         {
             paint.IsAntialias = true;
             paint.Style = SKPaintStyle.Fill;
-            paint.Color = SKColors.Black;
+            paint.Color = TkTheme.Color(Theme.ButtonForeground);
             using (SKPath path = tri.Detach()) { canvas.DrawPath(path, paint); }
         }
     }

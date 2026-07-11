@@ -1,0 +1,6 @@
+lookup Fancy.TButton -background => #123456
+lookup Fancy.TButton -background => #777777
+lookup TLabel -foreground => #010203
+lookup Zork.TZork -foreground => #010203
+lookup Extra.TButton -background active => #111111
+lookup Extra.TButton -foreground active => #222222

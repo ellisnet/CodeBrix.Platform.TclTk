@@ -521,7 +521,7 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
 
                                                         if (SharedStringOps.SystemEquals(subCommand, "equal"))
                                                         {
-                                                            result = (compare == 0);
+                                                            result = interpreter.BooleanToResult(compare == 0);
                                                         }
                                                         else
                                                         {
@@ -605,18 +605,18 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
 #if (NET_20_SP2 || NET_40 || NET_STANDARD_20) && !MONO_LEGACY
                                                         if (cultureInfo != null)
                                                         {
-                                                            result = SharedStringOps.EndsWith(
+                                                            result = interpreter.BooleanToResult(SharedStringOps.EndsWith(
                                                                 arguments[argumentIndex + 1],
                                                                 arguments[argumentIndex],
-                                                                cultureInfo, noCase);
+                                                                cultureInfo, noCase));
                                                         }
                                                         else
 #endif
                                                         {
-                                                            result = SharedStringOps.EndsWith(
+                                                            result = interpreter.BooleanToResult(SharedStringOps.EndsWith(
                                                                 arguments[argumentIndex + 1],
                                                                 arguments[argumentIndex],
-                                                                comparisonType);
+                                                                comparisonType));
                                                         }
                                                     }
                                                     else
@@ -2442,18 +2442,18 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
 #if (NET_20_SP2 || NET_40 || NET_STANDARD_20) && !MONO_LEGACY
                                                         if (cultureInfo != null)
                                                         {
-                                                            result = SharedStringOps.StartsWith(
+                                                            result = interpreter.BooleanToResult(SharedStringOps.StartsWith(
                                                                 arguments[argumentIndex + 1],
                                                                 arguments[argumentIndex],
-                                                                cultureInfo, noCase);
+                                                                cultureInfo, noCase));
                                                         }
                                                         else
 #endif
                                                         {
-                                                            result = SharedStringOps.StartsWith(
+                                                            result = interpreter.BooleanToResult(SharedStringOps.StartsWith(
                                                                 arguments[argumentIndex + 1],
                                                                 arguments[argumentIndex],
-                                                                comparisonType);
+                                                                comparisonType));
                                                         }
                                                     }
                                                     else

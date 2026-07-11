@@ -4,20 +4,22 @@ namespace CodeBrix.Platform.TkCanvas.Text;
 /// The seam between text-entry widgets and the host's hidden native input
 /// element (the plan's §3.13 model: draw the visible text yourself, back it
 /// with an invisible input control that exists only to capture keyboards and
-/// IME composition). THIS release ships the seam and a stub; the real
-/// Uno-TextBox sink — pre-edit drawing, IME candidate-window positioning —
-/// is interactive work scheduled with the B.8a tail. Committed text flows
-/// back through <see cref="TextWidget.InsertAtCaret"/>.
+/// IME composition). The host-integration layer implements this over its
+/// framework's input element and assigns it to
+/// <see cref="Events.WindowTree.InputSink"/>; the <c>text</c> and
+/// <c>entry</c> widgets attach themselves on focus. Committed text flows
+/// back through <see cref="ITextInputTarget.CommitText"/>, live pre-edit
+/// through <see cref="ITextInputTarget.SetComposition"/>.
 /// </summary>
 public interface ITextInputSink
 {
     /// <summary>
     /// Attaches the sink to a widget that gained the input focus: the host
     /// positions its hidden input element over the widget and routes
-    /// committed text into it.
+    /// committed text and composition into it.
     /// </summary>
-    /// <param name="widget">The focused text widget.</param>
-    void Attach(TextWidget widget);
+    /// <param name="target">The focused text-input widget.</param>
+    void Attach(ITextInputTarget target);
 
     /// <summary>Detaches the sink when the widget loses focus.</summary>
     void Detach();

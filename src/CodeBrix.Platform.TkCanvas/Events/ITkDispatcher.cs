@@ -3,11 +3,13 @@ using System;
 namespace CodeBrix.Platform.TkCanvas.Events;
 
 /// <summary>
-/// The seam between the toolkit and its host UI framework's dispatcher.
-/// TkCanvas itself has no Uno/WinUI dependency; the host application (or the
-/// host-integration layer) supplies an implementation bridging to its UI
-/// thread — e.g. Uno's DispatcherQueue. Headless scenarios and tests run
-/// without one: the <see cref="TkScheduler"/> then relies on manual pumping.
+/// The seam between the toolkit and its host UI framework's dispatcher: the
+/// host supplies an implementation bridging to its UI thread. For
+/// CodeBrix.Platform applications the ready-made implementation is
+/// <c>Hosting.TkHostDispatcher</c> (over the platform's dispatcher queue),
+/// wired automatically by <c>Hosting.TkHostView</c>. Headless scenarios and
+/// tests run without one: the <see cref="TkScheduler"/> then relies on
+/// manual pumping.
 /// </summary>
 public interface ITkDispatcher
 {

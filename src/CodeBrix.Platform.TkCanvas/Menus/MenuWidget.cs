@@ -29,6 +29,7 @@ public sealed class MenuWidget : WidgetBase
     private const int SeparatorHeight = 6;
     private const int ArrowColumn = 14;
     private const int AccelGap = 20;
+    private const int ImageGap = 4;
 
     private readonly List<MenuEntry> _entries = new List<MenuEntry>();
     private int _active = -1;
@@ -38,6 +39,21 @@ public sealed class MenuWidget : WidgetBase
     public MenuWidget(TkWindow window)
         : base(window, "Menu")
     {
+        Measure();
+    }
+
+    /// <summary>
+    /// Creates a menu that SHARES another menu's entry list — the root
+    /// menubar presentation of a Tcl-created menu ("." configure -menu):
+    /// the bar widget and the original menu are two views over one entry
+    /// list, so entryconfigure on either stays live in both.
+    /// </summary>
+    /// <param name="window">The window the bar widget owns.</param>
+    /// <param name="shareEntriesWith">The menu whose entries to share.</param>
+    internal MenuWidget(TkWindow window, MenuWidget shareEntriesWith)
+        : base(window, "Menu")
+    {
+        _entries = shareEntriesWith._entries;
         Measure();
     }
 
@@ -158,6 +174,24 @@ public sealed class MenuWidget : WidgetBase
         return entry;
     }
 
+    /// <summary>
+    /// Removes the entries from <paramref name="first"/> through
+    /// <paramref name="last"/>, inclusive (indexes clamped to the entry
+    /// range) — Tk's <c>delete</c> menu operation.
+    /// </summary>
+    /// <param name="first">The first entry index to remove.</param>
+    /// <param name="last">The last entry index to remove.</param>
+    public void RemoveEntries(int first, int last)
+    {
+        if (_entries.Count == 0) { return; }
+        first = Math.Max(0, first);
+        last = Math.Min(_entries.Count - 1, last);
+        if (last < first) { return; }
+        _entries.RemoveRange(first, last - first + 1);
+        if (ActiveIndex >= _entries.Count) { ActiveIndex = -1; }
+        Measure();
+    }
+
     /// <inheritdoc/>
     public override void Measure()
     {
@@ -170,7 +204,7 @@ public sealed class MenuWidget : WidgetBase
             int h = EntryHeight;
             foreach (MenuEntry entry in _entries)
             {
-                width += Fonts.Measure(font, entry.Label) + 2 * HPad;
+                width += Fonts.Measure(font, entry.Label) + EntryImageWidth(entry) + 2 * HPad;
             }
             Window.SetRequestedSize(width + inset, h + 2 * inset);
             Window.SetInternalBorder(inset);
@@ -183,7 +217,7 @@ public sealed class MenuWidget : WidgetBase
         foreach (MenuEntry entry in _entries)
         {
             if (entry.Type == MenuEntryType.Separator) { height += SeparatorHeight; continue; }
-            int lw = Fonts.Measure(font, entry.Label);
+            int lw = Fonts.Measure(font, entry.Label) + EntryImageWidth(entry);
             if (lw > labelWidth) { labelWidth = lw; }
             int aw = Fonts.Measure(font, entry.Accelerator);
             if (aw > accelWidth) { accelWidth = aw; }
@@ -192,6 +226,19 @@ public sealed class MenuWidget : WidgetBase
         int contentWidth = ArrowColumn + labelWidth + (accelWidth > 0 ? AccelGap + accelWidth : 0) + ArrowColumn;
         Window.SetRequestedSize(contentWidth + 2 * inset + 2 * HPad, height + 2 * inset);
         Window.SetInternalBorder(inset);
+    }
+
+    private int EntryImageWidth(MenuEntry entry)
+    {
+        Images.PhotoImage image = ResolveEntryImage(entry);
+        return (image != null && image.Width > 0) ? image.Width + ImageGap : 0;
+    }
+
+    private Images.PhotoImage ResolveEntryImage(MenuEntry entry)
+    {
+        if (entry.Image.Length == 0) { return null; }
+        Images.ImageManager images = Window.Tree.ImagesIfCreated;
+        return (images != null) ? images.Find(entry.Image) : null;
     }
 
     /// <summary>The entry index at a window point, or -1 (menubar uses x, popup uses y).</summary>
@@ -207,7 +254,7 @@ public sealed class MenuWidget : WidgetBase
             int cx = inset;
             for (int i = 0; i < _entries.Count; i++)
             {
-                int w = Fonts.Measure(font, _entries[i].Label) + 2 * HPad;
+                int w = Fonts.Measure(font, _entries[i].Label) + EntryImageWidth(_entries[i]) + 2 * HPad;
                 if (x >= cx && x < cx + w) { return i; }
                 cx += w;
             }
@@ -238,8 +285,11 @@ public sealed class MenuWidget : WidgetBase
         {
             TkFont font = Font;
             int cx = inset;
-            for (int i = 0; i < index; i++) { cx += Fonts.Measure(font, _entries[i].Label) + 2 * HPad; }
-            int w = Fonts.Measure(font, _entries[index].Label) + 2 * HPad;
+            for (int i = 0; i < index; i++)
+            {
+                cx += Fonts.Measure(font, _entries[i].Label) + EntryImageWidth(_entries[i]) + 2 * HPad;
+            }
+            int w = Fonts.Measure(font, _entries[index].Label) + EntryImageWidth(_entries[index]) + 2 * HPad;
             return new SKRectI(cx, inset, cx + w, inset + EntryHeight);
         }
 
@@ -298,6 +348,12 @@ public sealed class MenuWidget : WidgetBase
     }
 
     /// <inheritdoc/>
+    private protected override string DefaultBackground
+    {
+        get { return Theme.MenuBackground; }
+    }
+
+    /// <inheritdoc/>
     public override void Paint(SKCanvas canvas)
     {
         SKColor background = BackgroundColor;
@@ -305,7 +361,7 @@ public sealed class MenuWidget : WidgetBase
 
         TkFont font = Font;
         SKColor activeBg;
-        if (!TkColor.TryParse(Options.Get("-activebackground", "#4a6984"), out activeBg))
+        if (!TkColor.TryParse(ResolveOption("-activebackground", Theme.MenuActiveBackground), out activeBg))
         {
             activeBg = new SKColor(0x4A, 0x69, 0x84);
         }
@@ -339,9 +395,9 @@ public sealed class MenuWidget : WidgetBase
                 }
 
                 SKColor fg;
-                string fgSpec = entry.Disabled ? "#a3a3a3"
-                        : active ? Options.Get("-activeforeground", "white")
-                        : Options.Get("-foreground", "black");
+                string fgSpec = entry.Disabled ? ResolveOption("-disabledforeground", Theme.DisabledForeground)
+                        : active ? ResolveOption("-activeforeground", Theme.MenuActiveForeground)
+                        : ResolveOption("-foreground", Theme.MenuForeground);
                 if (!TkColor.TryParse(fgSpec, out fg)) { fg = SKColors.Black; }
                 paint.Color = fg;
                 paint.Style = SKPaintStyle.Fill;
@@ -349,6 +405,17 @@ public sealed class MenuWidget : WidgetBase
 
                 float textLeft = IsMenubar ? r.Left + HPad : r.Left + ArrowColumn;
                 float baseline = r.Top + VPad + metrics.Ascent;
+
+                // The entry image (-image, DRAKON's "-compound left" form):
+                // drawn at the label position, pushing the label right.
+                Images.PhotoImage entryImage = ResolveEntryImage(entry);
+                if (entryImage != null && entryImage.Width > 0)
+                {
+                    entryImage.Draw(canvas, textLeft,
+                            r.Top + (r.Height - entryImage.Height) / 2f);
+                    textLeft += entryImage.Width + ImageGap;
+                    paint.IsAntialias = true;
+                }
 
                 // Selection marker for check/radio.
                 if ((entry.Type == MenuEntryType.Checkbutton || entry.Type == MenuEntryType.Radiobutton)

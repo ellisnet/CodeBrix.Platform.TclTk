@@ -1,0 +1,12 @@
+# option-class-ending patterns compete with name-ending ones by recency
+frame .b1 Button
+add *Foreground magenta widgetDefault
+get .b1 foreground Foreground
+optclear
+add *foreground red widgetDefault
+add *Foreground magenta widgetDefault
+get .b1 foreground Foreground
+optclear
+add *Foreground magenta widgetDefault
+add *foreground red widgetDefault
+get .b1 foreground Foreground

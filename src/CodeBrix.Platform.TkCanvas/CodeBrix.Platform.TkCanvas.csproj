@@ -96,6 +96,14 @@
          owner of the SkiaSharp stack (.Drawing would drag a second SkiaSharp
          reference into the dependency graph). -->
     <PackageReference Include="CodeBrix.Imaging.ApacheLicenseForever" Version="1.0.164.1087" />
+    <!-- The host-integration layer (Hosting/): the ready-made TkHostView control
+         (an SKXamlCanvas hosting the whole Tk tree), the dispatcher/clipboard
+         bridges, and the hidden-input-element IME sink all live IN this library
+         (decided 2026-07-10: no separate host package), so it references the
+         CodeBrix.Platform UI stack and its SkiaSharp XAML canvas directly. Keep
+         both pinned in step with the platform release the family targets. -->
+    <PackageReference Include="CodeBrix.Platform.ApacheLicenseForever" Version="1.0.189.446" />
+    <PackageReference Include="CodeBrix.Platform.SkiaSharp.Views.MitLicenseForever" Version="4.148.0" />
   </ItemGroup>
 
   <ItemGroup>

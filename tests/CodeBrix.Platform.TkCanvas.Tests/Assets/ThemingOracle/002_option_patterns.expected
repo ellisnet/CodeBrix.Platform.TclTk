@@ -1,0 +1,10 @@
+get .f.child foreground Foreground => green
+get .f.child foreground Foreground => cyan
+get .b1 foreground Foreground => 
+get .f.child foreground Foreground => brown
+get .f.g.b foreground Foreground => gold
+get .b1 foreground Foreground => 
+get . background Background => pink
+get .f.child foreground Foreground => red
+get .f.child foreground Foreground => green
+get .f.g.b foreground Foreground => orange

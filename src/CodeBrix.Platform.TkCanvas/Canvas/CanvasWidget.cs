@@ -73,6 +73,12 @@ public sealed class CanvasWidget : IWidget
         window.ClassName = "Canvas";
         window.Widget = this;
         window.ClassEventHandler = HandleWindowEvent;
+
+        Theming.OptionDatabase database = window.Tree.OptionDatabaseIfCreated;
+        if (database != null && !database.IsEmpty)
+        {
+            database.ApplyTo(Options, window);
+        }
         Configure(null);
     }
 
@@ -240,7 +246,7 @@ public sealed class CanvasWidget : IWidget
     public void Paint(SKCanvas canvas)
     {
         SKColor background;
-        if (!TkColor.TryParse(Options.Get("-background", "#d9d9d9"), out background))
+        if (!TkColor.TryParse(Options.Get("-background", Window.Tree.Theme.CanvasBackground), out background))
         {
             background = new SKColor(0xD9, 0xD9, 0xD9);
         }
@@ -1771,7 +1777,7 @@ public sealed class CanvasWidget : IWidget
     }
 
     /// <summary>The Tk default an unset canvas option reads back as (<c>cget</c>).</summary>
-    private static string CanvasDefaultOptionValue(string option)
+    private string CanvasDefaultOptionValue(string option)
     {
         switch (option)
         {
@@ -1785,7 +1791,7 @@ public sealed class CanvasWidget : IWidget
             case "-state": return "normal";
             case "-xscrollincrement": return "0";
             case "-yscrollincrement": return "0";
-            case "-background": return "#d9d9d9";
+            case "-background": return Window.Tree.Theme.CanvasBackground;
             default: return "";
         }
     }

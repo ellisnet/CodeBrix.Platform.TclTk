@@ -1,15 +1,15 @@
+using CodeBrix.Platform.TkCanvas.Images;
+
 using SkiaSharp;
 
 namespace CodeBrix.Platform.TkCanvas.Canvas;
 
 /// <summary>
 /// The canvas <c>image</c> item (Tk 8.6.16 tkCanvImage.c): a photo image
-/// positioned by <c>-anchor</c> at a single point. The item type is
-/// registered and its <c>-image</c>/<c>-anchor</c> options are accepted and
-/// stored now; actual painting and content sizing wait on the photo-image
-/// system (the <c>CodeBrix.Imaging</c>-backed sub-phase). Until an image is
-/// resolvable the item occupies its anchor point and paints nothing — the
-/// deferral discipline, never throwing.
+/// positioned by <c>-anchor</c> at a single point. The <c>-image</c> option
+/// names a photo in the tree's <see cref="ImageManager"/>; while the name
+/// does not resolve (or no image was set) the item occupies its anchor point
+/// and paints nothing — the deferral discipline, never throwing.
 /// </summary>
 public sealed class ImageItem : AnchoredCanvasItem
 {
@@ -19,21 +19,42 @@ public sealed class ImageItem : AnchoredCanvasItem
         get { return "image"; }
     }
 
-    // No photo-image backing yet → no content size (arrives with the photo
-    // system).
+    private PhotoImage Photo
+    {
+        get
+        {
+            string name = Options.Get("-image", "");
+            if (name.Length == 0 || Canvas == null) { return null; }
+            ImageManager images = Canvas.Window.Tree.ImagesIfCreated;
+            return (images != null) ? images.Find(name) : null;
+        }
+    }
+
     private protected override int ContentWidth
     {
-        get { return 0; }
+        get
+        {
+            PhotoImage photo = Photo;
+            return (photo != null) ? photo.Width : 0;
+        }
     }
 
     private protected override int ContentHeight
     {
-        get { return 0; }
+        get
+        {
+            PhotoImage photo = Photo;
+            return (photo != null) ? photo.Height : 0;
+        }
     }
 
     /// <inheritdoc/>
     public override void Paint(SKCanvas canvas)
     {
-        // Deferred: image rendering waits on the photo-image system.
+        if (EffectiveState == CanvasItemState.Hidden) { return; }
+
+        PhotoImage photo = Photo;
+        if (photo == null) { return; }
+        photo.Draw(canvas, (float)X1, (float)Y1);
     }
 }

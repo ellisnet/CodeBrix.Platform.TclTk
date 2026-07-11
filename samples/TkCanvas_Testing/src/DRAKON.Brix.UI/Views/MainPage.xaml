@@ -1,0 +1,105 @@
+<Page
+    x:Class="DRAKON.Brix.Views.MainPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:DRAKON.Brix.ViewModels"
+    xmlns:tkhost="using:CodeBrix.Platform.TkCanvas.Hosting"
+    xmlns:tk="using:CodeBrix.Platform.TkCanvas.Xaml"
+    Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+
+    <Page.DataContext>
+        <vm:MainViewModel />
+    </Page.DataContext>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- The entire classic-Tk UI below is DECLARED here; the host
+             materializes the real widget tree when it loads. -->
+
+        <!-- Theme selects the color scheme for the whole Tk surface. Swap the
+             value for any of the available schemes (case-insensitive):
+
+               Classic            the default battleship-gray Tk look
+                                  ("Default", "clam", and "alt" are aliases)
+               Bisque             Tk's legacy tk_bisque palette
+
+               DarkNew            the CodeBrix.Develop house dark theme
+               LightNew           the CodeBrix.Develop house light theme
+               DarkPlus           the familiar dark editor default
+               LightPlus          the familiar light editor default
+               DarkModern         the modern dark look
+               LightModern        the modern light look
+               Monokai            the classic Monokai palette
+               DimmedMonokai      Monokai, dimmed
+               SolarizedDark      Solarized, dark
+               SolarizedLight     Solarized, light
+               Abyss              deep blue-black
+               QuietLight         gentle pastel light
+               Red                the red monochrome
+               TomorrowNightBlue  Tomorrow Night Blue
+               KimbieDark         warm earth-tone dark
+
+             Removing the attribute (or setting an unknown name) keeps the
+             classic look. The theme can also be changed at runtime from
+             code: TkHost.Theme = "Monokai"; -->
+        <tkhost:TkHostView x:Name="TkHost" Grid.Row="0" Theme="Classic">
+
+            <!-- Named photo image, usable by any -image property. -->
+            <tk:TkPhoto Name="backIcon" File="Assets/tk-back.gif" />
+
+            <!-- Menubar with cascades bound to view-model commands. -->
+            <tk:TkMenubar Side="Top" Fill="X">
+                <tk:TkMenu Label="File" Underline="0">
+                    <tk:TkMenuItem Label="New" Accelerator="Ctrl+N" Underline="0"
+                                   Command="{Binding NewCommand}" />
+                    <tk:TkMenuSeparator />
+                    <tk:TkMenuItem Label="About" Command="{Binding AboutCommand}" />
+                </tk:TkMenu>
+                <tk:TkMenu Label="Help" Underline="0">
+                    <tk:TkMenuItem Label="About DRAKON.Brix" Command="{Binding AboutCommand}" />
+                </tk:TkMenu>
+            </tk:TkMenubar>
+
+            <!-- Toolbar: an image button and a text button. -->
+            <tk:TkFrame Side="Top" Fill="X" Relief="raised" BorderWidth="1">
+                <tk:TkButton Side="Left" Image="backIcon" Relief="flat" BorderWidth="0"
+                             Command="{Binding BackCommand}" />
+                <tk:TkButton Side="Left" Text="Greet" PadX="4"
+                             Command="{Binding GreetCommand}" />
+            </tk:TkFrame>
+
+            <!-- Entry row. -->
+            <tk:TkFrame Side="Top" Fill="X" PadY="2">
+                <tk:TkLabel Side="Left" Text="Name:" PadX="4" />
+                <tk:TkEntry x:Name="NameEntry" Side="Left" Fill="X" Expand="True"
+                            PadX="4" WidthChars="40" />
+            </tk:TkFrame>
+
+            <!-- Toggles row. -->
+            <tk:TkFrame Side="Top" Fill="X" PadY="2">
+                <tk:TkCheckbutton Side="Left" Text="Verbose" PadX="4"
+                                  Command="{Binding VerboseCommand}" />
+                <tk:TkSeparator Side="Left" Orient="vertical" PadX="6" Fill="Y" />
+                <tk:TkRadiobutton Side="Left" Text="Edit mode" Group="mode" Value="edit"
+                                  Checked="True" Command="{Binding ModeCommand}" />
+                <tk:TkRadiobutton Side="Left" Text="View mode" Group="mode" Value="view"
+                                  Command="{Binding ModeCommand}" />
+            </tk:TkFrame>
+
+            <!-- Output text widget with a paired scrollbar. -->
+            <tk:TkScrollbar Side="Right" Fill="Y" Orient="vertical" For="Output" />
+            <tk:TkText x:Name="Output" Side="Top" Fill="Both" Expand="True"
+                       WidthChars="60" HeightLines="12"
+                       Text="Type a name above and press Greet, or use the menus and toolbar.&#10;" />
+
+        </tkhost:TkHostView>
+
+        <!-- Ordinary XAML below the Tk surface: the bound status line. -->
+        <TextBlock Grid.Row="1" Margin="8,6"
+                   Text="{Binding StatusText}" />
+    </Grid>
+</Page>

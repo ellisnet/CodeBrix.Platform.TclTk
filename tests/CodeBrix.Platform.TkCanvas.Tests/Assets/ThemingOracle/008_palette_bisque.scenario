@@ -1,0 +1,13 @@
+# tk_bisque legacy palette
+bisque
+query background
+query foreground
+query activeBackground
+query activeForeground
+query disabledForeground
+query highlightBackground
+query highlightColor
+query insertBackground
+query selectBackground
+query selectForeground
+query troughColor

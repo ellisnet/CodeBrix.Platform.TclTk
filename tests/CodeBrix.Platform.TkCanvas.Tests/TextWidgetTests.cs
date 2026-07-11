@@ -364,7 +364,7 @@ public class TextWidgetTests
 
         public int LastY;
 
-        public void Attach(TextWidget widget)
+        public void Attach(ITextInputTarget target)
         {
         }
 

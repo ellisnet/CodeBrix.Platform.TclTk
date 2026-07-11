@@ -224,7 +224,7 @@ public class TkSchedulerTests
     [Fact]
     public void Host_is_woken_by_scheduled_work_and_its_post_drains_it()
     {
-        //Arrange (simulates the Uno adapter: posted work runs on the UI thread)
+        //Arrange (simulates the CodeBrix.Platform dispatcher adapter: posted work runs on the UI thread)
         TkWindow root = TkWindow.CreateRoot();
         TkWindow a = root.CreateChild("a");
         var host = new FakeDispatcher();

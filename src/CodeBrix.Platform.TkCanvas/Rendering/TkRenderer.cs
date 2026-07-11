@@ -1,5 +1,6 @@
 using CodeBrix.Platform.TkCanvas.Fonts;
 using CodeBrix.Platform.TkCanvas.Overlay;
+using CodeBrix.Platform.TkCanvas.Theming;
 using CodeBrix.Platform.TkCanvas.Widgets;
 using CodeBrix.Platform.TkCanvas.Windowing;
 
@@ -18,26 +19,31 @@ namespace CodeBrix.Platform.TkCanvas.Rendering;
 /// </summary>
 public static class TkRenderer
 {
-    /// <summary>The classic Tk background gray used to clear the stage.</summary>
-    public static readonly SKColor StageBackground = new SKColor(0xD9, 0xD9, 0xD9);
-
-    /// <summary>The title-bar fill of an active overlay window.</summary>
-    public static readonly SKColor TitleBarBackground = new SKColor(0x4A, 0x69, 0x84);
-
-    /// <summary>The title-bar text color.</summary>
-    public static readonly SKColor TitleBarText = SKColors.White;
-
     /// <summary>
     /// Paints the whole tree rooted at <paramref name="root"/> onto
     /// <paramref name="canvas"/>, with (0,0) at the root window's top-left
-    /// corner.
+    /// corner. The stage clears to the tree theme's stage background.
     /// </summary>
     /// <param name="root">The root window of the tree.</param>
     /// <param name="canvas">The target Skia canvas.</param>
     public static void Render(TkWindow root, SKCanvas canvas)
     {
-        canvas.Clear(StageBackground);
+        canvas.Clear(TkTheme.Color(root.Tree.Theme.StageBackground));
         PaintWindow(root, canvas);
+    }
+
+    /// <summary>
+    /// Paints one window's subtree onto <paramref name="canvas"/> with (0,0)
+    /// at that window's own top-left corner — the engine of the
+    /// <c>image create photo -format window</c> widget snapshot. The stage
+    /// background shows through wherever the subtree paints nothing.
+    /// </summary>
+    /// <param name="window">The window to paint.</param>
+    /// <param name="canvas">The target Skia canvas.</param>
+    public static void RenderWindow(TkWindow window, SKCanvas canvas)
+    {
+        canvas.Clear(TkTheme.Color(window.Tree.Theme.StageBackground));
+        PaintWindow(window, canvas);
     }
 
     private static void PaintWindow(TkWindow window, SKCanvas canvas)
@@ -81,6 +87,9 @@ public static class TkRenderer
         SKRectI frameI = overlay.FrameRect;
         var frame = new SKRect(frameI.Left, frameI.Top, frameI.Right, frameI.Bottom);
 
+        TkTheme theme = window.Tree.Theme;
+        SKColor chrome = TkTheme.Color(theme.Background);
+
         using (var paint = new SKPaint())
         {
             paint.IsAntialias = false;
@@ -89,20 +98,20 @@ public static class TkRenderer
             if (overlay.OverrideRedirect)
             {
                 ReliefPainter.DrawBorder(canvas, frame, overlay.BorderWidth,
-                        Relief.Solid, StageBackground);
+                        Relief.Solid, chrome);
                 return;
             }
 
             // Frame background (fills the chrome band) + raised border.
-            paint.Color = StageBackground;
+            paint.Color = chrome;
             canvas.DrawRect(frame, paint);
             ReliefPainter.DrawBorder(canvas, frame, overlay.BorderWidth,
-                    Relief.Raised, StageBackground);
+                    Relief.Raised, chrome);
 
             // Title bar.
             SKRectI barI = overlay.TitleBarRect;
             var bar = new SKRect(barI.Left, barI.Top, barI.Right, barI.Bottom);
-            paint.Color = TitleBarBackground;
+            paint.Color = TkTheme.Color(theme.TitleBarBackground);
             canvas.DrawRect(bar, paint);
 
             // Title text through the font seam.
@@ -114,7 +123,7 @@ public static class TkRenderer
                 float baseline = bar.Top + (bar.Height - metrics.LineSpace) / 2f + metrics.Ascent;
                 using (SKFont skFont = fonts.GetSkFont(font))
                 {
-                    paint.Color = TitleBarText;
+                    paint.Color = TkTheme.Color(theme.TitleBarForeground);
                     paint.IsAntialias = true;
                     canvas.DrawText(overlay.Title, bar.Left + 6, baseline,
                             SKTextAlign.Left, skFont, paint);
@@ -125,11 +134,11 @@ public static class TkRenderer
             // Close affordance: a raised box with an X.
             SKRectI closeI = overlay.CloseBoxRect;
             var close = new SKRect(closeI.Left, closeI.Top, closeI.Right, closeI.Bottom);
-            paint.Color = StageBackground;
+            paint.Color = chrome;
             canvas.DrawRect(close, paint);
-            ReliefPainter.DrawBorder(canvas, close, 1, Relief.Raised, StageBackground);
+            ReliefPainter.DrawBorder(canvas, close, 1, Relief.Raised, chrome);
 
-            paint.Color = SKColors.Black;
+            paint.Color = TkTheme.Color(theme.Foreground);
             paint.Style = SKPaintStyle.Stroke;
             paint.StrokeWidth = 1.5f;
             paint.IsAntialias = true;

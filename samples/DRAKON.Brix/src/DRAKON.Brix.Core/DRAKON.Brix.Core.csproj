@@ -15,4 +15,16 @@
     <PackageReference Include="CodeBrix.Platform.ApacheLicenseForever" Version="1.0.189.446" />
     <PackageReference Include="CodeBrix.Platform.Fonts.OpenSans.ApacheLicenseForever" Version="1.0.181.655" />
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\src\CodeBrix.Platform.TkCanvas\CodeBrix.Platform.TkCanvas.csproj" />
+    <ProjectReference Include="..\..\..\..\src\CodeBrix.Platform.TclTk.Extras\CodeBrix.Platform.TclTk.Extras.csproj" />
+  </ItemGroup>
+
+  <!-- The vendored DRAKON Editor Tcl tree + the bootstrap glue script,
+       copied beside the binaries so the runtime can source them. -->
+  <ItemGroup>
+    <None Include="Assets\bootstrap.tcl" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Assets\drakon\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

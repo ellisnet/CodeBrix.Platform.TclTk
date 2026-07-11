@@ -32,6 +32,13 @@ public sealed class MessageDialogOptions
 
     /// <summary>The result name of the button that is pre-focused, or empty for the first.</summary>
     public string Default { get; set; } = "";
+
+    /// <summary>
+    /// Explicit button labels overriding <see cref="Type"/> — the
+    /// <c>tk_dialog</c> arbitrary-button form. Each button's result is its
+    /// label verbatim. Null (the default) uses the <see cref="Type"/> set.
+    /// </summary>
+    public IReadOnlyList<string> CustomButtons { get; set; }
 }
 
 /// <summary>
@@ -77,7 +84,16 @@ public static class MessageDialog
         wm.SetTitle(dialog, options.Title);
 
         string[] buttons;
-        if (!ButtonSets.TryGetValue(options.Type, out buttons)) { buttons = ButtonSets["ok"]; }
+        if (options.CustomButtons != null && options.CustomButtons.Count > 0)
+        {
+            var custom = new string[options.CustomButtons.Count];
+            for (int i = 0; i < custom.Length; i++) { custom[i] = options.CustomButtons[i]; }
+            buttons = custom;
+        }
+        else if (!ButtonSets.TryGetValue(options.Type, out buttons))
+        {
+            buttons = ButtonSets["ok"];
+        }
 
         // Top row: icon glyph + message.
         TkWindow top = dialog.CreateChild("top");
@@ -91,7 +107,7 @@ public static class MessageDialog
         {
             { "-text", IconGlyph(options.Icon) },
             { "-font", "{DejaVu Sans} 22 bold" },
-            { "-foreground", IconColor(options.Icon) },
+            { "-foreground", IconColor(tree.Theme, options.Icon) },
         });
         PackLayout.Configure(iconWin, new PackOptions { Side = Side.Left, PadRight = 14 });
 
@@ -117,9 +133,10 @@ public static class MessageDialog
             string result = buttons[i];
             TkWindow bw = buttonRow.CreateChild("b" + i);
             var button = new ButtonWidget(bw);
+            bool verbatimLabels = options.CustomButtons != null && options.CustomButtons.Count > 0;
             button.Configure(new Dictionary<string, string>
             {
-                { "-text", Capitalize(result) },
+                { "-text", verbatimLabels ? result : Capitalize(result) },
                 { "-padx", "10" },
                 { "-width", "6" },
             });
@@ -166,14 +183,14 @@ public static class MessageDialog
         }
     }
 
-    private static string IconColor(string icon)
+    private static string IconColor(Theming.TkTheme theme, string icon)
     {
         switch (icon)
         {
-            case "warning": return "#c08000";
-            case "error": return "#c00000";
-            case "question": return "#204a87";
-            default: return "#204a87";
+            case "warning": return theme.DialogWarningAccent;
+            case "error": return theme.DialogErrorAccent;
+            case "question": return theme.DialogInfoAccent;
+            default: return theme.DialogInfoAccent;
         }
     }
 

@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 using CodeBrix.Platform.TkCanvas.Canvas;
 using CodeBrix.Platform.TkCanvas.Fonts;
 using CodeBrix.Platform.TkCanvas.Windowing;
@@ -61,25 +63,44 @@ public sealed class LabelWidget : WidgetBase
     /// <inheritdoc/>
     public override void Measure()
     {
-        TkFont font = Font;
-        int textWidth;
-        int textHeight;
-        WidgetText.MeasureBlock(Fonts, font, Options.Get("-text", ""), out textWidth, out textHeight);
+        int contentWidth;
+        int contentHeight;
 
-        int contentWidth = textWidth;
-        int contentHeight = textHeight;
-
-        int chars = Options.GetInt("-width", 0);
-        if (chars > 0)
+        Images.PhotoImage image = ResolveImage();
+        if (image != null)
         {
-            int charWidth = Fonts.Measure(font, "0");
-            if (charWidth < 1) { charWidth = 1; }
-            contentWidth = chars * charWidth;
+            // An image replaces the text, and -width/-height (when given)
+            // are pixel sizes rather than character/line counts — Tk's rule.
+            contentWidth = image.Width;
+            contentHeight = image.Height;
+            int pixels;
+            if (TclString.TryParsePixels(Options.Get("-width", ""), out pixels) && pixels > 0)
+            {
+                contentWidth = pixels;
+            }
+            if (TclString.TryParsePixels(Options.Get("-height", ""), out pixels) && pixels > 0)
+            {
+                contentHeight = pixels;
+            }
         }
-        int lines = Options.GetInt("-height", 0);
-        if (lines > 0)
+        else
         {
-            contentHeight = lines * Fonts.Metrics(font).LineSpace;
+            TkFont font = Font;
+            WidgetText.MeasureBlock(Fonts, font, Options.Get("-text", ""),
+                    out contentWidth, out contentHeight);
+
+            int chars = Options.GetInt("-width", 0);
+            if (chars > 0)
+            {
+                int charWidth = Fonts.Measure(font, "0");
+                if (charWidth < 1) { charWidth = 1; }
+                contentWidth = chars * charWidth;
+            }
+            int lines = Options.GetInt("-height", 0);
+            if (lines > 0)
+            {
+                contentHeight = lines * Fonts.Metrics(font).LineSpace;
+            }
         }
 
         int inset = Inset;
@@ -94,18 +115,27 @@ public sealed class LabelWidget : WidgetBase
     {
         PaintBackgroundAndBorder(canvas, BackgroundColor);
 
-        string text = Options.Get("-text", "");
-        if (text.Length == 0) { return; }
-
         int inset = Inset;
         int padX = PadX;
         int padY = PadY;
         var content = new SKRect(
                 inset + padX, inset + padY,
                 Window.Width - inset - padX, Window.Height - inset - padY);
+        CanvasAnchor anchor = CanvasAnchorMath.Parse(Options.Get("-anchor", "center"));
+
+        Images.PhotoImage image = ResolveImage();
+        if (image != null)
+        {
+            float left, top;
+            PlaceAnchored(anchor, content, image.Width, image.Height, out left, out top);
+            image.Draw(canvas, left, top);
+            return;
+        }
+
+        string text = Options.Get("-text", "");
+        if (text.Length == 0) { return; }
 
         SKColor color = ForegroundColor();
-        CanvasAnchor anchor = CanvasAnchorMath.Parse(Options.Get("-anchor", "center"));
         string justify = Options.Get("-justify", "center");
         WidgetText.DrawBlock(canvas, Fonts, Font, text, content, anchor, justify, color);
     }
@@ -115,13 +145,26 @@ public sealed class LabelWidget : WidgetBase
         string spec;
         if (Options.Get("-state", "normal") == "disabled")
         {
-            spec = Options.Get("-disabledforeground", "#a3a3a3");
+            spec = ResolveOption("-disabledforeground", Theme.DisabledForeground);
+        }
+        else if (Options.IsSet("-fg") && !Options.IsSet("-foreground"))
+        {
+            spec = Options.Get("-fg");
         }
         else
         {
-            spec = Options.Get("-foreground", Options.Get("-fg", "black"));
+            spec = ResolveOption("-foreground", Theme.Foreground);
         }
         SKColor color;
         return TkColor.TryParse(spec, out color) ? color : SKColors.Black;
+    }
+
+    /// <inheritdoc/>
+    private protected override IReadOnlyCollection<string> StyleStates
+    {
+        get
+        {
+            return Options.Get("-state", "normal") == "disabled" ? new[] { "disabled" } : null;
+        }
     }
 }

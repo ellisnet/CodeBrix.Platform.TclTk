@@ -3134,6 +3134,31 @@ namespace CodeBrix.Platform.TclTk._Components.Private //was previously: Eagle._C
                         interpreter, currentNamespace, qualifiers, false,
                         true, ref error);
 
+                    //
+                    // NOTE: Stock Tcl resolves a relatively-qualified name
+                    //       in the current namespace FIRST and then falls
+                    //       back to the global namespace (Tcl "namespace"
+                    //       manual, NAME RESOLUTION) — e.g. [set colors::x]
+                    //       inside [namespace eval gprops] resolves to
+                    //       ::colors::x when ::gprops::colors does not
+                    //       exist.  Perform that fallback here.
+                    //
+                    if ((@namespace == null) &&
+                        !IsGlobal(interpreter, currentNamespace))
+                    {
+                        INamespace globalNamespace =
+                            interpreter.GlobalNamespace;
+
+                        if (globalNamespace != null)
+                        {
+                            Result globalError = null;
+
+                            @namespace = GetDescendant(
+                                interpreter, globalNamespace, qualifiers,
+                                false, true, ref globalError);
+                        }
+                    }
+
                     if (@namespace == null)
                         return ReturnCode.Error;
 

@@ -9,12 +9,28 @@ namespace CodeBrix.Platform.TclTk.Tests;
 internal static class TclTkTest
 {
     /// <summary>
+    /// The boolean-result mode every helper-created interpreter uses. Normally
+    /// <see cref="BooleanResultMode.EagleCompat" /> (the engine default), but a
+    /// diagnostic run can set the environment variable
+    /// <c>TCLTK_TEST_BOOLEAN_MODE=TclshCompat</c> to force the ENTIRE suite
+    /// into TclshCompat mode — the point is to surface any test that breaks for
+    /// a reason OTHER than merely asserting the old <c>True</c>/<c>False</c>
+    /// rendering (i.e. a real functional regression under TclshCompat).
+    /// </summary>
+    public static readonly BooleanResultMode BooleanMode =
+        string.Equals(
+            System.Environment.GetEnvironmentVariable("TCLTK_TEST_BOOLEAN_MODE"),
+            "TclshCompat", System.StringComparison.OrdinalIgnoreCase)
+            ? BooleanResultMode.TclshCompat
+            : BooleanResultMode.EagleCompat;
+
+    /// <summary>
     /// Creates and initializes an interpreter, asserting that creation succeeded.
     /// </summary>
     public static Interpreter CreateInterpreter()
     {
         Result result = null;
-        Interpreter interpreter = Interpreter.Create(ref result);
+        Interpreter interpreter = Interpreter.Create(ref result, BooleanMode);
         interpreter.Should().NotBeNull(
             "interpreter creation should succeed; failure result: " +
             (result == null ? "<null>" : result.ToString()));

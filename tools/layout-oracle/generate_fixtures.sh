@@ -49,4 +49,15 @@ if [ -d "$canvasassets" ]; then
     done
 fi
 
+themingassets="$here/../../tests/CodeBrix.Platform.TkCanvas.Tests/Assets/ThemingOracle"
+if [ -d "$themingassets" ]; then
+    for scenario in "$themingassets"/*.scenario; do
+        [ -e "$scenario" ] || break
+        expected="${scenario%.scenario}.expected"
+        wish "$here/capture_theming.tcl" "$scenario" > "$expected"
+        count=$((count + 1))
+        echo "captured: $(basename "$expected")"
+    done
+fi
+
 echo "done: $count fixture(s) regenerated with $(echo 'puts [info patchlevel]' | tclsh)"

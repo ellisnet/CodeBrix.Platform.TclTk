@@ -1,0 +1,15 @@
+The files in this directory tree are DRAKON Editor 1.33 by Stepan Mitkin
+and contributors (https://github.com/stepan-mitkin/drakon_editor), which is
+PUBLIC DOMAIN per its readme ("DRAKON Editor is PUBLIC DOMAIN except some
+third-party components"). Vendored unmodified for the DRAKON.Brix sample
+application (the DRAKON-on-CodeBrix port). Exceptions carried along:
+  * fonts/ — the Liberation Mono font v1.07, under the Liberation Fonts
+    license: GNU GPL v2 WITH the font-embedding exception (fonts/License.txt;
+    see fonts/COPYING). NOT the SIL OFL, which only covers Liberation 2.x+.
+  * pdf4tcl07/pkgIndex.tcl — from pdf4tcl 0.7 (Tcl/Tk-style license),
+    vendored because drakon_editor.tcl sources it at startup; the pdf4tcl
+    IMPLEMENTATION used at runtime is CodeBrix.Platform.TclTk.Extras'
+    managed shim.
+The DRAKON logic Tcl runs UNMODIFIED (the Phase-C fidelity discipline);
+all adaptation lives in the app bootstrap (Assets/bootstrap.tcl) and the
+CodeBrix.Platform.TkCanvas Tcl command bridge.

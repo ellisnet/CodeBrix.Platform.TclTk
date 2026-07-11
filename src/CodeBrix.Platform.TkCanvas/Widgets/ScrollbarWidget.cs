@@ -3,6 +3,7 @@ using System;
 using CodeBrix.Platform.TkCanvas.Canvas;
 using CodeBrix.Platform.TkCanvas.Events;
 using CodeBrix.Platform.TkCanvas.Rendering;
+using CodeBrix.Platform.TkCanvas.Theming;
 using CodeBrix.Platform.TkCanvas.Windowing;
 
 using SkiaSharp;
@@ -91,10 +92,16 @@ public sealed class ScrollbarWidget : WidgetBase
     }
 
     /// <inheritdoc/>
+    private protected override string DefaultBackground
+    {
+        get { return Theme.ScrollbarBackground; }
+    }
+
+    /// <inheritdoc/>
     public override void Paint(SKCanvas canvas)
     {
         SKColor trough;
-        if (!TkColor.TryParse(Options.Get("-troughcolor", "#b3b3b3"), out trough))
+        if (!TkColor.TryParse(ResolveOption("-troughcolor", Theme.TroughColor), out trough))
         {
             trough = new SKColor(0xB3, 0xB3, 0xB3);
         }
@@ -197,7 +204,7 @@ public sealed class ScrollbarWidget : WidgetBase
         {
             paint.IsAntialias = true;
             paint.Style = SKPaintStyle.Fill;
-            paint.Color = SKColors.Black;
+            paint.Color = TkTheme.Color(Theme.Foreground);
             using (SKPath path = builder.Detach()) { canvas.DrawPath(path, paint); }
         }
     }

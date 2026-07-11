@@ -1,0 +1,11 @@
+# themes are isolated tables; use switches; create starts empty
+configure TButton -background #123456
+theme_create mytheme default
+theme_use mytheme
+lookup TButton -background {} none
+configure TButton -background #abcdef
+lookup TButton -background
+theme_use default
+lookup TButton -background
+lookup TButton -background {} none
+theme_use default

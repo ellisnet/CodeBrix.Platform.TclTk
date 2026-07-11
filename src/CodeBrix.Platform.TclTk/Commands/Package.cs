@@ -570,13 +570,13 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
 
                                                 if (code == ReturnCode.Ok)
                                                 {
-                                                    result = FlagOps.HasFlags(
-                                                        package.Flags, PackageFlags.Loading, true);
+                                                    result = interpreter.BooleanToResult(FlagOps.HasFlags(
+                                                        package.Flags, PackageFlags.Loading, true));
                                                 }
                                             }
                                             else
                                             {
-                                                result = (interpreter.PackageLevels > 0);
+                                                result = interpreter.BooleanToResult(interpreter.PackageLevels > 0);
                                                 code = ReturnCode.Ok;
                                             }
                                         }
@@ -1393,8 +1393,8 @@ namespace CodeBrix.Platform.TclTk._Commands //was previously: Eagle._Commands;
 
                                                 if (code == ReturnCode.Ok)
                                                 {
-                                                    result = PackageOps.VersionSatisfies(
-                                                        version1, version2, false);
+                                                    result = interpreter.BooleanToResult(PackageOps.VersionSatisfies(
+                                                        version1, version2, false));
                                                 }
                                             }
                                             else
