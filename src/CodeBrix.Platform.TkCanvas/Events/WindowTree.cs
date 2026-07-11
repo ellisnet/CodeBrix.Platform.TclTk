@@ -386,6 +386,16 @@ public sealed class WindowTree
             throw new ArgumentException("not a key event type: " + type, nameof(type));
         }
 
+        // A menubar with -underline cascades answers Alt+<letter> traversal:
+        // the menu system gets first crack at a key press (opening the matching
+        // menu) before the key reaches focus-window bindings — symmetric to the
+        // menu's pointer hook in PointerEvent.
+        if (type == TkEventType.KeyPress && _menuManager != null
+                && _menuManager.InterceptKey(keySym ?? string.Empty, state))
+        {
+            return;
+        }
+
         TkWindow target = (FocusWindow != null) ? FocusWindow : Root;
         var tkEvent = new TkEvent
         {

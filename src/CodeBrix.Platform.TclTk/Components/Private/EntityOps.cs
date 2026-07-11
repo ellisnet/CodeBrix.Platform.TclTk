@@ -3025,6 +3025,59 @@ namespace CodeBrix.Platform.TclTk._Components.Private //was previously: Eagle._C
 
         ///////////////////////////////////////////////////////////////////////
 
+        /// <summary>
+        /// This method determines whether the specified variable has ever been
+        /// the target of a variable link (e.g. via [global], [upvar], or
+        /// [variable]).
+        /// </summary>
+        /// <param name="variable">
+        /// The variable to check. This value may be null.
+        /// </param>
+        /// <returns>
+        /// True if the variable is non-null and has ever been the target of a
+        /// variable link; otherwise, false.
+        /// </returns>
+        public static bool IsLinkTarget(
+            IVariable variable
+            )
+        {
+            Variable localVariable = variable as Variable;
+
+            if (localVariable == null)
+                return false;
+
+            return localVariable.WasLinkTarget;
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method permanently marks the specified variable as having been
+        /// the target of a variable link (e.g. via [global], [upvar], or
+        /// [variable]).  The marker is sticky by design and there is no way to
+        /// clear it; see the <c>Variable.WasLinkTarget</c> property.
+        /// </summary>
+        /// <param name="variable">
+        /// The variable to mark. This value may be null.
+        /// </param>
+        /// <returns>
+        /// True if the variable was non-null and was marked; otherwise, false.
+        /// </returns>
+        public static bool SetLinkTarget(
+            IVariable variable
+            )
+        {
+            Variable localVariable = variable as Variable;
+
+            if (localVariable == null)
+                return false;
+
+            localVariable.WasLinkTarget = true;
+            return true;
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
         #region Dead Code
 #if DEAD_CODE
         /// <summary>

@@ -1298,6 +1298,31 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
         ///////////////////////////////////////////////////////////////////////
 
         /// <summary>
+        /// Stores whether this variable has ever been the target of a variable
+        /// link (e.g. via <c>[global]</c>, <c>[upvar]</c>, or
+        /// <c>[variable]</c>).
+        /// </summary>
+        private bool wasLinkTarget;
+        /// <summary>
+        /// Gets or sets whether this variable has ever been the target of a
+        /// variable link (e.g. via <c>[global]</c>, <c>[upvar]</c>, or
+        /// <c>[variable]</c>).  Once set, this marker is deliberately never
+        /// cleared -- not even by the <c>Reset</c> method -- because link
+        /// variables keep referring to this object regardless of its state.
+        /// The unset machinery uses it to keep this variable in its call frame
+        /// (as undefined) instead of physically removing it, so any live links
+        /// to it keep working (COMPAT: Tcl keeps an unset variable alive, as
+        /// undefined, while links to it exist).
+        /// </summary>
+        internal bool WasLinkTarget
+        {
+            get { return wasLinkTarget; }
+            set { wasLinkTarget = value; }
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
         /// Stores the scalar value of this variable.
         /// </summary>
         private object value;

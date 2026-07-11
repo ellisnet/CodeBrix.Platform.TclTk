@@ -249,6 +249,37 @@ public sealed class MenuManager
         }
     }
 
+    /// <summary>
+    /// The key hook the tree consults before ordinary dispatch — the keyboard
+    /// analogue of <see cref="InterceptPointer"/>. When Alt is held and the key
+    /// is a single letter matching a menubar cascade's mnemonic
+    /// (its <c>-underline</c> character), it opens that menu, mirroring Tk's
+    /// automatic <c>Alt+&lt;letter&gt;</c> menubar traversal, and returns true.
+    /// Every other key falls through unconsumed.
+    /// </summary>
+    /// <param name="keySym">The key symbol name (e.g. <c>f</c>).</param>
+    /// <param name="state">Keyboard modifiers in effect.</param>
+    /// <returns>True when the key matched a menubar mnemonic and was consumed.</returns>
+    internal bool InterceptKey(string keySym, EventModifiers state)
+    {
+        if ((state & EventModifiers.Alt) == 0) { return false; }
+        if (_menubar == null || string.IsNullOrEmpty(keySym) || keySym.Length != 1) { return false; }
+
+        char pressed = char.ToLowerInvariant(keySym[0]);
+        for (int i = 0; i < _menubar.Entries.Count; i++)
+        {
+            MenuEntry entry = _menubar.Entries[i];
+            if (entry.Type != MenuEntryType.Cascade || entry.Disabled) { continue; }
+            if (entry.Underline < 0 || entry.Underline >= entry.Label.Length) { continue; }
+            if (char.ToLowerInvariant(entry.Label[entry.Underline]) == pressed)
+            {
+                OpenMenubarEntry(i);
+                return true;
+            }
+        }
+        return false;
+    }
+
     private int MenubarEntryAt(int rootX, int rootY)
     {
         if (_menubar == null) { return -1; }

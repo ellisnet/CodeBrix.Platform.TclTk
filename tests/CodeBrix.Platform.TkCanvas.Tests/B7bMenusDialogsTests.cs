@@ -164,6 +164,42 @@ public class B7bMenusDialogsTests
     }
 
     [Fact]
+    public void Alt_letter_opens_the_matching_menubar_cascade()
+    {
+        TkWindow root = Root();
+        MenuManager menus = root.Tree.Menus;
+
+        TkWindow barWin = root.CreateChild("mb");
+        var bar = new MenuWidget(barWin);
+        bar.Configure(new Dictionary<string, string> { { "-type", "menubar" } });
+        MenuWidget fileMenu = menus.CreateMenu("file");
+        fileMenu.AddCommand("New", () => { });
+        MenuWidget editMenu = menus.CreateMenu("edit");
+        editMenu.AddCommand("Undo", () => { });
+        bar.AddCascade("File", fileMenu, 0); // -underline 0 → mnemonic 'F'
+        bar.AddCascade("Edit", editMenu, 0); // -underline 0 → mnemonic 'E'
+        PackLayout.Configure(barWin, new PackOptions { Side = Side.Top, Fill = Fill.X });
+        menus.SetMenubar(bar);
+        TkLayoutUpdate(root);
+
+        // Alt+F reaches the menu system as a KeyPress with the Alt modifier set,
+        // exactly as verified live on X11 (keysym=f, state=8).
+        root.Tree.KeyEvent(TkEventType.KeyPress, "f", "", EventModifiers.Alt);
+
+        menus.IsPosted.Should().BeTrue();
+        menus.Posted[0].Should().BeSameAs(fileMenu);
+
+        // Alt+E switches to the Edit menu (traversal re-posts the chain).
+        root.Tree.KeyEvent(TkEventType.KeyPress, "e", "", EventModifiers.Alt);
+        menus.Posted[0].Should().BeSameAs(editMenu);
+
+        // A letter with no matching mnemonic — and any letter without Alt —
+        // falls through unconsumed, leaving the posted chain untouched.
+        root.Tree.KeyEvent(TkEventType.KeyPress, "e", "", EventModifiers.None);
+        menus.Posted[0].Should().BeSameAs(editMenu);
+    }
+
+    [Fact]
     public void MessageBox_is_modal_and_returns_the_clicked_button()
     {
         TkWindow root = Root();

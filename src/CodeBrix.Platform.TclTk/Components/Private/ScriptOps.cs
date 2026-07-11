@@ -11291,6 +11291,17 @@ namespace CodeBrix.Platform.TclTk._Components.Private //was previously: Eagle._C
                 EntityOps.SetLink(localVariable, true);
 
                 //
+                // COMPAT: Tcl, permanently mark the other variable as the
+                //         target of a variable link so that unsetting it by
+                //         name leaves it in its call frame (as undefined)
+                //         instead of physically removing it; that keeps the
+                //         link usable, i.e. a later set through the link
+                //         revives the variable.  See UnsetVariable2.
+                //
+                /* IGNORED */
+                EntityOps.SetLinkTarget(otherVariable);
+
+                //
                 // NOTE: If we get to this point and the local variable exists
                 //       in the call frame, it should be replaced; otherwise,
                 //       it should be added.
