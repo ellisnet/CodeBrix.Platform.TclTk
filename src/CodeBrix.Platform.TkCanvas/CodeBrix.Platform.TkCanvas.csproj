@@ -6,6 +6,10 @@
     <RootNamespace>CodeBrix.Platform.TkCanvas</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <!-- Extra symbols for diagnostic builds only (e.g. PERFORMANCE_DIAGNOSIS
+         via -p:TclTkExtraDefines=PERFORMANCE_DIAGNOSIS); empty for normal and
+         shipped builds. -->
+    <DefineConstants>$(DefineConstants);$(TclTkExtraDefines)</DefineConstants>
   </PropertyGroup>
 
   <!--

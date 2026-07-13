@@ -95,7 +95,16 @@ internal static class ResourceCommands
 
     private static void RegisterFont(BridgeContext ctx)
     {
+#if PERFORMANCE_DIAGNOSIS
+        BridgeRegistrar.Add(ctx, "font", words =>
+        {
+            long __probe = CodeBrix.Platform.TclTk.Diagnostics.PerfProbe.Now;
+            try { return ctx.Ui(() => Font(ctx, words)); }
+            finally { CodeBrix.Platform.TclTk.Diagnostics.PerfProbe.Add("font." + (words.Length > 1 ? words[1] : "?"), __probe); }
+        });
+#else
         BridgeRegistrar.Add(ctx, "font", words => ctx.Ui(() => Font(ctx, words)));
+#endif
     }
 
     private static string Font(BridgeContext ctx, string[] words)

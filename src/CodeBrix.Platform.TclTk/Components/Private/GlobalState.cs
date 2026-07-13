@@ -4730,6 +4730,54 @@ namespace CodeBrix.Platform.TclTk._Components.Private //was previously: Eagle._C
         ///////////////////////////////////////////////////////////////////////
 
         /// <summary>
+        /// This method pushes the specified interpreter onto the active
+        /// interpreter stack UNLESS it is already the topmost active
+        /// interpreter on the calling thread, in which case pushing it
+        /// again would change nothing observable about which interpreter
+        /// is active.  This is used by the per-command execution hot path
+        /// to avoid redundant pushes during nested command dispatch.  The
+        /// caller must skip the matching pop exactly when this method
+        /// returns false.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter to push onto the active interpreter stack.
+        /// </param>
+        /// <returns>
+        /// True if the interpreter was pushed (and must be popped by the
+        /// caller); false if it was already the topmost active interpreter
+        /// (and must NOT be popped by the caller).
+        /// </returns>
+        public static bool MaybePushActiveInterpreter(
+            Interpreter interpreter
+            ) /* THREAD-SAFE */
+        {
+            //
+            // NOTE: The active interpreter stack is per-thread; no locking
+            //       is needed to examine it from the owning thread.
+            //
+            InterpreterStackList localActiveInterpreters = activeInterpreters;
+
+            if ((interpreter != null) &&
+                (localActiveInterpreters != null) &&
+                !localActiveInterpreters.IsEmpty)
+            {
+                IAnyPair<Interpreter, IClientData> anyPair =
+                    localActiveInterpreters.Peek();
+
+                if ((anyPair != null) &&
+                    Object.ReferenceEquals(anyPair.X, interpreter))
+                {
+                    return false;
+                }
+            }
+
+            PushActiveInterpreter(interpreter, null);
+            return true;
+        }
+
+        ///////////////////////////////////////////////////////////////////////
+
+        /// <summary>
         /// This method pushes the specified interpreter and its associated client data
         /// onto the active interpreter stack.
         /// </summary>

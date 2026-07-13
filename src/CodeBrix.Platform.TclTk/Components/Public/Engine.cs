@@ -12856,7 +12856,8 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
             ref Result result
             )
         {
-            GlobalState.PushActiveInterpreter(interpreter);
+            bool interpreterPushed = GlobalState.MaybePushActiveInterpreter(
+                interpreter); /* NOTE: Skipped when already the active one. */
 
             try
             {
@@ -12878,6 +12879,9 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                     if (code != ReturnCode.Ok)
                         return code;
 
+#if PERFORMANCE_DIAGNOSIS
+                    long __probeTs = Diagnostics.PerfProbe.Now;
+#endif
                     try
                     {
                         //
@@ -12892,6 +12896,10 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                     }
                     finally
                     {
+#if PERFORMANCE_DIAGNOSIS
+                        if (Diagnostics.PerfProbe.Enabled && arguments != null && arguments.Count > 0)
+                        { Diagnostics.PerfProbe.Add("X:" + (string)arguments[0], __probeTs); }
+#endif
                         usable = IsUsableNoLock(interpreter);
 
 #if PROFILER
@@ -12918,7 +12926,9 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
 
 #if NOTIFY && NOTIFY_EXECUTE
                         if ((interpreter != null) &&
-                            !EngineFlagOps.HasNoNotify(engineFlags))
+                            !EngineFlagOps.HasNoNotify(engineFlags) &&
+                            interpreter.ShouldMaybeFireNotification(
+                                NotifyType.IExecute, NotifyFlags.Executed))
                         {
                             /* IGNORED */
                             interpreter.CheckNotification(
@@ -12990,8 +13000,11 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
             }
             finally
             {
-                /* IGNORED */
-                GlobalState.PopActiveInterpreter();
+                if (interpreterPushed)
+                {
+                    /* IGNORED */
+                    GlobalState.PopActiveInterpreter();
+                }
             }
 
             return ReturnCode.Error;
@@ -13185,7 +13198,8 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
             ref Result result
             )
         {
-            GlobalState.PushActiveInterpreter(interpreter);
+            bool interpreterPushed = GlobalState.MaybePushActiveInterpreter(
+                interpreter); /* NOTE: Skipped when already the active one. */
 
             try
             {
@@ -13195,6 +13209,9 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                     // NOTE: Execute the sub-command in the context of the interpreter.
                     //
                     long microseconds = 0;
+#if PERFORMANCE_DIAGNOSIS
+                    long __probeTs = 0;
+#endif
 #if PROFILER
                     IProfilerState profiler = GetProfilerAndStart(interpreter);
 #endif
@@ -13211,6 +13228,9 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                     {
                         ExecuteCallback callback = subCommand.Callback;
 
+#if PERFORMANCE_DIAGNOSIS
+                        __probeTs = Diagnostics.PerfProbe.Now;
+#endif
                         if (callback != null)
                         {
                             code = callback(
@@ -13226,6 +13246,10 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                     }
                     finally
                     {
+#if PERFORMANCE_DIAGNOSIS
+                        if (Diagnostics.PerfProbe.Enabled && arguments != null && arguments.Count > 0)
+                        { Diagnostics.PerfProbe.Add("S:" + (string)arguments[0], __probeTs); }
+#endif
                         usable = IsUsableNoLock(interpreter);
 
 #if PROFILER
@@ -13252,7 +13276,9 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
 
 #if NOTIFY && NOTIFY_EXECUTE
                         if ((interpreter != null) &&
-                            !EngineFlagOps.HasNoNotify(engineFlags))
+                            !EngineFlagOps.HasNoNotify(engineFlags) &&
+                            interpreter.ShouldMaybeFireNotification(
+                                NotifyType.SubCommand, NotifyFlags.Executed))
                         {
                             /* IGNORED */
                             interpreter.CheckNotification(
@@ -13324,8 +13350,11 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
             }
             finally
             {
-                /* IGNORED */
-                GlobalState.PopActiveInterpreter();
+                if (interpreterPushed)
+                {
+                    /* IGNORED */
+                    GlobalState.PopActiveInterpreter();
+                }
             }
 
             return ReturnCode.Error;
@@ -13562,7 +13591,8 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
             ref Result result
             )
         {
-            GlobalState.PushActiveInterpreter(interpreter);
+            bool interpreterPushed = GlobalState.MaybePushActiveInterpreter(
+                interpreter); /* NOTE: Skipped when already the active one. */
 
             try
             {
@@ -13572,6 +13602,9 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                     // NOTE: Execute the command in the context of the interpreter.
                     //
                     long microseconds = 0;
+#if PERFORMANCE_DIAGNOSIS
+                    long __probeTs = 0;
+#endif
 #if PROFILER
                     IProfilerState profiler = GetProfilerAndStart(interpreter);
 #endif
@@ -13588,6 +13621,9 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                     {
                         ExecuteCallback callback = command.Callback;
 
+#if PERFORMANCE_DIAGNOSIS
+                        __probeTs = Diagnostics.PerfProbe.Now;
+#endif
                         if (callback != null)
                         {
                             code = callback(
@@ -13603,6 +13639,10 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                     }
                     finally
                     {
+#if PERFORMANCE_DIAGNOSIS
+                        if (Diagnostics.PerfProbe.Enabled && arguments != null && arguments.Count > 0)
+                        { Diagnostics.PerfProbe.Add("C:" + (string)arguments[0], __probeTs); }
+#endif
                         usable = IsUsableNoLock(interpreter);
 
 #if PROFILER
@@ -13629,7 +13669,9 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
 
 #if NOTIFY && NOTIFY_EXECUTE
                         if ((interpreter != null) &&
-                            !EngineFlagOps.HasNoNotify(engineFlags))
+                            !EngineFlagOps.HasNoNotify(engineFlags) &&
+                            interpreter.ShouldMaybeFireNotification(
+                                NotifyType.Command, NotifyFlags.Executed))
                         {
                             /* IGNORED */
                             interpreter.CheckNotification(
@@ -13701,8 +13743,11 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
             }
             finally
             {
-                /* IGNORED */
-                GlobalState.PopActiveInterpreter();
+                if (interpreterPushed)
+                {
+                    /* IGNORED */
+                    GlobalState.PopActiveInterpreter();
+                }
             }
 
             return ReturnCode.Error;
@@ -13937,7 +13982,8 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
             ref Result result
             )
         {
-            GlobalState.PushActiveInterpreter(interpreter);
+            bool interpreterPushed = GlobalState.MaybePushActiveInterpreter(
+                interpreter); /* NOTE: Skipped when already the active one. */
 
             try
             {
@@ -14004,7 +14050,9 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
 
 #if NOTIFY && NOTIFY_EXECUTE
                         if ((interpreter != null) &&
-                            !EngineFlagOps.HasNoNotify(engineFlags))
+                            !EngineFlagOps.HasNoNotify(engineFlags) &&
+                            interpreter.ShouldMaybeFireNotification(
+                                NotifyType.Procedure, NotifyFlags.Executed))
                         {
                             /* IGNORED */
                             interpreter.CheckNotification(
@@ -14076,8 +14124,11 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
             }
             finally
             {
-                /* IGNORED */
-                GlobalState.PopActiveInterpreter();
+                if (interpreterPushed)
+                {
+                    /* IGNORED */
+                    GlobalState.PopActiveInterpreter();
+                }
             }
 
             return ReturnCode.Error;
@@ -14274,7 +14325,8 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
             ref Result error
             )
         {
-            GlobalState.PushActiveInterpreter(interpreter);
+            bool interpreterPushed = GlobalState.MaybePushActiveInterpreter(
+                interpreter); /* NOTE: Skipped when already the active one. */
 
             try
             {
@@ -14330,7 +14382,9 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
 
 #if NOTIFY && NOTIFY_EXPRESSION
                         if ((interpreter != null) &&
-                            !EngineFlagOps.HasNoNotify(engineFlags))
+                            !EngineFlagOps.HasNoNotify(engineFlags) &&
+                            interpreter.ShouldMaybeFireNotification(
+                                NotifyType.Function, NotifyFlags.Executed))
                         {
                             /* IGNORED */
                             interpreter.CheckNotification(
@@ -14402,8 +14456,11 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
             }
             finally
             {
-                /* IGNORED */
-                GlobalState.PopActiveInterpreter();
+                if (interpreterPushed)
+                {
+                    /* IGNORED */
+                    GlobalState.PopActiveInterpreter();
+                }
             }
 
             return ReturnCode.Error;
@@ -14634,7 +14691,8 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
             ref Result error
             )
         {
-            GlobalState.PushActiveInterpreter(interpreter);
+            bool interpreterPushed = GlobalState.MaybePushActiveInterpreter(
+                interpreter); /* NOTE: Skipped when already the active one. */
 
             try
             {
@@ -14693,7 +14751,9 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
 
 #if NOTIFY && NOTIFY_EXPRESSION
                         if ((interpreter != null) &&
-                            !EngineFlagOps.HasNoNotify(engineFlags))
+                            !EngineFlagOps.HasNoNotify(engineFlags) &&
+                            interpreter.ShouldMaybeFireNotification(
+                                NotifyType.Operator, NotifyFlags.Executed))
                         {
                             /* IGNORED */
                             interpreter.CheckNotification(
@@ -14765,8 +14825,11 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
             }
             finally
             {
-                /* IGNORED */
-                GlobalState.PopActiveInterpreter();
+                if (interpreterPushed)
+                {
+                    /* IGNORED */
+                    GlobalState.PopActiveInterpreter();
+                }
             }
 
             return ReturnCode.Error;
@@ -16162,6 +16225,11 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
             // NOTE: Fetch the first argument now; it should contain the
             //       name of the command to be looked up.
             //
+#if PERFORMANCE_DIAGNOSIS
+            long __probeEaTs = Diagnostics.PerfProbe.Enabled ?
+                Diagnostics.PerfProbe.Now : 0;
+#endif
+
             Argument firstArgument = arguments[0];
 
             //
@@ -16342,6 +16410,11 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                 }
 
             execute:
+
+#if PERFORMANCE_DIAGNOSIS
+                if (Diagnostics.PerfProbe.Enabled)
+                { Diagnostics.PerfProbe.Add("ea.resolve", __probeEaTs); }
+#endif
 
                 if (code == ReturnCode.Ok)
                 {
@@ -18837,6 +18910,28 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                 interpreter.ParseState = parseState; /* NOTE: Per-thread. */
                 ArgumentList arguments = new ArgumentList();
 
+                //
+                // NOTE: Opt-in script parse cache (see the CacheParsedScripts
+                //       property of the interpreter): when enabled, replay the
+                //       previously parsed commands of this exact script text
+                //       instead of re-parsing it on every evaluation.  The
+                //       readyParseState below always refers to a MUTABLE parser
+                //       state whose engine flags reflect THIS evaluation; it is
+                //       used for the per-command ready checks while replaying,
+                //       mirroring the checks Parser.ParseCommand would perform.
+                //
+                CachedScriptCommands cachedScript = null;
+                int nextCachedCommand = 0;
+                IParseState readyParseState = parseState;
+
+                if ((characters > 0) && interpreter.InternalCacheParsedScripts)
+                {
+                    cachedScript = GetOrBuildCachedScriptCommands(
+                        interpreter, fileName, currentLine, text,
+                        startIndex, characters, localEngineFlags,
+                        substitutionFlags, nested, noReady);
+                }
+
 #if PREVIOUS_RESULT
                 Result previousResult = null;
 #endif
@@ -18845,17 +18940,83 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                 {
                     /*
                      * Attempt to parse the command.  This can fail in a number of
-                     * ways, including being canceled.
+                     * ways, including being canceled.  When replaying from the
+                     * script parse cache, the pre-parsed command is used instead,
+                     * after an equivalent per-command ready check; if the cached
+                     * commands are exhausted with text remaining (a parse error
+                     * exists beyond that point), live parsing resumes seamlessly.
                      */
 
-                    if (Parser.ParseCommand(
+                    bool replayedCommand = false;
+                    CachedScriptCommand replayedCachedCommand = null;
+
+                    if (cachedScript != null)
+                    {
+                        CachedScriptCommand[] cachedCommands = cachedScript.Commands;
+
+                        if (nextCachedCommand < cachedCommands.Length)
+                        {
+                            if (!noReady && (Parser.Ready(
+                                    interpreter, readyParseState,
+                                    ref result) != ReturnCode.Ok))
+                            {
+                                code = ReturnCode.Error;
+                                goto error;
+                            }
+
+                            replayedCachedCommand = cachedCommands[nextCachedCommand++];
+                            parseState = replayedCachedCommand.ParseState;
+                            interpreter.ParseState = parseState; /* NOTE: Per-thread. */
+
+                            replayedCommand = true;
+                        }
+                        else
+                        {
+                            IParseState lastParseState = (cachedCommands.Length > 0) ?
+                                cachedCommands[cachedCommands.Length - 1].ParseState : null;
+
+                            cachedScript = null;
+
+                            parseState = new ParseState(
+                                localEngineFlags, substitutionFlags, fileName,
+                                currentLine);
+
+                            if (lastParseState != null)
+                            {
+                                //
+                                // NOTE: Continue the line numbering from where
+                                //       the cached commands left off.
+                                //
+                                parseState.CurrentLine = lastParseState.CurrentLine;
+                                parseState.LineStart = lastParseState.LineStart;
+                            }
+
+                            readyParseState = parseState;
+                            interpreter.ParseState = parseState; /* NOTE: Per-thread. */
+                        }
+                    }
+
+#if PERFORMANCE_DIAGNOSIS
+                    long __probeParseTs = Diagnostics.PerfProbe.Enabled ?
+                        Diagnostics.PerfProbe.Now : 0;
+#endif
+
+                    if (!replayedCommand && (Parser.ParseCommand(
                             interpreter, text, index,
                             charactersLeft, nested, parseState,
-                            noReady, ref result) != ReturnCode.Ok)
+                            noReady, ref result) != ReturnCode.Ok))
                     {
                         code = ReturnCode.Error;
                         goto error;
                     }
+
+#if PERFORMANCE_DIAGNOSIS
+                    if (Diagnostics.PerfProbe.Enabled)
+                    {
+                        Diagnostics.PerfProbe.Add(replayedCommand ?
+                            "eval.replay" : "eval.parse", __probeParseTs);
+                    }
+#endif
 
                     terminator = parseState.Terminator;
 
@@ -18878,23 +19039,93 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                         if (arguments.Capacity < commandWords)
                             arguments.Capacity = commandWords;
 
+#if PERFORMANCE_DIAGNOSIS
+                        long __probeWordsTs = Diagnostics.PerfProbe.Enabled ?
+                            Diagnostics.PerfProbe.Now : 0;
+#endif
+
                         //
                         // NOTE: Initialize token related variables.
                         //
                         IToken token = null;
                         int tokenIndex = 0;
 
+                        //
+                        // NOTE: When replaying a cached command, its word walk
+                        //       was precomputed and its static words (single
+                        //       text tokens without expansion, whose value is
+                        //       identical on every execution) were evaluated
+                        //       once, at cache build time.
+                        //
+                        int[] cachedWordTokenIndexes = null;
+                        Argument[] cachedStaticWords = null;
+
+                        if (replayedCachedCommand != null)
+                        {
+                            cachedWordTokenIndexes =
+                                replayedCachedCommand.WordTokenIndexes;
+
+                            cachedStaticWords =
+                                replayedCachedCommand.StaticWords;
+
+#if DEBUGGER && DEBUGGER_BREAKPOINTS
+                            if (argumentLocation)
+                            {
+                                //
+                                // NOTE: The debugger needs per-argument source
+                                //       locations; use the fully dynamic path.
+                                //
+                                cachedWordTokenIndexes = null;
+                                cachedStaticWords = null;
+                            }
+#endif
+
+                            if ((cachedStaticWords != null) &&
+                                (cachedStaticWords.Length != commandWords))
+                            {
+                                cachedWordTokenIndexes = null;
+                                cachedStaticWords = null;
+                            }
+                        }
+
                         for (int wordsUsed = 0; wordsUsed < commandWords; wordsUsed++)
                         {
-                            //
-                            // NOTE: Get the first token from the parse state.
-                            //
-                            code = GetToken(
-                                parseState, ref token, ref tokenIndex,
-                                ref result);
+                            if (cachedStaticWords != null)
+                            {
+                                //
+                                // NOTE: A static word always evaluates to the
+                                //       same value; append its pre-evaluated
+                                //       argument directly.
+                                //
+                                Argument staticArgument =
+                                    cachedStaticWords[wordsUsed];
 
-                            if (code != ReturnCode.Ok)
-                                goto error;
+                                if (staticArgument != null)
+                                {
+                                    arguments.Add(staticArgument);
+                                    continue;
+                                }
+
+                                //
+                                // NOTE: A dynamic word; position directly at
+                                //       its (precomputed) word token and fall
+                                //       through to normal token evaluation.
+                                //
+                                tokenIndex = cachedWordTokenIndexes[wordsUsed];
+                                token = parseState.Tokens[tokenIndex];
+                            }
+                            else
+                            {
+                                //
+                                // NOTE: Get the first token from the parse state.
+                                //
+                                code = GetToken(
+                                    parseState, ref token, ref tokenIndex,
+                                    ref result);
+
+                                if (code != ReturnCode.Ok)
+                                    goto error;
+                            }
 
 #if DEBUGGER && DEBUGGER_BREAKPOINTS
                             int startLine = Parser.UnknownLine;
@@ -19130,6 +19361,11 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                             arguments.Add(argument);
                         }
 
+#if PERFORMANCE_DIAGNOSIS
+                        if (Diagnostics.PerfProbe.Enabled)
+                        { Diagnostics.PerfProbe.Add("eval.words", __probeWordsTs); }
+#endif
+
                         //
                         // NOTE: Argument expansion may leave an empty
                         //       command (every word expanded to nothing);
@@ -19226,7 +19462,10 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
 #endif
 
 #if NOTIFY && NOTIFY_ARGUMENTS
-                                if (usable && !EngineFlagOps.HasNoNotify(localEngineFlags))
+                                if (usable &&
+                                    !EngineFlagOps.HasNoNotify(localEngineFlags) &&
+                                    interpreter.ShouldMaybeFireNotification(
+                                        NotifyType.Engine, NotifyFlags.Executed))
                                 {
                                     /* IGNORED */
                                     interpreter.CheckNotification(
@@ -19426,12 +19665,17 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                     }
 
                     //
-                    // NOTE: Advance to the next command in the script.
+                    // NOTE: Advance to the next command in the script.  When
+                    //       replaying from the script parse cache, the parser
+                    //       state is an immutable shared snapshot; its tokens
+                    //       must never be cleared.
                     //
                     nextIndex = parseState.CommandStart + parseState.CommandLength;
                     charactersLeft -= (nextIndex - index);
                     index = nextIndex;
-                    parseState.Tokens.Clear();
+
+                    if (cachedScript == null)
+                        parseState.Tokens.Clear();
 
                     if (nested &&
                         (terminator < text.Length) && // TEST: Test this.
@@ -19546,6 +19790,25 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                 terminator = parseState.Terminator;
                 nextIndex = Index.Invalid;
 
+                if (parseState.IsImmutable())
+                {
+                    //
+                    // NOTE: The error occurred while replaying commands from
+                    //       the script parse cache; the nested-script skip
+                    //       loop below must re-parse live, which requires a
+                    //       mutable parser state.
+                    //
+                    IParseState localParseState = new ParseState(
+                        localEngineFlags, substitutionFlags, fileName,
+                        currentLine);
+
+                    localParseState.CurrentLine = parseState.CurrentLine;
+                    localParseState.LineStart = parseState.LineStart;
+
+                    parseState = localParseState;
+                    interpreter.ParseState = parseState; /* NOTE: Per-thread. */
+                }
+
                 while ((terminator < text.Length) && // TEST: Test this.
                        (charactersLeft > 0) &&
                        (text[terminator] != Characters.CloseBracket))
@@ -19601,6 +19864,310 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
 
             return ReturnCode.Error;
         }
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        #region Script Parse Cache Methods
+        /// <summary>
+        /// This method implements the lookup and second-sighting-promotion
+        /// policy of the opt-in script parse cache (see the
+        /// CacheParsedScripts property of the interpreter).  The first time
+        /// a given script parse is seen, only its key hash is recorded; the
+        /// second time, the script is fully parsed ahead of execution and
+        /// the resulting per-command parser-state snapshots are cached for
+        /// the lifetime of the interpreter.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter whose script parse cache should be consulted.
+        /// </param>
+        /// <param name="fileName">
+        /// The name of the file the script originated from, if any.
+        /// </param>
+        /// <param name="currentLine">
+        /// The line number the script starts on.
+        /// </param>
+        /// <param name="text">
+        /// The script text being evaluated.
+        /// </param>
+        /// <param name="startIndex">
+        /// The index, within the text, where evaluation starts.
+        /// </param>
+        /// <param name="characters">
+        /// The number of characters available for parsing.
+        /// </param>
+        /// <param name="engineFlags">
+        /// The engine flags in effect for this evaluation.
+        /// </param>
+        /// <param name="substitutionFlags">
+        /// The substitution flags in effect for this evaluation.
+        /// </param>
+        /// <param name="nested">
+        /// Non-zero if the parse is close-bracket terminated.
+        /// </param>
+        /// <param name="noReady">
+        /// Non-zero to skip interpreter readiness checks while parsing.
+        /// </param>
+        /// <returns>
+        /// The cached commands for the script, or null when the script is
+        /// not (yet) cached.
+        /// </returns>
+        private static CachedScriptCommands GetOrBuildCachedScriptCommands(
+            Interpreter interpreter,
+            string fileName,
+            int currentLine,
+            string text,
+            int startIndex,
+            int characters,
+            EngineFlags engineFlags,
+            SubstitutionFlags substitutionFlags,
+            bool nested,
+            bool noReady
+            )
+        {
+            ScriptParseCache cache = interpreter.GetScriptParseCache();
+
+            ScriptParseCacheKey key = new ScriptParseCacheKey(
+                text, startIndex, characters, nested, substitutionFlags,
+                fileName, currentLine);
+
+            bool build;
+
+            CachedScriptCommands cachedScript = cache.GetOrMarkSeen(
+                key, out build);
+
+#if PERFORMANCE_DIAGNOSIS
+            if (Diagnostics.PerfProbe.Enabled)
+            {
+                Diagnostics.PerfProbe.Add(
+                    (cachedScript != null) ? "sc.hit" :
+                    (build ? "sc.build" : "sc.first"),
+                    Diagnostics.PerfProbe.Now);
+            }
+#endif
+
+            if ((cachedScript != null) || !build)
+                return cachedScript;
+
+            cachedScript = BuildCachedScriptCommands(
+                interpreter, fileName, currentLine, text, startIndex,
+                characters, engineFlags, substitutionFlags, nested,
+                noReady);
+
+            if (cachedScript != null)
+                cache.Add(key, cachedScript);
+
+            return cachedScript;
+        }
+
+        ///////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This method parses ALL commands of the specified script range,
+        /// ahead of execution, into immutable per-command parser-state
+        /// snapshots suitable for replay by <c>EvaluateScript</c>.  Parsing
+        /// stops early at a deterministic parse error (the commands before
+        /// it are still cached; live parsing reproduces the error exactly,
+        /// if and when execution reaches it) or at the close bracket of a
+        /// nested script.  A transient failure (interpreter not ready, e.g.
+        /// canceled) aborts the build entirely so nothing incorrect can be
+        /// cached.
+        /// </summary>
+        /// <param name="interpreter">
+        /// The interpreter used for readiness checks while parsing.
+        /// </param>
+        /// <param name="fileName">
+        /// The name of the file the script originated from, if any.
+        /// </param>
+        /// <param name="currentLine">
+        /// The line number the script starts on.
+        /// </param>
+        /// <param name="text">
+        /// The script text being parsed.
+        /// </param>
+        /// <param name="startIndex">
+        /// The index, within the text, where parsing starts.
+        /// </param>
+        /// <param name="characters">
+        /// The number of characters available for parsing.
+        /// </param>
+        /// <param name="engineFlags">
+        /// The engine flags in effect while parsing.
+        /// </param>
+        /// <param name="substitutionFlags">
+        /// The substitution flags in effect while parsing.
+        /// </param>
+        /// <param name="nested">
+        /// Non-zero if the parse is close-bracket terminated.
+        /// </param>
+        /// <param name="noReady">
+        /// Non-zero to skip interpreter readiness checks while parsing.
+        /// </param>
+        /// <returns>
+        /// The parsed commands, or null when the build was aborted by a
+        /// transient (not-ready) failure.
+        /// </returns>
+        private static CachedScriptCommands BuildCachedScriptCommands(
+            Interpreter interpreter,
+            string fileName,
+            int currentLine,
+            string text,
+            int startIndex,
+            int characters,
+            EngineFlags engineFlags,
+            SubstitutionFlags substitutionFlags,
+            bool nested,
+            bool noReady
+            )
+        {
+            List<CachedScriptCommand> commands = new List<CachedScriptCommand>();
+
+            IParseState parseState = new ParseState(
+                engineFlags, substitutionFlags, fileName, currentLine);
+
+            int index = startIndex;
+            int charactersLeft = characters;
+
+            do
+            {
+                Result error = null;
+
+                if (Parser.ParseCommand(
+                        interpreter, text, index, charactersLeft,
+                        nested, parseState, noReady,
+                        ref error) != ReturnCode.Ok)
+                {
+                    if (parseState.NotReady)
+                        return null;
+
+                    break;
+                }
+
+                int terminator = parseState.Terminator;
+
+                if (nested && (terminator == characters))
+                    break;
+
+                IParseState commandParseState;
+
+                parseState.Save(true, out commandParseState);
+
+                //
+                // NOTE: Saving copies each token by re-deriving its source
+                //       location from the (already advanced) parser state;
+                //       restore the true per-token locations so that error
+                //       line numbers within replayed commands are identical
+                //       to those of a live parse.
+                //
+                TokenList oldTokens = parseState.Tokens;
+                TokenList newTokens = commandParseState.Tokens;
+
+                if ((oldTokens != null) && (newTokens != null))
+                {
+                    for (int tokenIndex = 0;
+                            tokenIndex < oldTokens.Count; tokenIndex++)
+                    {
+                        IToken oldToken = oldTokens[tokenIndex];
+                        IToken newToken = newTokens[tokenIndex];
+
+                        if ((oldToken == null) || (newToken == null))
+                            continue;
+
+                        newToken.FileName = oldToken.FileName;
+                        newToken.StartLine = oldToken.StartLine;
+                        newToken.EndLine = oldToken.EndLine;
+                        newToken.ViaSource = oldToken.ViaSource;
+                    }
+                }
+
+                commandParseState.MakeImmutable();
+
+                //
+                // NOTE: Precompute the command's word walk: record the token
+                //       index of every word and pre-evaluate each STATIC word
+                //       (a single text token without the "{*}" expansion
+                //       prefix), whose value is identical on every execution,
+                //       into a reusable argument.  Dynamic words (variable or
+                //       command substitutions, backslashes, compound words)
+                //       are left null and re-substituted on every execution.
+                //
+                int commandWords = commandParseState.CommandWords;
+                int[] wordTokenIndexes = null;
+                Argument[] staticWords = null;
+
+                if (commandWords > 0)
+                {
+                    wordTokenIndexes = new int[commandWords];
+                    staticWords = new Argument[commandWords];
+
+                    TokenList commandTokens = commandParseState.Tokens;
+                    IToken wordToken = null;
+                    int wordTokenIndex = 0;
+                    bool walkOk = true;
+
+                    for (int wordsUsed = 0; wordsUsed < commandWords; wordsUsed++)
+                    {
+                        if (wordToken != null)
+                            wordTokenIndex += (wordToken.Components + 1);
+
+                        if ((wordTokenIndex < 0) ||
+                            (wordTokenIndex >= commandTokens.Count))
+                        {
+                            walkOk = false;
+                            break;
+                        }
+
+                        wordToken = commandTokens[wordTokenIndex];
+                        wordTokenIndexes[wordsUsed] = wordTokenIndex;
+
+                        if ((wordToken.Components == 1) &&
+                            ((wordToken.Flags & TokenFlags.Expand) !=
+                                TokenFlags.Expand) &&
+                            (wordTokenIndex + 1 < commandTokens.Count))
+                        {
+                            IToken componentToken =
+                                commandTokens[wordTokenIndex + 1];
+
+                            if ((componentToken != null) &&
+                                (componentToken.Type == TokenType.Text))
+                            {
+                                string wordValue = text.Substring(
+                                    componentToken.Start,
+                                    componentToken.Length);
+
+                                staticWords[wordsUsed] = Argument.GetOrCreate(
+                                    interpreter, (Result)wordValue,
+                                    true /* createOnly */);
+                            }
+                        }
+                    }
+
+                    if (!walkOk)
+                    {
+                        wordTokenIndexes = null;
+                        staticWords = null;
+                    }
+                }
+
+                commands.Add(new CachedScriptCommand(
+                    commandParseState, wordTokenIndexes, staticWords));
+
+                int nextIndex = parseState.CommandStart +
+                    parseState.CommandLength;
+
+                charactersLeft -= (nextIndex - index);
+                index = nextIndex;
+                parseState.Tokens.Clear();
+
+                if (nested && (terminator < text.Length) &&
+                    (text[terminator] == Characters.CloseBracket))
+                {
+                    break;
+                }
+            } while (charactersLeft > 0);
+
+            return new CachedScriptCommands(commands.ToArray());
+        }
+        #endregion
 
         ///////////////////////////////////////////////////////////////////////////////////////
 

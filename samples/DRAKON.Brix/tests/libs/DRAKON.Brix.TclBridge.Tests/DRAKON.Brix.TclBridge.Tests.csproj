@@ -10,6 +10,10 @@
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
     <!-- xUnit1051: tests intentionally use CancellationToken.None-style defaults -->
     <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+    <!-- Extra symbols for diagnostic builds only (e.g. PERFORMANCE_DIAGNOSIS
+         via -p:TclTkExtraDefines=PERFORMANCE_DIAGNOSIS, which revives the
+         ProfileOpenTests harness); empty for normal builds. -->
+    <DefineConstants>$(DefineConstants);$(TclTkExtraDefines)</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

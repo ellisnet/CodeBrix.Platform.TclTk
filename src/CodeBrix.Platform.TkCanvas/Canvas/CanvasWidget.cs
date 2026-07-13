@@ -245,6 +245,10 @@ public sealed class CanvasWidget : IWidget
     /// <inheritdoc/>
     public void Paint(SKCanvas canvas)
     {
+#if PERFORMANCE_DIAGNOSIS
+        long __probe = CodeBrix.Platform.TclTk.Diagnostics.PerfProbe.Now;
+        try {
+#endif
         SKColor background;
         if (!TkColor.TryParse(Options.Get("-background", Window.Tree.Theme.CanvasBackground), out background))
         {
@@ -260,6 +264,9 @@ public sealed class CanvasWidget : IWidget
             item.Paint(canvas);
         }
         canvas.Restore();
+#if PERFORMANCE_DIAGNOSIS
+        } finally { CodeBrix.Platform.TclTk.Diagnostics.PerfProbe.Add("canvas.PAINT", __probe); }
+#endif
     }
 
     /// <summary>Schedules a repaint after item/view changes (coalesced by the scheduler).</summary>
@@ -1319,6 +1326,11 @@ public sealed class CanvasWidget : IWidget
         }
 
         string subcommand = words[0];
+#if PERFORMANCE_DIAGNOSIS
+        long __probe = CodeBrix.Platform.TclTk.Diagnostics.PerfProbe.Now;
+        try
+        {
+#endif
         switch (subcommand)
         {
             case "create":
@@ -1617,6 +1629,13 @@ public sealed class CanvasWidget : IWidget
                         "bad option \"" + subcommand + "\": must be a canvas widget command");
             }
         }
+#if PERFORMANCE_DIAGNOSIS
+        }
+        finally
+        {
+            CodeBrix.Platform.TclTk.Diagnostics.PerfProbe.Add("canvas." + subcommand, __probe);
+        }
+#endif
     }
 
     /// <summary>

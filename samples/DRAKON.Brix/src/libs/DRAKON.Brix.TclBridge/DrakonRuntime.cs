@@ -110,6 +110,19 @@ internal sealed class DrakonRuntime : IDisposable
             return false;
         }
 
+        //DRAKON re-draws diagrams by re-running the same Tcl procedure bodies
+        //thousands of times per file open; cache their parsed form so each
+        //body is tokenized once per interpreter instead of on every execution.
+        _interpreter.CacheParsedScripts = true;
+
+        //ProductionMode skips optional per-command engine work (readiness
+        //checks, previous-result tracking, usage counters, ...) for another
+        //large speedup; results are byte-identical. Trade-off: [interp cancel]
+        //cannot interrupt a running script promptly — DRAKON never uses script
+        //cancellation, so that is acceptable here. Remove this line if prompt
+        //cancellation ever becomes necessary.
+        _interpreter.ProductionMode = true;
+
         Result error = null;
         if (TkBootstrap.Register(_interpreter, ref error) != ReturnCode.Ok)
         {
