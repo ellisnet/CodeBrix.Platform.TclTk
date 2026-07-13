@@ -12,7 +12,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.9" />
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.9" />
-    <PackageReference Include="CodeBrix.Platform.ApacheLicenseForever" Version="1.0.189.446" />
+    <PackageReference Include="CodeBrix.Platform.ApacheLicenseForever" Version="1.0.193.1124" />
     <PackageReference Include="CodeBrix.Platform.Fonts.OpenSans.ApacheLicenseForever" Version="1.0.181.655" />
   </ItemGroup>
 
