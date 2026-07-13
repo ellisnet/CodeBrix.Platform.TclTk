@@ -46,11 +46,13 @@ public sealed class PolygonItem : CanvasItem
             throw new ArgumentException(
                     "wrong # coordinates: expected an even number, got " + coords.Count);
         }
-        if (coords.Count < 6)
-        {
-            throw new ArgumentException(
-                    "wrong # coordinates: expected at least 6, got " + coords.Count);
-        }
+
+        // Tk 8.6.16's polygon accepts any even coordinate count (verified against
+        // real wish 8.6.16: 0, 2, and 4 coords are all accepted) — it imposes no
+        // minimum-point rule, unlike the line item (which requires at least 4).
+        // A degenerate two-point polygon whose endpoints differ is auto-closed
+        // below into a three-point ring, so it still renders as a visible line —
+        // this is exactly how DRAKON draws its "paw" connectors.
 
         _autoClosed = 0;
         int count = coords.Count;

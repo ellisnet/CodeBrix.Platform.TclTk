@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 using CodeBrix.Platform.TkCanvas.Canvas;
@@ -128,6 +129,41 @@ public class CanvasItemsB5bTests
             "create", "window", "10", "10", "-window", ".x", "-madeup", "value",
         });
         canvas.Execute(new List<string> { "itemcget", "1", "-madeup" }).Should().Be("value");
+    }
+
+    [Fact]
+    public void Polygon_accepts_a_two_point_degenerate_paw()
+    {
+        //Arrange — real wish 8.6.16 accepts a 4-coord (two-point) polygon; it
+        //imposes no minimum-point rule (unlike line, which needs at least 4).
+        //DRAKON draws its structure "paw" connectors exactly this way.
+        TkWindow root;
+        CanvasWidget canvas = CreateCanvas(out root);
+
+        //Act
+        string id = canvas.Execute(new List<string>
+        {
+            "create", "polygon", "10", "10", "30", "40", "-outline", "black",
+        });
+
+        //Assert — created, typed, and the two input points are reported back
+        //(the auto-added closing point is never surfaced by coords).
+        id.Should().Be("1");
+        canvas.Execute(new List<string> { "type", "1" }).Should().Be("polygon");
+        canvas.Execute(new List<string> { "coords", "1" }).Should().Be("10.0 10.0 30.0 40.0");
+    }
+
+    [Fact]
+    public void Polygon_still_rejects_an_odd_coordinate_count()
+    {
+        TkWindow root;
+        CanvasWidget canvas = CreateCanvas(out root);
+        Action act = () => canvas.Execute(new List<string>
+        {
+            "create", "polygon", "10", "10", "30",
+        });
+        act.Should().Throw<InvalidOperationException>()
+                .WithMessage("wrong # coordinates: expected an even number*");
     }
 
     [Fact]
