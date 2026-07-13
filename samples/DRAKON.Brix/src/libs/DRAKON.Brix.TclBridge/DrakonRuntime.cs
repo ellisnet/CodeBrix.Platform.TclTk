@@ -8,6 +8,8 @@ using CodeBrix.Platform.TkCanvas;
 using CodeBrix.Platform.TkCanvas.Hosting;
 using CodeBrix.Platform.TkCanvas.Tcl;
 
+using DRAKON.Brix.Drakon.Commands;
+
 namespace DRAKON.Brix.Drakon;
 
 /// <summary>
@@ -78,8 +80,10 @@ public sealed class DrakonRuntime : IDisposable
                     reportInterp.AddCommand(command, null, ref token, ref addError);
 
                     //The real-quit command; bootstrap.tcl shadows exit onto it
-                    //so DRAKON's File > Quit terminates the hosted process.
-                    var quit = new QuitCommand();
+                    //so DRAKON's File > Quit terminates the hosted process. The
+                    //exit action is injected so non-hosted callers (e.g. tests)
+                    //can supply a safe no-op instead of tearing down the process.
+                    var quit = new QuitCommand(code => Environment.Exit(code));
                     long quitToken = 0;
                     Result quitError = null;
                     reportInterp.AddCommand(quit, null, ref quitToken, ref quitError);

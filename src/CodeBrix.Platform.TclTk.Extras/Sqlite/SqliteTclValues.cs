@@ -8,7 +8,7 @@ namespace CodeBrix.Platform.TclTk.Extras.Sqlite;
 
 /// <summary>
 /// Conversions between SQLite column/parameter values and Tcl string values,
-/// replicating the tclsqlite binding rules that DRAKON-era Tcl code relies on.
+/// replicating the tclsqlite binding rules that real-world Tcl code relies on.
 /// </summary>
 internal static class SqliteTclValues
 {

@@ -145,8 +145,8 @@
     which Interpreter.Create(ref Result) uses). Without it, "namespace eval foo
     { proc bar {} {...} }" silently evaluates its body in the GLOBAL namespace:
     the child namespace is never created, "namespace exists foo" is false, and
-    "::foo::bar" is an invalid command. Real-world Tcl (e.g. DRAKON Editor's
-    gen::/mod::/mwc::/graph:: code) relies on namespaces, so this must be on.
+    "::foo::bar" is an invalid command. Real-world Tcl code that organizes its
+    procedures into namespaces relies on this, so it must be on.
     Matches upstream Eagle's standard netstandard build, which defines it.
   -->
   <PropertyGroup>

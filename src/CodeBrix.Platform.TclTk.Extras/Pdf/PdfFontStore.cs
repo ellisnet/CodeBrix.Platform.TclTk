@@ -47,7 +47,7 @@ internal static class PdfFontStore
 
         // NOTE: MetaFontResolver ignores duplicate registrations, so re-creating a
         // font NAME with different bytes keeps the first registration. pdf4tcl
-        // consumers (DRAKON included) use a fresh name per creation, so this does
+        // consumers typically use a fresh name per creation, so this does
         // not arise in practice.
         MetaFontResolver.Instance.RegisterFontResolver(
             fontName, new StoredFontResolver(fontName, bytes));

@@ -14,7 +14,7 @@ namespace CodeBrix.Platform.TkCanvas.Tcl;
 /// The window-level commands: <c>wm</c> (over the overlay window manager),
 /// <c>winfo</c>, <c>destroy</c>, <c>focus</c>, <c>grab</c>, <c>raise</c>/
 /// <c>lower</c>, and the toolkit-wide <c>selection</c> accept-and-no-op
-/// (DRAKON's selection calls are widget subcommands; the X-selection
+/// (application selection calls are widget subcommands; the X-selection
 /// command is a deferred module).
 /// </summary>
 internal static class WindowCommands
@@ -335,7 +335,7 @@ internal static class WindowCommands
             ctx.Tree.WindowManager.Raise(window);
         }
         // Sibling stacking for plain windows is a paint-order concern the
-        // layout pass owns; accept-and-no-op (DRAKON's raise/lower calls on
+        // layout pass owns; accept-and-no-op (application raise/lower calls on
         // plain windows are cosmetic).
         return "";
     }

@@ -25,7 +25,7 @@ public enum MenuEntryType
 /// One entry of a <see cref="MenuWidget"/> — the model of a Tk menu item: its
 /// type, label, optional accelerator text and mnemonic underline, enabled
 /// state, the command it fires (command/checkbutton/radiobutton), and the
-/// submenu it opens (cascade). DRAKON uses command / cascade / separator;
+/// submenu it opens (cascade). Consumers commonly use command / cascade / separator;
 /// checkbutton and radiobutton entries are modelled for generality.
 /// </summary>
 public sealed class MenuEntry
@@ -59,7 +59,7 @@ public sealed class MenuEntry
 
     /// <summary>
     /// How image and label combine (<c>-compound</c>). Only <c>left</c> —
-    /// the form DRAKON uses — affects drawing (image to the label's left);
+    /// the common form — affects drawing (image to the label's left);
     /// other values are accepted and stored.
     /// </summary>
     public string Compound { get; set; } = "";

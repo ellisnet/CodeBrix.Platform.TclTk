@@ -14,7 +14,7 @@ namespace CodeBrix.Platform.TkCanvas.Tcl;
 /// commands, the standard dialogs, and the <c>update</c>/<c>after</c> event
 /// loop — on a CodeBrix.Platform.TclTk interpreter, driving a
 /// <see cref="WindowTree"/>. This is what lets an unmodified Tcl/Tk
-/// application (DRAKON Editor is the reference consumer) run on the
+/// application run on the
 /// toolkit.
 /// </summary>
 /// <remarks>

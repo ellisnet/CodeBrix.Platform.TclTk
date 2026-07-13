@@ -13,7 +13,7 @@ namespace CodeBrix.Platform.TclTk.Extras.Pdf;
 
 /// <summary>
 /// The per-document Tcl object command created by <c>pdf4tcl::new NAME ?options?</c>,
-/// implementing the pdf4tcl 0.7 drawing surface DRAKON exercises — startPage,
+/// implementing the pdf4tcl 0.7 drawing surface an application exercises — startPage,
 /// setFillColor, setStrokeColor, setFont, setLineStyle, getStringWidth, text, line,
 /// rectangle, polygon, write, destroy — over CodeBrix.PdfDocuments.
 /// </summary>
@@ -25,7 +25,7 @@ namespace CodeBrix.Platform.TclTk.Extras.Pdf;
 /// and with <c>-orient 0</c> the origin is the BOTTOM-left corner with y growing up,
 /// which this class flips. Not implemented (accepted and ignored, never thrown):
 /// text rotation/skew options (<c>-angle</c>/<c>-xangle</c>/<c>-yangle</c>), page
-/// <c>-rotate</c>, and <c>-compress</c>. DRAKON uses none of them.
+/// <c>-rotate</c>, and <c>-compress</c>. These are accepted but otherwise unused.
 /// </remarks>
 internal sealed class Pdf4TclObjectCommand : Default
 {
@@ -200,7 +200,7 @@ internal sealed class Pdf4TclObjectCommand : Default
                             return ReturnCode.Error;
                         }
                         break;
-                    case "-rotate": break; // accepted, ignored (unused by DRAKON)
+                    case "-rotate": break; // accepted, ignored (otherwise unused)
                     default:
                         result = string.Format("Unknown option {0}", option);
                         return ReturnCode.Error;
@@ -503,7 +503,7 @@ internal sealed class Pdf4TclObjectCommand : Default
                 case "-angle":
                 case "-xangle":
                 case "-yangle":
-                    // Rotated/skewed text is not implemented (unused by DRAKON);
+                    // Rotated/skewed text is not implemented (otherwise unused);
                     // accepted and ignored.
                     break;
                 default:

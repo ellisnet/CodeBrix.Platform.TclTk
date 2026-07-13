@@ -47,7 +47,7 @@ public sealed class TreeItem
 /// <summary>
 /// The Tk <c>ttk::treeview</c> widget on Skia: a hierarchical, optionally
 /// multi-column list with expand/collapse triangles, column headings, a
-/// selection, and vertical scrolling. Implements the DRAKON-relevant surface
+/// selection, and vertical scrolling. Implements the consumer-relevant surface
 /// — <c>insert</c>, <c>delete</c>, <c>item</c>, <c>heading</c>,
 /// <c>column</c>, <c>selection</c>, <c>see</c>, <c>children</c>,
 /// <c>parent</c>, open/close via the triangle — and fires

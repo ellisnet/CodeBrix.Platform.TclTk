@@ -5,7 +5,7 @@ using CodeBrix.Platform.TclTk._Components.Public;
 using CodeBrix.Platform.TclTk._Containers.Public;
 using CodeBrix.Platform.TclTk._Interfaces.Public;
 
-namespace DRAKON.Brix.Drakon;
+namespace DRAKON.Brix.Drakon.Commands;
 
 /// <summary>
 /// A tiny <c>__brixreport MESSAGE</c> Tcl command that routes text to the

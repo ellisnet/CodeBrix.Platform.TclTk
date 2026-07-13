@@ -20,7 +20,7 @@ namespace CodeBrix.Platform.TkCanvas.Widgets;
 /// the field and fires <c>&lt;&lt;ComboboxSelected&gt;&gt;</c>; the drop-down
 /// is a modal overlay (grabbed) that closes on selection or on a press
 /// outside it. <c>-state readonly</c> shows the value without a text caret
-/// (DRAKON's usage); <c>normal</c> also allows the field to carry typed text
+/// (the common usage); <c>normal</c> also allows the field to carry typed text
 /// once the input sink is wired.
 /// </summary>
 public sealed class ComboboxWidget : WidgetBase

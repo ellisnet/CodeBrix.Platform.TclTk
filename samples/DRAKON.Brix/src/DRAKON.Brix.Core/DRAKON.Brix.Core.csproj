@@ -19,6 +19,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\CodeBrix.Platform.TkCanvas\CodeBrix.Platform.TkCanvas.csproj" />
     <ProjectReference Include="..\..\..\..\src\CodeBrix.Platform.TclTk.Extras\CodeBrix.Platform.TclTk.Extras.csproj" />
+    <!-- The "talk to Tcl" layer (DrakonRuntime + Tcl command shims). Referenced
+         here so the platform heads pick it up transitively, exactly as they did
+         when this code lived in .Core. -->
+    <ProjectReference Include="..\libs\DRAKON.Brix.TclBridge\DRAKON.Brix.TclBridge.csproj" />
   </ItemGroup>
 
   <!-- The vendored DRAKON Editor Tcl tree + the bootstrap glue script,

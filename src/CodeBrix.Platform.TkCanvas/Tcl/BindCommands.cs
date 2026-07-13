@@ -137,7 +137,7 @@ internal static class BindCommands
             // toplevel maps — AFTER application code has bound it. Here
             // layout sizes windows immediately, so a <Configure> binding
             // added to an already-displayed window would never see that
-            // initial event; deliver it once, deferred (the DRAKON canvas
+            // initial event; deliver it once, deferred (a canvas consumer
             // relies on it to learn its size).
             if (sequence.IndexOf("Configure", StringComparison.Ordinal) >= 0 &&
                 tag.Length > 0 && tag[0] == '.')
@@ -192,7 +192,7 @@ internal static class BindCommands
 
     /// <summary>
     /// Tk's %-substitution over the bound script. Implements the
-    /// substitutions DRAKON-era Tk code uses: %W %x %y %X %Y %b %K %A %D
+    /// substitutions real-world Tk code uses: %W %x %y %X %Y %b %K %A %D
     /// %w %h %s %T %t; unknown letters pass through unchanged.
     /// </summary>
     internal static string SubstitutePercent(BridgeContext ctx, string script, TkEvent tkEvent)

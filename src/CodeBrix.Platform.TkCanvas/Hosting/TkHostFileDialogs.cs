@@ -107,7 +107,7 @@ public sealed class TkHostFileDialogs : ITkFileDialogProvider
 
     /// <summary>
     /// Extracts the extensions from a Tk <c>-filetypes</c> list —
-    /// <c>{{Drakon files} {.drn}} {{All files} *}</c> — skipping the
+    /// <c>{{Data files} {.drn}} {{All files} *}</c> — skipping the
     /// match-everything entries.
     /// </summary>
     private static IEnumerable<string> ParseFileTypeExtensions(

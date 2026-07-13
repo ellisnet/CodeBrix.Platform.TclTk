@@ -40,7 +40,7 @@ internal static class WidgetDispatch
         // Single-option query form: "$w configure -option" returns that
         // option's configuration record {-name dbName dbClass default value},
         // matching Tk. Programs read the current value as [lindex ... end]
-        // (DRAKON's cpicker does exactly this on a canvas -width).
+        // (a color-picker consumer does exactly this on a canvas -width).
         if (words.Length == 3 && words[2].Length > 0 && words[2][0] == '-')
         {
             string option = words[2];
@@ -707,7 +707,7 @@ internal static class WidgetDispatch
             case "children":
                 if (words.Length >= 4)
                 {
-                    // set children: not used by DRAKON for reordering — accept-and-no-op.
+                    // set children: not used for reordering here — accept-and-no-op.
                     return "";
                 }
                 return words.Length >= 3
@@ -757,7 +757,7 @@ internal static class WidgetDispatch
 
             case "identify":
                 // identify row X Y / identify item X Y — the item id at the
-                // given widget coordinates ("" for empty space; DRAKON
+                // given widget coordinates ("" for empty space; a consumer
                 // deselects on that).
                 if (words.Length >= 5 && (words[2] == "row" || words[2] == "item"))
                 {

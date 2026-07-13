@@ -25,7 +25,7 @@ namespace CodeBrix.Platform.TkCanvas.Text;
 /// <see cref="ITextInputSink"/> seam for the deferred IME input element.
 /// Index/mark/tag semantics were probed line-by-line against real Tk 8.6.16
 /// (boundary gravity, tag stretch rules, line-merge adjustment). Out of
-/// scope, per the plan: Tk undo and embedded windows (DRAKON does its own
+/// scope, per the plan: Tk undo and embedded windows (a consumer may do its own
 /// undo at the model level).
 /// </summary>
 public sealed class TextWidget : IWidget, ITextInputTarget
@@ -1325,7 +1325,7 @@ public sealed class TextWidget : IWidget, ITextInputTarget
 
     // ------------------------------------------------------------------
     // Class behavior: key-driven editing (the Tk Text-class key bindings
-    // DRAKON's editing relies on; committed PRINTABLE text normally arrives
+    // a text-editing consumer relies on; committed PRINTABLE text normally arrives
     // through the input sink — the Character path here serves hosts and
     // tests that route plain keystrokes as key events)
     // ------------------------------------------------------------------

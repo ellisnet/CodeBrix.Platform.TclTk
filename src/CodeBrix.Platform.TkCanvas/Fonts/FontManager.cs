@@ -12,7 +12,7 @@ namespace CodeBrix.Platform.TkCanvas.Fonts;
 /// The Skia painter and the Tcl-facing <c>font measure</c>/<c>font
 /// metrics</c> commands both go through this class and therefore through the
 /// SAME <see cref="SKFont"/> — by construction they can never disagree, so
-/// text-sized layouts (DRAKON sizes every diagram icon via
+/// text-sized layouts (a consumer sizing its elements via
 /// <c>font measure</c>) always fit what gets painted.
 /// Also owns named fonts (<c>font create</c>/<c>configure</c>/<c>delete</c>)
 /// and Tk's standard font names.

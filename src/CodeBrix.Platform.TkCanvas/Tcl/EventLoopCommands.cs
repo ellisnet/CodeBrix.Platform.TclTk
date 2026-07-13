@@ -10,7 +10,7 @@ namespace CodeBrix.Platform.TkCanvas.Tcl;
 /// <summary>
 /// The event-loop commands: <c>update</c>/<c>update idletasks</c> (the R1
 /// synchronous flush, marshaled to the UI thread), the <c>after</c> timer
-/// bridge, and the <c>tkwait</c> forms DRAKON-era code uses
+/// bridge, and the <c>tkwait</c> forms real-world code uses
 /// (<c>tkwait visibility</c> flushes and returns — overlays are visible
 /// as soon as layout runs).
 /// </summary>

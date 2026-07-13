@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+
+    <!-- Keep the DEFAULT root namespace (DRAKON.Brix.TclBridge). The
+         CodeBrix.Platform XAML source generator (pulled in transitively via
+         TkCanvas) emits a GlobalStaticResources type into the project's root
+         namespace; giving this library its own namespace — rather than sharing
+         .Core's "DRAKON.Brix" — keeps that type unique so the heads don't hit a
+         duplicate-type conflict (CS0433). The .cs files declare their own
+         explicit namespaces (DRAKON.Brix.Drakon), so this does not affect them.
+         This is a plain logic library with no XAML, so it also does not define
+         the app-only HAS_CODEBRIX / HAS_CODEBRIX_WINUI constants. -->
+  </PropertyGroup>
+
+  <!-- The "talk to Tcl" layer: boots the unmodified DRAKON Editor Tcl on the
+       managed interpreter + TkCanvas toolkit. Kept as its own library (rather
+       than living in .Core) so it can be exercised directly by
+       DRAKON.Brix.TclBridge.Tests. TkCanvas transitively supplies the ported
+       TclTk engine, CodeBrix.Platform and SkiaSharp; TclTk.Extras supplies the
+       sqlite3 + pdf4tcl shims DRAKON needs to read .drn files. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\..\src\CodeBrix.Platform.TkCanvas\CodeBrix.Platform.TkCanvas.csproj" />
+    <ProjectReference Include="..\..\..\..\..\src\CodeBrix.Platform.TclTk.Extras\CodeBrix.Platform.TclTk.Extras.csproj" />
+  </ItemGroup>
+</Project>

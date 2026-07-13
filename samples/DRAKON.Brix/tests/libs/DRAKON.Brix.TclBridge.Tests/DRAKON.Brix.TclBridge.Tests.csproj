@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- xUnit.net v3 test projects are self-executing binaries and must build
+         as Exe; run via Microsoft.Testing.Platform, matching the CodeBrix
+         family test convention. -->
+    <OutputType>Exe</OutputType>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <!-- xUnit1051: tests intentionally use CancellationToken.None-style defaults -->
+    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\libs\DRAKON.Brix.TclBridge\DRAKON.Brix.TclBridge.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
+    <PackageReference Include="SilverAssertions.ApacheLicenseForever" Version="1.0.164.180" />
+    <PackageReference Include="xunit.v3" Version="3.2.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <!-- The library references only the managed SkiaSharp package (consuming
+         apps get the native asset from their CodeBrix.Platform Skia head). These
+         tests boot the TkCanvas toolkit headless on Linux and need the native
+         library directly. Keep the version in step with the toolkit's SkiaSharp pin. -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.150.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The bridge hosts CodeBrix.Platform.TclTk interpreters (which keep heavy
+         process-global state); run tests strictly sequentially so concurrent
+         interpreter creation cannot race/crash. -->
+    <None Update="xunit.runner.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

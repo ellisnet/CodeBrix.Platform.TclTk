@@ -8,7 +8,7 @@ namespace CodeBrix.Platform.TkCanvas;
 /// The interpreter-side bootstrap of the toolkit: sets the version globals
 /// and provides the packages classic Tcl/Tk programs demand before they draw
 /// anything. Run this on a CodeBrix.Platform.TclTk <see cref="Interpreter"/>
-/// BEFORE sourcing a Tcl/Tk application — programs like DRAKON Editor open
+/// BEFORE sourcing a Tcl/Tk application — such programs open
 /// with <c>package require Tk</c>/<c>Img</c> and a hard
 /// <c>$tcl_version &gt;= 8.6</c>/<c>$tk_version &gt;= 8.6</c> check that
 /// calls <c>exit</c> when unsatisfied.

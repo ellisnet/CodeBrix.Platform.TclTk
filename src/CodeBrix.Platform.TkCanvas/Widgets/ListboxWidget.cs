@@ -13,7 +13,7 @@ namespace CodeBrix.Platform.TkCanvas.Widgets;
 /// <summary>
 /// The classic Tk <c>listbox</c> widget: a vertically scrolled list of text
 /// lines with a selection, a sunken white field, and the yview/scrollcommand
-/// protocol. Supports the DRAKON-relevant surface — <c>insert</c>,
+/// protocol. Supports the consumer-relevant surface — <c>insert</c>,
 /// <c>delete</c>, <c>get</c>, <c>size</c>, <c>curselection</c>,
 /// <c>selection</c>, <c>see</c>, <c>activate</c>, <c>nearest</c>,
 /// <c>yview</c> — with the <c>&lt;&lt;ListboxSelect&gt;&gt;</c> virtual event

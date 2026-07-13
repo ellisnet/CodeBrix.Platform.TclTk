@@ -10,4 +10,10 @@
   <Project Path="src/DRAKON.Brix.MacOS/DRAKON.Brix.MacOS.csproj" />
   <Project Path="src/DRAKON.Brix.Win32Skia/DRAKON.Brix.Win32Skia.csproj" />
   <Project Path="src/DRAKON.Brix.WinWpfSkia/DRAKON.Brix.WinWpfSkia.csproj" />
+  <Folder Name="/Libraries/">
+    <Project Path="src/libs/DRAKON.Brix.TclBridge/DRAKON.Brix.TclBridge.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="tests/libs/DRAKON.Brix.TclBridge.Tests/DRAKON.Brix.TclBridge.Tests.csproj" />
+  </Folder>
 </Solution>

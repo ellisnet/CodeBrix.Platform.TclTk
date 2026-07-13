@@ -37,7 +37,7 @@ public sealed class AfterHandle
 /// the SYNCHRONOUS-FLUSH semantics of the Tk <c>update</c> command:
 /// <see cref="Update"/> / <see cref="UpdateIdleTasks"/> run all pending
 /// relayout, repaint, and due timer work NOW, on the calling thread, so
-/// geometry reads immediately afterwards see final values. DRAKON's
+/// geometry reads immediately afterwards see final values. A consumer's
 /// pervasive measure-then-place sequences depend on exactly this.
 /// </summary>
 public sealed class TkScheduler

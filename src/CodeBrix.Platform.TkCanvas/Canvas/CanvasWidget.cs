@@ -13,7 +13,7 @@ namespace CodeBrix.Platform.TkCanvas.Canvas;
 /// <summary>
 /// The Tk <c>canvas</c> widget on Skia — a port of the widget engine in Tk
 /// 8.6.16 tkCanvas.c over a retained display list of
-/// <see cref="ICanvasItem"/>s. Provides the full DRAKON-relevant subcommand
+/// <see cref="ICanvasItem"/>s. Provides the full consumer-relevant subcommand
 /// surface (<c>create coords itemconfigure itemcget delete raise lower bbox
 /// addtag gettags dtag find type move moveto scale canvasx canvasy xview
 /// yview scan bind focus</c>), the view transform with

@@ -94,8 +94,8 @@ public static class TkLayout
 
     /// <summary>
     /// Fires a <c>&lt;Configure&gt;</c> event for every displayed window
-    /// whose size changed since the last layout pass (DRAKON binds
-    /// <c>&lt;Configure&gt;</c> on its main view and PDF-export canvas).
+    /// whose size changed since the last layout pass (a consumer may bind
+    /// <c>&lt;Configure&gt;</c> on windows that need to learn their own size).
     /// Nothing fires when the tree has no event system yet.
     /// </summary>
     private static void FireConfigureEvents(TkWindow root)

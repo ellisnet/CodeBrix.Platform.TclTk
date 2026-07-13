@@ -406,7 +406,7 @@ public sealed class MenuWidget : WidgetBase
                 float textLeft = IsMenubar ? r.Left + HPad : r.Left + ArrowColumn;
                 float baseline = r.Top + VPad + metrics.Ascent;
 
-                // The entry image (-image, DRAKON's "-compound left" form):
+                // The entry image (-image, the "-compound left" form):
                 // drawn at the label position, pushing the label right.
                 Images.PhotoImage entryImage = ResolveEntryImage(entry);
                 if (entryImage != null && entryImage.Width > 0)

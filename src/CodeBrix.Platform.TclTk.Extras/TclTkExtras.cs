@@ -47,7 +47,7 @@ public static class TclTkExtras
     /// Registers the tclsqlite-compatible <c>sqlite3 NAME PATH</c> command and
     /// provides the <c>sqlite3</c> package. Databases opened through it use the
     /// PRAGMA-neutral plaintext path required for interchange of SQLite files
-    /// (such as DRAKON <c>.drn</c> files) with stock Tcl applications.
+    /// (such as application <c>.drn</c> files) with stock Tcl applications.
     /// </summary>
     /// <param name="interpreter">The interpreter to extend.</param>
     /// <param name="error">The failure detail when the result is not <see cref="ReturnCode.Ok"/>.</param>
@@ -83,7 +83,7 @@ public static class TclTkExtras
 
         // The namespace must exist before commands can be added under it, and the
         // pdf4tcl::paper_sizes / pdf4tcl::units arrays are plain Tcl variables that
-        // consumers read directly (DRAKON reads both).
+        // consumers read directly (a consumer may read both).
         Result setupResult = null;
         ReturnCode code = interpreter.EvaluateScript(BuildPdf4TclSetupScript(), ref setupResult);
         if (code != ReturnCode.Ok)

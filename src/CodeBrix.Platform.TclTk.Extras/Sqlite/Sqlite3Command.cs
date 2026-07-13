@@ -36,7 +36,7 @@ internal sealed class Sqlite3Command : Default
 
         // PRAGMA-neutral open: WAL and foreign-key enforcement stay OFF so the file
         // keeps the default rollback journal and no fingerprinting sidecars — required
-        // for .drn interchange with stock (tclsqlite-based) DRAKON Editor.
+        // for .drn interchange with stock (tclsqlite-based) Tcl applications.
         var options = new SqliteDatabaseOptions
         {
             UseWriteAheadLogging = false,

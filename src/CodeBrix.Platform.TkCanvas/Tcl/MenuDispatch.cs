@@ -25,7 +25,7 @@ internal static class MenuDispatch
                 return "";
 
             case "insert":
-                // DRAKON never inserts mid-menu; treat as append (index accepted, ignored).
+                // Mid-menu insert is not needed here; treat as append (index accepted, ignored).
                 if (words.Length < 4) { throw BridgeRegistrar.WrongArgs(path + " insert index type ?-option value ...?"); }
                 AddEntry(ctx, menu, words[3], BridgeRegistrar.ParseOptionPairs(words, 4));
                 return "";

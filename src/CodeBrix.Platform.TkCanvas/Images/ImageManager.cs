@@ -18,7 +18,7 @@ namespace CodeBrix.Platform.TkCanvas.Images;
 /// <see cref="WindowTree.Images"/>. Beyond files and base64 data, creation
 /// supports Tk's <c>-format window -data $widget</c> snapshot form by
 /// rendering the named window's subtree through <see cref="TkRenderer"/> —
-/// the path DRAKON's PNG export uses.
+/// the path a consumer's PNG export uses.
 /// </summary>
 public sealed class ImageManager
 {
