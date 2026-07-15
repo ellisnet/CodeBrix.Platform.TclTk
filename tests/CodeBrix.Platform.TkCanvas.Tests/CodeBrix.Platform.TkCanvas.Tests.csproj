@@ -20,7 +20,7 @@
          apps get the native asset from their CodeBrix.Platform Skia runtime
          head). The TESTS run headless on Linux and need the native library
          directly. Keep the version in step with the library's SkiaSharp pin. -->
-    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.150.0" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.150.1" />
   </ItemGroup>
 
   <ItemGroup>

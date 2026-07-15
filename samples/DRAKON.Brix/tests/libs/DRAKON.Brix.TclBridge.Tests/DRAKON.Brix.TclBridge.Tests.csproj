@@ -32,7 +32,7 @@
          apps get the native asset from their CodeBrix.Platform Skia head). These
          tests boot the TkCanvas toolkit headless on Linux and need the native
          library directly. Keep the version in step with the toolkit's SkiaSharp pin. -->
-    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.150.0" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.150.1" />
   </ItemGroup>
 
   <ItemGroup>

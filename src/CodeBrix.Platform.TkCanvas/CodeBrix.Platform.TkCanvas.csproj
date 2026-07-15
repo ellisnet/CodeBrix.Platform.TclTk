@@ -94,7 +94,7 @@
          Skia runtime heads resolve (see CodeBrix.Platform.Runtime.Skia.* 1.0.193.1124),
          so a consuming app never sees a SkiaSharp diamond conflict. Keep this in step
          with CodeBrix.Platform when bumping. -->
-    <PackageReference Include="SkiaSharp" Version="4.150.0" />
+    <PackageReference Include="SkiaSharp" Version="4.150.1" />
     <!-- CodeBrix.Imaging CORE (not .Drawing): decode/encode + raw pixel access only.
          TkCanvas does the pixel-to-SKBitmap bridge itself and remains the single
          owner of the SkiaSharp stack (.Drawing would drag a second SkiaSharp
@@ -107,7 +107,7 @@
          CodeBrix.Platform UI stack and its SkiaSharp XAML canvas directly. Keep
          both pinned in step with the platform release the family targets. -->
     <PackageReference Include="CodeBrix.Platform.ApacheLicenseForever" Version="1.0.193.1124" />
-    <PackageReference Include="CodeBrix.Platform.SkiaSharp.Views.MitLicenseForever" Version="4.150.0" />
+    <PackageReference Include="CodeBrix.Platform.SkiaSharp.Views.MitLicenseForever" Version="4.150.1" />
   </ItemGroup>
 
   <ItemGroup>
