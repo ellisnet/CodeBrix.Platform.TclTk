@@ -22,6 +22,6 @@
 
   <!-- EXACTLY ONE platform head package; all other packages come from DRAKON.Brix.Core -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.Platform.Runtime.Skia.Wpf.ApacheLicenseForever" Version="1.0.193.1124" />
+    <PackageReference Include="CodeBrix.Platform.Runtime.Skia.Wpf.ApacheLicenseForever" Version="1.0.196.385" />
   </ItemGroup>
 </Project>

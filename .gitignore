@@ -226,12 +226,12 @@ PublishScripts/
 *.nupkg
 # NuGet Symbol Packages
 *.snupkg
-# The packages folder can be ignored because of Package Restore
-**/[Pp]ackages/*
-# except build/, which is used as an MSBuild target.
-!**/[Pp]ackages/build/
-# Uncomment if necessary however generally it will be regenerated when needed
-#!**/[Pp]ackages/repositories.config
+# NOTE: the stock Visual Studio "**/[Pp]ackages/*" rule (for the legacy NuGet
+# packages.config restore folder) is intentionally OMITTED. This repo is SDK-style
+# (packages restore to the global ~/.nuget/packages, never a per-solution folder),
+# and it has a FIRST-PARTY SOURCE folder named "Packages" (the _Packages namespace:
+# Core.cs / Default.cs). That rule silently dropped those files from git, so fresh
+# clones / Windows builds failed with "_Packages could not be found". Do not re-add it.
 # NuGet v3's project.json files produces more ignorable files
 *.nuget.props
 *.nuget.targets

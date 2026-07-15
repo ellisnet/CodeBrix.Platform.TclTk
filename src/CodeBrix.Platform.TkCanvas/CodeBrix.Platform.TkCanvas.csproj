@@ -91,7 +91,7 @@
 
   <ItemGroup>
     <!-- SkiaSharp is pinned to the same major/version the current CodeBrix.Platform
-         Skia runtime heads resolve (see CodeBrix.Platform.Runtime.Skia.* 1.0.193.1124),
+         Skia runtime heads resolve (see CodeBrix.Platform.Runtime.Skia.*),
          so a consuming app never sees a SkiaSharp diamond conflict. Keep this in step
          with CodeBrix.Platform when bumping. -->
     <PackageReference Include="SkiaSharp" Version="4.150.1" />
