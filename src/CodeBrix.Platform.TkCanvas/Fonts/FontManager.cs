@@ -193,12 +193,81 @@ public sealed class FontManager
                     font.Bold ? SKFontStyleWeight.Bold : SKFontStyleWeight.Normal,
                     SKFontStyleWidth.Normal,
                     font.Italic ? SKFontStyleSlant.Italic : SKFontStyleSlant.Upright);
-            typeface = SKTypeface.FromFamilyName(family, style) ?? SKTypeface.Default;
+            typeface = ResolveTypeface(family, style);
             _typefaces[key] = typeface;
         }
 
         return new SKFont(typeface, PixelSize(font));
     }
+
+    /// <summary>
+    /// Resolves a mapped family name to a concrete Skia typeface, repairing the
+    /// one place Skia's platform backends diverge: the CSS generic
+    /// <c>monospace</c>.
+    /// <para>
+    /// Skia's fontconfig backend (Linux) understands the generic and returns a
+    /// real fixed-pitch face, but the DirectWrite (Windows) and CoreText (macOS)
+    /// backends do not — they silently fall back to the proportional system UI
+    /// font (Segoe UI on Windows), so a Tk app asking for <c>TkFixedFont</c> or
+    /// <c>Courier</c> would render in a variable-width font and lose all column
+    /// alignment. When the generic resolves to a non-fixed face we substitute the
+    /// first genuinely-installed monospace family for the host platform.
+    /// </para>
+    /// <para>
+    /// The generic is tried FIRST and kept whenever it already yields a
+    /// fixed-pitch face, so Linux behavior is byte-for-byte unchanged (the
+    /// substitution path is never entered there). <c>serif</c>/<c>sans-serif</c>
+    /// are left untouched: <c>sans-serif</c> already resolves to a sans face on
+    /// every backend, and there is no equally reliable oracle for detecting a
+    /// bad <c>serif</c> resolution.
+    /// </para>
+    /// </summary>
+    /// <param name="family">The mapped family name (a CSS generic or a real family).</param>
+    /// <param name="style">The requested weight/slant.</param>
+    /// <returns>A typeface (never null).</returns>
+    private static SKTypeface ResolveTypeface(string family, SKFontStyle style)
+    {
+        SKTypeface typeface = SKTypeface.FromFamilyName(family, style);
+
+        if (string.Equals(family, "monospace", StringComparison.Ordinal)
+                && (typeface == null || !typeface.IsFixedPitch))
+        {
+            foreach (string candidate in MonospaceFallbacks)
+            {
+                SKTypeface concrete = SKTypeface.FromFamilyName(candidate, style);
+                if (concrete != null && concrete.IsFixedPitch)
+                {
+                    return concrete;
+                }
+            }
+        }
+
+        return typeface ?? SKTypeface.Default;
+    }
+
+    /// <summary>
+    /// Concrete monospace families to try, in order, when the CSS generic
+    /// <c>monospace</c> does not resolve to a fixed-pitch face (Windows/macOS).
+    /// Each is verified as actually installed via
+    /// <see cref="SKTypeface.IsFixedPitch"/> before use, so families absent on a
+    /// given host are skipped rather than silently substituted. The list spans
+    /// the common Windows, macOS, and Linux monospace fonts; a host with none of
+    /// them falls through to Skia's default face.
+    /// </summary>
+    private static readonly string[] MonospaceFallbacks =
+    {
+        "Consolas",           // Windows (Vista+)
+        "Cascadia Mono",      // Windows Terminal / VS
+        "Courier New",        // Windows, macOS
+        "Lucida Console",     // Windows
+        "Menlo",              // macOS (10.6+)
+        "Monaco",             // macOS
+        "SF Mono",            // macOS
+        "DejaVu Sans Mono",   // Linux
+        "Liberation Mono",    // Linux
+        "Noto Sans Mono",     // Linux
+        "FreeMono",           // Linux
+    };
 
     /// <summary>
     /// Measures the advance width of <paramref name="text"/> — the analogue

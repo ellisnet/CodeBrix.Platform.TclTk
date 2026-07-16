@@ -271,8 +271,17 @@ public class TextWidgetTests
         int inset = 3; // borderwidth 1 + padx 1 + highlightthickness 0 = 2; +1 into the glyph
         var fonts = root.Tree.Fonts;
         var font = fonts.GetNamed("TkFixedFont");
-        int charWidth = fonts.Measure(font, "0");
         int lineHeight = fonts.Metrics(font).LineSpace;
+
+        // Aim the drag at the MIDDLE of the space glyph that follows "world" on
+        // line 2 ("world wide"), measured with the same FontManager the widget
+        // hit-tests against. Deriving the x from 5 * Measure("0") assumes a strict
+        // monospace grid; TkFixedFont resolves to different fonts across platforms
+        // (Linux vs Windows), so that grid drifts and the drag lands a column off.
+        // The gap-midpoint is unambiguous under any font's actual glyph advances.
+        int worldRight = fonts.Measure(font, "world");
+        int worldSpaceRight = fonts.Measure(font, "world ");
+        int dragX = inset + (worldRight + worldSpaceRight) / 2;
 
         //Act (click at the start of line 2, drag to after "world")
         int y = inset + lineHeight + lineHeight / 2;
@@ -283,9 +292,9 @@ public class TextWidgetTests
         root.Tree.FocusWindow.Should().Be(text.Window);
 
         //Act
-        root.Tree.PointerEvent(TkEventType.Motion, inset + 5 * charWidth + 1, y, 0,
+        root.Tree.PointerEvent(TkEventType.Motion, dragX, y, 0,
                 EventModifiers.Button1);
-        root.Tree.PointerEvent(TkEventType.ButtonRelease, inset + 5 * charWidth + 1, y, 1);
+        root.Tree.PointerEvent(TkEventType.ButtonRelease, dragX, y, 1);
 
         //Assert
         text.TagRanges("sel").Should().Equal(new[] { "2.0", "2.5" });

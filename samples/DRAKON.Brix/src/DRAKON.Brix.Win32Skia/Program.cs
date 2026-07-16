@@ -12,6 +12,7 @@ internal class Program
 
         var host = CodeBrixPlatformHostBuilder.Create()
             .App(() => new App())
+            .UseDirectSkiaCanvasMode() //Experimental setting for speeding up Skia canvas rendering
             .UseWindowsWin32()
             .Build();
 

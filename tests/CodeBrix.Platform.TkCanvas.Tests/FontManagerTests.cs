@@ -182,8 +182,13 @@ public class FontManagerTests
         //Arrange
         var fonts = new FontManager();
 
-        //Act
-        FontMetrics mono = fonts.Metrics(fonts.Parse("{DejaVu Sans Mono} 12"));
+        // TkFixedFont is the toolkit's standard fixed-pitch font (family
+        // "monospace"). FontManager resolves it to a genuinely monospace face on
+        // every OS — including Windows/macOS, whose Skia backends do NOT resolve
+        // the bare CSS generic "monospace" to a fixed-pitch font and would
+        // otherwise fall back to the proportional system UI font. So this must be
+        // fixed-pitch regardless of platform.
+        FontMetrics mono = fonts.Metrics(fonts.GetNamed("TkFixedFont"));
 
         //Assert
         mono.IsFixed.Should().BeTrue();

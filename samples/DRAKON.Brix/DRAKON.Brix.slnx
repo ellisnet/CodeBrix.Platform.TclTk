@@ -13,6 +13,11 @@
   <Folder Name="/Libraries/">
     <Project Path="src/libs/DRAKON.Brix.TclBridge/DRAKON.Brix.TclBridge.csproj" />
   </Folder>
+  <Folder Name="/TclTk/">
+    <Project Path="../../src/CodeBrix.Platform.TclTk.Extras/CodeBrix.Platform.TclTk.Extras.csproj" />
+    <Project Path="../../src/CodeBrix.Platform.TclTk/CodeBrix.Platform.TclTk.csproj" />
+    <Project Path="../../src/CodeBrix.Platform.TkCanvas/CodeBrix.Platform.TkCanvas.csproj" />
+  </Folder>
   <Folder Name="/Tests/">
     <Project Path="tests/libs/DRAKON.Brix.TclBridge.Tests/DRAKON.Brix.TclBridge.Tests.csproj" />
   </Folder>

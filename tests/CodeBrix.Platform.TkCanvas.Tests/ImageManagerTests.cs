@@ -110,7 +110,10 @@ public class ImageManagerTests
         img.Width.Should().Be(width);
         img.Height.Should().Be(height);
 
-        string expected = File.ReadAllText(AssetPath(gifName + ".data.txt")).TrimEnd('\n');
+        // Trim BOTH CR and LF: the fixture is captured on Linux (LF only), but a
+        // Windows git checkout rewrites the trailing newline to CRLF, so a bare
+        // TrimEnd('\n') would leave a stray '\r' and never match img.Data().
+        string expected = File.ReadAllText(AssetPath(gifName + ".data.txt")).TrimEnd('\r', '\n');
         img.Data().Should().Be(expected);
     }
 
