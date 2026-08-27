@@ -388,4 +388,236 @@ public class TextWidgetTests
             LastY = y;
         }
     }
+
+    // ------------------------------------------------------------------
+    // Horizontal scrolling (-wrap none). Fractions probed on real wish
+    // 8.6 with a 10-character view over a 40-character line: units are
+    // character widths, a page is the view less two characters, moveto
+    // rounds to the pixel, and "see" scrolls minimally within a third of
+    // the view of an edge and centres otherwise.
+    // ------------------------------------------------------------------
+
+    private static TextWidget CreateNoWrap(out TkWindow root)
+    {
+        root = TkWindow.CreateRoot();
+        TkWindow window = root.CreateChild("t");
+        var text = new TextWidget(window);
+        text.Configure(new Dictionary<string, string>
+        {
+            { "-wrap", "none" }, { "-width", "10" }, { "-height", "3" },
+            { "-borderwidth", "0" }, { "-padx", "0" }, { "-highlightthickness", "0" },
+        });
+        PackLayout.Configure(window, new PackOptions());
+        TkLayout.Update(root);
+        text.Insert("1.0", new string('0', 40) + "\nshort");
+        return text;
+    }
+
+    [Fact]
+    public void Xview_is_whole_width_when_every_line_fits()
+    {
+        //Arrange
+        TkWindow root;
+        TextWidget text = CreateFilled(out root);
+
+        //Act
+        double first, last;
+        text.XViewFractions(out first, out last);
+
+        //Assert — wish: 0.0 1.0
+        first.Should().Be(0.0);
+        last.Should().Be(1.0);
+    }
+
+    [Fact]
+    public void Xview_fractions_cover_the_view_over_the_widest_line()
+    {
+        //Arrange
+        TkWindow root;
+        TextWidget text = CreateNoWrap(out root);
+
+        //Act
+        double first, last;
+        text.XViewFractions(out first, out last);
+
+        //Assert — wish: 0.0 0.25
+        first.Should().Be(0.0);
+        last.Should().Be(0.25);
+    }
+
+    [Fact]
+    public void Xview_moveto_scrolls_to_the_fraction()
+    {
+        //Arrange
+        TkWindow root;
+        TextWidget text = CreateNoWrap(out root);
+
+        //Act
+        text.XViewMoveTo(0.5);
+        double first, last;
+        text.XViewFractions(out first, out last);
+
+        //Assert — wish: 0.5 0.75
+        first.Should().Be(0.5);
+        last.Should().Be(0.75);
+    }
+
+    [Fact]
+    public void Xview_scroll_units_are_characters_and_pages_are_the_view_less_two()
+    {
+        //Arrange
+        TkWindow root;
+        TextWidget text = CreateNoWrap(out root);
+        double first, last;
+
+        //Act / Assert — wish: 3 units -> 0.075 0.325
+        text.XViewScroll(3, false);
+        text.XViewFractions(out first, out last);
+        first.Should().Be(0.075);
+        last.Should().Be(0.325);
+
+        //  wish: from 0, 1 page -> 0.2 0.45; another -> 0.4 0.65; back one -> 0.2 0.45
+        text.XViewMoveTo(0);
+        text.XViewScroll(1, true);
+        text.XViewFractions(out first, out last);
+        first.Should().Be(0.2);
+        last.Should().Be(0.45);
+        text.XViewScroll(1, true);
+        text.XViewFractions(out first, out last);
+        first.Should().Be(0.4);
+        last.Should().Be(0.65);
+        text.XViewScroll(-1, true);
+        text.XViewFractions(out first, out last);
+        first.Should().Be(0.2);
+        last.Should().Be(0.45);
+    }
+
+    [Fact]
+    public void Xview_scroll_clamps_at_both_ends()
+    {
+        //Arrange
+        TkWindow root;
+        TextWidget text = CreateNoWrap(out root);
+        double first, last;
+
+        //Act / Assert — wish: 0.75 1.0 then 0.0 0.25
+        text.XViewScroll(100, false);
+        text.XViewFractions(out first, out last);
+        first.Should().Be(0.75);
+        last.Should().Be(1.0);
+        text.XViewScroll(-100, false);
+        text.XViewFractions(out first, out last);
+        first.Should().Be(0.0);
+        last.Should().Be(0.25);
+    }
+
+    [Fact]
+    public void See_scrolls_horizontally_minimally_near_an_edge_and_centres_when_far()
+    {
+        //Arrange
+        TkWindow root;
+        TextWidget text = CreateNoWrap(out root);
+        double first, last;
+
+        //Act / Assert — wish: see 1.12 from 0 -> 0.075 (just enough)
+        text.See("1.12");
+        text.XViewFractions(out first, out last);
+        first.Should().Be(0.075);
+
+        //  wish: see 1.25 from 0 -> 0.5 (centred)
+        text.XViewMoveTo(0);
+        text.See("1.25");
+        text.XViewFractions(out first, out last);
+        first.Should().Be(0.5);
+
+        //  wish: see 1.27 from 0.75 -> 0.675 (just enough, leftwards)
+        text.XViewMoveTo(0.75);
+        text.See("1.27");
+        text.XViewFractions(out first, out last);
+        first.Should().Be(0.675);
+
+        //  wish: see 1.5 from 0.75 -> 0.0 (centred, clamped)
+        text.XViewMoveTo(0.75);
+        text.See("1.5");
+        text.XViewFractions(out first, out last);
+        first.Should().Be(0.0);
+
+        //  wish: see 1.39 from 0 -> 0.75 1.0 (centred, clamped at the end)
+        text.XViewMoveTo(0);
+        text.See("1.39");
+        text.XViewFractions(out first, out last);
+        first.Should().Be(0.75);
+        last.Should().Be(1.0);
+    }
+
+    [Fact]
+    public void See_does_not_scroll_horizontally_when_the_widest_line_fits()
+    {
+        //Arrange
+        TkWindow root;
+        TextWidget text = CreateFilled(out root);
+
+        //Act
+        text.See("2.9");
+        double first, last;
+        text.XViewFractions(out first, out last);
+
+        //Assert
+        first.Should().Be(0.0);
+        last.Should().Be(1.0);
+    }
+
+    [Fact]
+    public void Pixel_index_lookup_accounts_for_the_horizontal_offset()
+    {
+        //Arrange — 0.25 of 40 chars = 10 chars scrolled off, then 3 more units.
+        TkWindow root;
+        TextWidget text = CreateNoWrap(out root);
+        text.XViewMoveTo(0.25);
+
+        //Act
+        string atLeftEdge = text.Index("@0,0");
+        text.XViewScroll(3, false);
+        string afterUnits = text.Index("@0,0");
+
+        //Assert — wish: @0,0 = 1.10, then 1.13
+        atLeftEdge.Should().Be("1.10");
+        afterUnits.Should().Be("1.13");
+    }
+
+    [Fact]
+    public void Switching_to_wrap_char_resets_the_view_to_whole_width()
+    {
+        //Arrange
+        TkWindow root;
+        TextWidget text = CreateNoWrap(out root);
+        text.XViewMoveTo(0.5);
+
+        //Act
+        text.Configure(new Dictionary<string, string> { { "-wrap", "char" } });
+        TkLayout.Update(root);
+        double first, last;
+        text.XViewFractions(out first, out last);
+
+        //Assert — wish: 0.0 1.0
+        first.Should().Be(0.0);
+        last.Should().Be(1.0);
+    }
+
+    [Fact]
+    public void Xscroll_event_reports_the_fractions_on_horizontal_scrolls()
+    {
+        //Arrange
+        TkWindow root;
+        TextWidget text = CreateNoWrap(out root);
+        double seenFirst = -1, seenLast = -1;
+        text.XScrollChanged += (first, last) => { seenFirst = first; seenLast = last; };
+
+        //Act
+        text.XViewMoveTo(0.5);
+
+        //Assert
+        seenFirst.Should().Be(0.5);
+        seenLast.Should().Be(0.75);
+    }
 }

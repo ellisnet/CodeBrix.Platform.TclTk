@@ -116,9 +116,39 @@ internal static class WindowCommands
                 }
                 return "";
 
-            case "protocol":
             case "minsize":
+                if (!isRoot && words.Length >= 5)
+                {
+                    wm.SetMinSize(window, ParseIntOrDefault(words[3], 1), ParseIntOrDefault(words[4], 1));
+                    return "";
+                }
+                if (!isRoot)
+                {
+                    OverlayState minOverlay = wm.GetOverlay(window);
+                    return minOverlay.MinWidth.ToString(CultureInfo.InvariantCulture) + " " +
+                        minOverlay.MinHeight.ToString(CultureInfo.InvariantCulture);
+                }
+                return "1 1";
             case "maxsize":
+                if (!isRoot && words.Length >= 5)
+                {
+                    wm.SetMaxSize(window, ParseIntOrDefault(words[3], 1), ParseIntOrDefault(words[4], 1));
+                    return "";
+                }
+                {
+                    TkWindow rootWindow = window.Tree.Root;
+                    int maxW = rootWindow.Width;
+                    int maxH = rootWindow.Height;
+                    if (!isRoot)
+                    {
+                        OverlayState maxOverlay = wm.GetOverlay(window);
+                        maxW = maxOverlay.MaxWidth ?? maxW;
+                        maxH = maxOverlay.MaxHeight ?? maxH;
+                    }
+                    return maxW.ToString(CultureInfo.InvariantCulture) + " " +
+                        maxH.ToString(CultureInfo.InvariantCulture);
+                }
+            case "protocol":
             case "attributes":
             case "iconphoto":
             case "iconbitmap":
@@ -360,5 +390,11 @@ internal static class WindowCommands
             case "1": case "true": case "yes": case "on": return true;
             default: return false;
         }
+    }
+
+    private static int ParseIntOrDefault(string text, int fallback)
+    {
+        int value;
+        return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out value) ? value : fallback;
     }
 }

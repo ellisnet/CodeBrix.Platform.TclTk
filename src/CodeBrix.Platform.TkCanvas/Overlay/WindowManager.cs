@@ -21,12 +21,43 @@ namespace CodeBrix.Platform.TkCanvas.Overlay;
 /// </summary>
 public sealed class WindowManager
 {
+    /// <summary>
+    /// The edge(s) of an overlay frame under the pointer, for interactive
+    /// resizing — corners combine two edges. <see cref="HitTestResizeEdge"/>
+    /// reports it; a host can use it for cursor feedback.
+    /// </summary>
+    [Flags]
+    public enum ResizeEdge
+    {
+        /// <summary>Not on a resize band.</summary>
+        None = 0,
+        /// <summary>The left frame edge.</summary>
+        Left = 1,
+        /// <summary>The right frame edge.</summary>
+        Right = 2,
+        /// <summary>The top frame edge.</summary>
+        Top = 4,
+        /// <summary>The bottom frame edge.</summary>
+        Bottom = 8,
+    }
+
+    /// <summary>The width of the resize band just inside each frame edge, in pixels.</summary>
+    public const int ResizeBand = 6;
+
     private readonly WindowTree _tree;
     private readonly List<OverlayState> _overlays = new List<OverlayState>();
 
     private OverlayState _dragging;
     private int _dragOffsetX;
     private int _dragOffsetY;
+    private OverlayState _resizing;
+    private ResizeEdge _resizeEdge;
+    private int _resizePressX;
+    private int _resizePressY;
+    private int _resizeStartX;
+    private int _resizeStartY;
+    private int _resizeStartWidth;
+    private int _resizeStartHeight;
     private string _rootTitle = "";
 
     internal WindowManager(WindowTree tree)
@@ -226,6 +257,107 @@ public sealed class WindowManager
         overlay.ResizableHeight = height;
     }
 
+    /// <summary>Sets the minimum user-resize content size — <c>wm minsize</c>.</summary>
+    /// <param name="window">The overlay toplevel.</param>
+    /// <param name="width">The minimum content width.</param>
+    /// <param name="height">The minimum content height.</param>
+    public void SetMinSize(TkWindow window, int width, int height)
+    {
+        OverlayState overlay = RequireOverlay(window);
+        overlay.MinWidth = (width < 1) ? 1 : width;
+        overlay.MinHeight = (height < 1) ? 1 : height;
+    }
+
+    /// <summary>Sets the maximum user-resize content size — <c>wm maxsize</c>.</summary>
+    /// <param name="window">The overlay toplevel.</param>
+    /// <param name="width">The maximum content width.</param>
+    /// <param name="height">The maximum content height.</param>
+    public void SetMaxSize(TkWindow window, int width, int height)
+    {
+        OverlayState overlay = RequireOverlay(window);
+        overlay.MaxWidth = (width < 1) ? 1 : width;
+        overlay.MaxHeight = (height < 1) ? 1 : height;
+    }
+
+    /// <summary>
+    /// The resize edge(s) of the topmost visible overlay whose frame contains
+    /// the point, honouring <c>wm resizable</c> per axis; None when the point
+    /// is not on a resize band (or the overlay has no chrome).
+    /// </summary>
+    /// <param name="rootX">The x position in root coordinates.</param>
+    /// <param name="rootY">The y position in root coordinates.</param>
+    /// <returns>The edge flags.</returns>
+    public ResizeEdge HitTestResizeEdge(int rootX, int rootY)
+    {
+        for (int i = _overlays.Count - 1; i >= 0; i--)
+        {
+            OverlayState overlay = _overlays[i];
+            if (overlay.Withdrawn || overlay.Window.IsDestroyed) { continue; }
+            SKRectI frame = overlay.FrameRect;
+            if (rootX < frame.Left || rootX >= frame.Right
+                    || rootY < frame.Top || rootY >= frame.Bottom)
+            {
+                continue;
+            }
+            return ResizeEdgeOf(overlay, rootX, rootY);
+        }
+        return ResizeEdge.None;
+    }
+
+    private static ResizeEdge ResizeEdgeOf(OverlayState overlay, int rootX, int rootY)
+    {
+        if (overlay.OverrideRedirect) { return ResizeEdge.None; }
+        SKRectI frame = overlay.FrameRect;
+        ResizeEdge edge = ResizeEdge.None;
+        if (overlay.ResizableWidth)
+        {
+            if (rootX < frame.Left + ResizeBand) { edge |= ResizeEdge.Left; }
+            else if (rootX >= frame.Right - ResizeBand) { edge |= ResizeEdge.Right; }
+        }
+        if (overlay.ResizableHeight)
+        {
+            if (rootY < frame.Top + ResizeBand) { edge |= ResizeEdge.Top; }
+            else if (rootY >= frame.Bottom - ResizeBand) { edge |= ResizeEdge.Bottom; }
+        }
+        return edge;
+    }
+
+    private void ResizeTo(int rootX, int rootY)
+    {
+        OverlayState overlay = _resizing;
+        TkWindow root = _tree.Root;
+        int dx = rootX - _resizePressX;
+        int dy = rootY - _resizePressY;
+        int width = _resizeStartWidth;
+        int height = _resizeStartHeight;
+        if ((_resizeEdge & ResizeEdge.Right) != 0) { width += dx; }
+        else if ((_resizeEdge & ResizeEdge.Left) != 0) { width -= dx; }
+        if ((_resizeEdge & ResizeEdge.Bottom) != 0) { height += dy; }
+        else if ((_resizeEdge & ResizeEdge.Top) != 0) { height -= dy; }
+
+        int maxWidth = overlay.MaxWidth ?? root.Width;
+        int maxHeight = overlay.MaxHeight ?? root.Height;
+        if (width > maxWidth) { width = maxWidth; }
+        if (height > maxHeight) { height = maxHeight; }
+        if (width < overlay.MinWidth) { width = overlay.MinWidth; }
+        if (height < overlay.MinHeight) { height = overlay.MinHeight; }
+        if (width < 1) { width = 1; }
+        if (height < 1) { height = 1; }
+
+        TkWindow window = overlay.Window;
+        if ((_resizeEdge & ResizeEdge.Left) != 0) { window.X = _resizeStartX + (_resizeStartWidth - width); }
+        if ((_resizeEdge & ResizeEdge.Top) != 0) { window.Y = _resizeStartY + (_resizeStartHeight - height); }
+        if (overlay.GeometryX.HasValue) { overlay.GeometryX = window.X; }
+        if (overlay.GeometryY.HasValue) { overlay.GeometryY = window.Y; }
+        overlay.GeometryWidth = width;
+        overlay.GeometryHeight = height;
+        window.Width = width;
+        window.Height = height;
+        ClampOverlay(overlay);
+        _tree.NotifyGeometryChanged();
+        RequestRepaint();
+    }
+
     /// <summary>
     /// Captures all input to a window's subtree — the Tcl <c>grab</c>
     /// command, the modality mechanism for overlay dialogs.
@@ -284,6 +416,22 @@ public sealed class WindowManager
     /// </summary>
     internal bool InterceptPointer(TkEventType type, int rootX, int rootY, int button)
     {
+        if (_resizing != null)
+        {
+            if (type == TkEventType.Motion)
+            {
+                ResizeTo(rootX, rootY);
+                return true;
+            }
+            if (type == TkEventType.ButtonRelease)
+            {
+                ResizeTo(rootX, rootY);
+                _resizing = null;
+                _resizeEdge = ResizeEdge.None;
+                return true;
+            }
+            return true;
+        }
         if (_dragging != null)
         {
             if (type == TkEventType.Motion)
@@ -339,6 +487,23 @@ public sealed class WindowManager
                 return true;
             }
 
+            // Resize bands just inside the frame edges (corners combine two),
+            // honouring wm resizable per axis; the top band overlaps the title
+            // bar's first pixels, as with a real window manager.
+            ResizeEdge edge = ResizeEdgeOf(overlay, rootX, rootY);
+            if (edge != ResizeEdge.None)
+            {
+                _resizing = overlay;
+                _resizeEdge = edge;
+                _resizePressX = rootX;
+                _resizePressY = rootY;
+                _resizeStartX = overlay.Window.X;
+                _resizeStartY = overlay.Window.Y;
+                _resizeStartWidth = overlay.Window.Width;
+                _resizeStartHeight = overlay.Window.Height;
+                return true;
+            }
+
             SKRectI titleBar = overlay.TitleBarRect;
             if (rootX >= titleBar.Left && rootX < titleBar.Right
                     && rootY >= titleBar.Top && rootY < titleBar.Bottom)
@@ -358,6 +523,7 @@ public sealed class WindowManager
     /// <summary>Removes a destroyed toplevel and its transients from the stack.</summary>
     internal void WindowDestroyed(TkWindow window)
     {
+        if (_resizing != null && _resizing.Window == window) { _resizing = null; _resizeEdge = ResizeEdge.None; }
         OverlayState overlay = window.Overlay;
         if (overlay == null) { return; }
 

@@ -307,4 +307,165 @@ public class WindowManagerTests
         label.Y.Should().Be(0);
         root.Tree.HitTest(50 + 40, 50 + 10).Should().Be(label);
     }
+
+    // ------------------------------------------------------------------
+    // Interactive resizing: a press on the band just inside a frame edge
+    // (corners combine two) resizes the overlay; wm resizable masks axes;
+    // wm minsize / maxsize clamp; left/top edges move the origin.
+    // ------------------------------------------------------------------
+
+    private static void Drag(TkWindow root, int fromX, int fromY, int dx, int dy)
+    {
+        root.Tree.PointerEvent(TkEventType.ButtonPress, fromX, fromY, 1);
+        root.Tree.PointerEvent(TkEventType.Motion, fromX + dx, fromY + dy, 0, EventModifiers.Button1);
+        root.Tree.PointerEvent(TkEventType.ButtonRelease, fromX + dx, fromY + dy, 1);
+    }
+
+    [Fact]
+    public void Right_edge_drag_widens_the_overlay_in_place()
+    {
+        //Arrange
+        TkWindow root = CreateRoot();
+        TkWindow dialog = CreateDialog(root, "dlg", 100, 60, 50, 50);
+        OverlayState overlay = root.Tree.WindowManager.GetOverlay(dialog);
+        SkiaSharp.SKRectI frame = overlay.FrameRect;
+
+        //Act
+        Drag(root, frame.Right - 2, frame.Top + 30, 30, 0);
+
+        //Assert
+        dialog.Width.Should().Be(130);
+        dialog.Height.Should().Be(60);
+        dialog.X.Should().Be(50);
+        dialog.Y.Should().Be(50);
+        overlay.GeometryWidth.Should().Be(130);
+    }
+
+    [Fact]
+    public void Bottom_right_corner_drag_resizes_both_axes()
+    {
+        //Arrange
+        TkWindow root = CreateRoot();
+        TkWindow dialog = CreateDialog(root, "dlg", 100, 60, 50, 50);
+        OverlayState overlay = root.Tree.WindowManager.GetOverlay(dialog);
+        SkiaSharp.SKRectI frame = overlay.FrameRect;
+
+        //Act
+        Drag(root, frame.Right - 2, frame.Bottom - 2, 20, 15);
+
+        //Assert
+        dialog.Width.Should().Be(120);
+        dialog.Height.Should().Be(75);
+        dialog.X.Should().Be(50);
+        dialog.Y.Should().Be(50);
+    }
+
+    [Fact]
+    public void Left_and_top_edge_drags_move_the_origin_while_resizing()
+    {
+        //Arrange
+        TkWindow root = CreateRoot();
+        TkWindow dialog = CreateDialog(root, "dlg", 100, 60, 50, 50);
+        OverlayState overlay = root.Tree.WindowManager.GetOverlay(dialog);
+        SkiaSharp.SKRectI frame = overlay.FrameRect;
+
+        //Act — left edge outwards by 20, then the top edge (the first pixels
+        //  of the title bar) upwards by 10.
+        Drag(root, frame.Left + 1, frame.Top + 30, -20, 0);
+        frame = overlay.FrameRect;
+        Drag(root, frame.Left + 40, frame.Top + 1, 0, -10);
+
+        //Assert
+        dialog.Width.Should().Be(120);
+        dialog.X.Should().Be(30);
+        dialog.Height.Should().Be(70);
+        dialog.Y.Should().Be(40);
+    }
+
+    [Fact]
+    public void Wm_resizable_false_disables_that_axis_only()
+    {
+        //Arrange
+        TkWindow root = CreateRoot();
+        TkWindow dialog = CreateDialog(root, "dlg", 100, 60, 50, 50);
+        root.Tree.WindowManager.SetResizable(dialog, false, true);
+        OverlayState overlay = root.Tree.WindowManager.GetOverlay(dialog);
+        SkiaSharp.SKRectI frame = overlay.FrameRect;
+
+        //Act — a right-edge drag is inert; a bottom-edge drag still works.
+        Drag(root, frame.Right - 2, frame.Top + 30, 30, 0);
+        Drag(root, frame.Left + 40, frame.Bottom - 2, 0, 25);
+
+        //Assert
+        dialog.Width.Should().Be(100);
+        dialog.Height.Should().Be(85);
+        root.Tree.WindowManager.HitTestResizeEdge(frame.Right - 2, frame.Top + 30)
+            .Should().Be(WindowManager.ResizeEdge.None);
+    }
+
+    [Fact]
+    public void Wm_minsize_and_maxsize_clamp_interactive_resizing()
+    {
+        //Arrange
+        TkWindow root = CreateRoot();
+        TkWindow dialog = CreateDialog(root, "dlg", 100, 60, 50, 50);
+        root.Tree.WindowManager.SetMinSize(dialog, 80, 40);
+        root.Tree.WindowManager.SetMaxSize(dialog, 150, 90);
+        OverlayState overlay = root.Tree.WindowManager.GetOverlay(dialog);
+        SkiaSharp.SKRectI frame = overlay.FrameRect;
+
+        //Act — shrink far past the minimum, then grow far past the maximum.
+        Drag(root, frame.Right - 2, frame.Bottom - 2, -70, -50);
+        int minWidth = dialog.Width;
+        int minHeight = dialog.Height;
+        frame = overlay.FrameRect;
+        Drag(root, frame.Right - 2, frame.Bottom - 2, 200, 200);
+
+        //Assert
+        minWidth.Should().Be(80);
+        minHeight.Should().Be(40);
+        dialog.Width.Should().Be(150);
+        dialog.Height.Should().Be(90);
+    }
+
+    [Fact]
+    public void Resize_band_hit_test_reports_edges_and_corners()
+    {
+        //Arrange
+        TkWindow root = CreateRoot();
+        TkWindow dialog = CreateDialog(root, "dlg", 100, 60, 50, 50);
+        OverlayState overlay = root.Tree.WindowManager.GetOverlay(dialog);
+        SkiaSharp.SKRectI frame = overlay.FrameRect;
+        WindowManager wm = root.Tree.WindowManager;
+
+        //Act / Assert
+        wm.HitTestResizeEdge(frame.Left + 1, frame.Top + 30).Should().Be(WindowManager.ResizeEdge.Left);
+        wm.HitTestResizeEdge(frame.Right - 1, frame.Bottom - 1)
+            .Should().Be(WindowManager.ResizeEdge.Right | WindowManager.ResizeEdge.Bottom);
+        wm.HitTestResizeEdge(frame.Left + 40, frame.Top + 30).Should().Be(WindowManager.ResizeEdge.None);
+        wm.HitTestResizeEdge(5, 5).Should().Be(WindowManager.ResizeEdge.None);
+    }
+
+    [Fact]
+    public void Resize_presses_do_not_reach_tk_bindings()
+    {
+        //Arrange
+        TkWindow root = CreateRoot();
+        TkWindow dialog = CreateDialog(root, "dlg", 100, 60, 50, 50);
+        var log = new List<string>();
+        root.Tree.Bindings.Bind("all", "<ButtonPress-1>", e =>
+        {
+            log.Add(e.Window.PathName);
+            return DispatchResult.Continue;
+        });
+        OverlayState overlay = root.Tree.WindowManager.GetOverlay(dialog);
+        SkiaSharp.SKRectI frame = overlay.FrameRect;
+
+        //Act
+        Drag(root, frame.Right - 2, frame.Bottom - 2, 10, 10);
+
+        //Assert
+        log.Should().BeEmpty();
+        dialog.Width.Should().Be(110);
+    }
 }

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using CodeBrix.Platform.TclTk._Components.Public;
 using CodeBrix.Platform.TkCanvas.Canvas;
 using CodeBrix.Platform.TkCanvas.Events;
+using CodeBrix.Platform.TkCanvas.Overlay;
 using CodeBrix.Platform.TkCanvas.Tcl;
 using CodeBrix.Platform.TkCanvas.Widgets;
 using CodeBrix.Platform.TkCanvas.Windowing;
@@ -589,5 +590,62 @@ public class TkTclBridgeTests : IDisposable
 
         Eval(".t delete 1.0 1.6");
         Eval(".t get 1.0 {1.0 lineend}").Should().Be("world");
+    }
+
+    [Fact]
+    public void Text_xview_scrolls_horizontally_under_wrap_none()
+    {
+        // Byte shapes probed on wish 8.6 (10-char view over a 40-char line).
+        Eval("text .t -wrap none -width 10 -height 3 -borderwidth 0 -padx 0 -highlightthickness 0");
+        Eval("pack .t");
+        Eval(".t insert end \"0123456789012345678901234567890123456789\\nshort\"");
+        Eval("update");
+        Eval(".t xview").Should().Be("0.0 0.25");
+        Eval(".t xview moveto 0.5");
+        Eval(".t xview").Should().Be("0.5 0.75");
+        Eval(".t xview moveto 0");
+        Eval(".t xview scroll 3 units");
+        Eval(".t xview").Should().Be("0.075 0.325");
+        Eval(".t xview moveto 0");
+        Eval(".t xview scroll 1 pages");
+        Eval(".t xview").Should().Be("0.2 0.45");
+        Eval(".t see 1.39");
+        Eval(".t xview").Should().Be("0.75 1.0");
+        Eval(".t index @0,0").Should().Be("1.30");
+        Eval(".t configure -wrap char");
+        Eval("update");
+        Eval(".t xview").Should().Be("0.0 1.0");
+    }
+
+    [Fact]
+    public void Text_xscrollcommand_fires_with_the_horizontal_fractions()
+    {
+        Eval("set ::xs {}");
+        Eval("proc xs {first last} { set ::xs [list $first $last] }");
+        Eval("text .t -wrap none -width 10 -height 3 -borderwidth 0 -padx 0 -highlightthickness 0 -xscrollcommand xs");
+        Eval("pack .t");
+        Eval(".t insert end \"0123456789012345678901234567890123456789\"");
+        Eval("update");
+        Eval(".t xview moveto 0.5");
+        Eval("update");
+        Eval("set ::xs").Should().Be("0.5 0.75");
+    }
+
+    [Fact]
+    public void Wm_minsize_maxsize_and_resizable_round_trip_on_a_toplevel()
+    {
+        Eval("toplevel .dlg");
+        Eval("wm minsize .dlg").Should().Be("1 1");
+        Eval("wm minsize .dlg 120 80");
+        Eval("wm minsize .dlg").Should().Be("120 80");
+        Eval("wm maxsize .dlg 640 480");
+        Eval("wm maxsize .dlg").Should().Be("640 480");
+        Eval("wm resizable .dlg 0 1");
+        OverlayState overlay = _root.Tree.WindowManager.Overlays[0];
+        overlay.Window.PathName.Should().Be(".dlg");
+        overlay.MinWidth.Should().Be(120);
+        overlay.MaxHeight.Should().Be(480);
+        overlay.ResizableWidth.Should().BeFalse();
+        overlay.ResizableHeight.Should().BeTrue();
     }
 }

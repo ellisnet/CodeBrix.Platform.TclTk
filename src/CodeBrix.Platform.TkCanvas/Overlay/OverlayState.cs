@@ -41,6 +41,18 @@ public sealed class OverlayState
     /// <summary>Whether the user may resize vertically (<c>wm resizable</c>).</summary>
     public bool ResizableHeight { get; set; } = true;
 
+    /// <summary>The minimum content width the user may resize to (<c>wm minsize</c>); 1 by default, as Tk.</summary>
+    public int MinWidth { get; set; } = 1;
+
+    /// <summary>The minimum content height the user may resize to (<c>wm minsize</c>); 1 by default, as Tk.</summary>
+    public int MinHeight { get; set; } = 1;
+
+    /// <summary>The maximum content width the user may resize to (<c>wm maxsize</c>), or null for the root's width.</summary>
+    public int? MaxWidth { get; set; }
+
+    /// <summary>The maximum content height the user may resize to (<c>wm maxsize</c>), or null for the root's height.</summary>
+    public int? MaxHeight { get; set; }
+
     /// <summary>
     /// The window this overlay is transient for (<c>wm transient</c>): it
     /// stacks above its master and is destroyed with it. Null when not

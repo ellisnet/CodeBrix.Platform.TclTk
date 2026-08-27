@@ -339,7 +339,7 @@ internal static class WidgetDispatch
                 return TextYView(text, words);
 
             case "xview":
-                return "0 1";
+                return TextXView(text, words);
 
             case "focus":
                 text.Window.Tree.SetFocus(text.Window);
@@ -442,6 +442,30 @@ internal static class WidgetDispatch
         }
 
         // "yview index" — scroll the line into view at the top.
+        text.See(words[2]);
+        return "";
+    }
+
+    private static string TextXView(TextWidget text, string[] words)
+    {
+        if (words.Length == 2)
+        {
+            double first;
+            double last;
+            text.XViewFractions(out first, out last);
+            return TclString.FormatDouble(first) + " " + TclString.FormatDouble(last);
+        }
+        if (words[2] == "moveto" && words.Length >= 4)
+        {
+            text.XViewMoveTo(ParseDouble(words[3]));
+            return "";
+        }
+        if (words[2] == "scroll" && words.Length >= 5)
+        {
+            text.XViewScroll(ParseInt(words[3]), words[4].StartsWith("page", StringComparison.Ordinal));
+            return "";
+        }
+        // "xview index" — scroll the index into view.
         text.See(words[2]);
         return "";
     }

@@ -63,6 +63,10 @@ public sealed class TextWidget : IWidget, ITextInputTarget
     private List<DisplaySegment> _display;
     private int _displayWidth = -1;
     private int _topDisplayLine;
+    /// <summary>Horizontal scroll offset in pixels (only ever non-zero when the widest display line is wider than the view).</summary>
+    private int _xOffset;
+    /// <summary>The widest display line in pixels, rebuilt with <see cref="DisplayLines"/>.</summary>
+    private int _maxLineWidth;
     private TextPosition _selectionAnchor;
     private bool _hasSelectionAnchor;
 
@@ -942,7 +946,16 @@ public sealed class TextWidget : IWidget, ITextInputTarget
             }
         }
 
+        int maxWidth = 0;
+        foreach (DisplaySegment segment in display)
+        {
+            int segmentWidth = fonts.Measure(font,
+                    _lines[segment.Line - 1].Substring(segment.Start, segment.End - segment.Start));
+            if (segmentWidth > maxWidth) { maxWidth = segmentWidth; }
+        }
+        _maxLineWidth = maxWidth;
         _display = display;
+        ClampXOffset();
         return display;
     }
 
@@ -992,6 +1005,7 @@ public sealed class TextWidget : IWidget, ITextInputTarget
 
         if (_topDisplayLine > total - 1) { _topDisplayLine = total - 1; }
         if (_topDisplayLine < 0) { _topDisplayLine = 0; }
+        SeeHorizontally(position);
         Window.Tree.Scheduler.ScheduleRepaint();
         NotifyScroll();
     }
@@ -1040,6 +1054,115 @@ public sealed class TextWidget : IWidget, ITextInputTarget
         NotifyScroll();
     }
 
+    /// <summary>
+    /// Reports the horizontal view as fractions of the widest display line —
+    /// <c>xview</c> with no arguments. Whole-width (0, 1) whenever every
+    /// display line fits the view (always under <c>-wrap char/word</c>).
+    /// </summary>
+    /// <param name="first">The fraction left of the view.</param>
+    /// <param name="last">The fraction at the right edge of the view.</param>
+    public void XViewFractions(out double first, out double last)
+    {
+        DisplayLines();
+        int total = _maxLineWidth;
+        int view = ContentWidth;
+        if (total <= 0 || total <= view)
+        {
+            first = 0;
+            last = 1;
+            return;
+        }
+        first = (double)_xOffset / total;
+        last = (double)(_xOffset + view) / total;
+        if (last > 1.0) { last = 1.0; }
+        if (first < 0) { first = 0; }
+    }
+
+    /// <summary>Scrolls horizontally to a fraction — <c>xview moveto</c> (Tk rounds to the nearest pixel).</summary>
+    /// <param name="fraction">The target fraction of the widest line left of the view.</param>
+    public void XViewMoveTo(double fraction)
+    {
+        DisplayLines();
+        _xOffset = (int)(fraction * _maxLineWidth + 0.5);
+        ClampXOffset();
+        Window.Tree.Scheduler.ScheduleRepaint();
+        NotifyScroll();
+    }
+
+    /// <summary>
+    /// Scrolls horizontally by units or pages — <c>xview scroll</c>. A unit is
+    /// the average character width (the width of "0"); a page is the view
+    /// width less two characters of overlap, exactly as Tk.
+    /// </summary>
+    /// <param name="count">The signed count.</param>
+    /// <param name="pages">True for pages, false for units.</param>
+    public void XViewScroll(int count, bool pages)
+    {
+        DisplayLines();
+        int charWidth = CharWidth;
+        int page = ContentWidth - 2 * charWidth;
+        if (page < charWidth) { page = charWidth; }
+        _xOffset += pages ? count * page : count * charWidth;
+        ClampXOffset();
+        Window.Tree.Scheduler.ScheduleRepaint();
+        NotifyScroll();
+    }
+
+    private int CharWidth
+    {
+        get
+        {
+            int width = Fonts.Measure(Font, "0");
+            return (width < 1) ? 1 : width;
+        }
+    }
+
+    private void ClampXOffset()
+    {
+        int max = _maxLineWidth - ContentWidth;
+        if (max < 0) { max = 0; }
+        if (_xOffset > max) { _xOffset = max; }
+        if (_xOffset < 0) { _xOffset = 0; }
+    }
+
+    /// <summary>
+    /// The horizontal half of <c>see</c>, mirroring Tk's TkTextSeeCmd: nothing
+    /// moves when the widest line fits; a target within a third of the view of
+    /// an edge scrolls just enough to expose it; anything further is centred.
+    /// </summary>
+    private void SeeHorizontally(TextPosition position)
+    {
+        List<DisplaySegment> display = DisplayLines();
+        int lineWidth = ContentWidth;
+        if (display.Count == 0 || _maxLineWidth <= lineWidth) { return; }
+        DisplaySegment segment = display[DisplayLineOf(position)];
+        string content = _lines[segment.Line - 1];
+        int charIndex = position.Char;
+        if (charIndex < segment.Start) { charIndex = segment.Start; }
+        if (charIndex > segment.End) { charIndex = segment.End; }
+        FontManager fonts = Fonts;
+        TkFont font = Font;
+        int x = fonts.Measure(font, content.Substring(segment.Start, charIndex - segment.Start)) - _xOffset;
+        int width = (charIndex < segment.End)
+                ? fonts.Measure(font, content.Substring(charIndex, 1))
+                : CharWidth;
+        int oneThird = lineWidth / 3;
+        int delta = 0;
+        if (x < 0)
+        {
+            delta = x;
+            if (delta < -oneThird) { delta = x - lineWidth / 2; }
+        }
+        else if (x + width > lineWidth)
+        {
+            delta = x + width - lineWidth;
+            if (delta > oneThird) { delta = x - lineWidth / 2; }
+        }
+        if (delta == 0) { return; }
+        _xOffset += delta;
+        ClampXOffset();
+    }
+
     private void NotifyScroll()
     {
         Action<double, double> yHandler = YScrollChanged;
@@ -1052,9 +1175,9 @@ public sealed class TextWidget : IWidget, ITextInputTarget
         Action<double, double> xHandler = XScrollChanged;
         if (xHandler != null)
         {
-            // Horizontal scrolling ships with wrap=none refinement; report
-            // the whole width for now.
-            xHandler(0.0, 1.0);
+            double first, last;
+            XViewFractions(out first, out last);
+            xHandler(first, last);
         }
     }
 
@@ -1091,7 +1214,7 @@ public sealed class TextWidget : IWidget, ITextInputTarget
 
         FontManager fonts = Fonts;
         TkFont font = Font;
-        int targetX = x - inset;
+        int targetX = x - inset + _xOffset;
         int charIndex = content.Length;
         for (int i = 0; i <= content.Length; i++)
         {
@@ -1142,6 +1265,10 @@ public sealed class TextWidget : IWidget, ITextInputTarget
         using (SKFont skFont = fonts.GetSkFont(font))
         using (var paint = new SKPaint())
         {
+            // Text may now extend past either content edge (horizontal
+            // scrolling); clip every run to the content rectangle as Tk does.
+            canvas.Save();
+            canvas.ClipRect(new SKRect(inset, inset, Window.Width - inset, Window.Height - inset));
             for (int row = 0; row < visible; row++)
             {
                 int displayIndex = _topDisplayLine + row;
@@ -1151,7 +1278,7 @@ public sealed class TextWidget : IWidget, ITextInputTarget
 
                 // Split the segment into style runs at tag boundaries.
                 int cursor = segment.Start;
-                float xPixel = inset;
+                float xPixel = inset - _xOffset;
                 while (cursor < segment.End)
                 {
                     int runEnd = segment.End;
@@ -1233,7 +1360,7 @@ public sealed class TextWidget : IWidget, ITextInputTarget
                 {
                     string prefix = _lines[segment.Line - 1]
                             .Substring(segment.Start, caret.Char - segment.Start);
-                    float caretX = inset + fonts.Measure(font, prefix);
+                    float caretX = inset - _xOffset + fonts.Measure(font, prefix);
 
                     if (_composition.Length > 0)
                     {
@@ -1263,6 +1390,7 @@ public sealed class TextWidget : IWidget, ITextInputTarget
                     canvas.DrawRect(new SKRect(caretX, top, caretX + 2, top + lineHeight), paint);
                 }
             }
+            canvas.Restore();
         }
     }
 

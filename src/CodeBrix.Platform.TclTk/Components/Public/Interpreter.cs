@@ -107003,11 +107003,19 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                                                             //         to it keep working while it stays invisible to
                                                             //         [info exists], et al.
                                                             //
+                                                            //         Likewise when the frame entry being removed is
+                                                            //         itself a LINK (the variable was unset THROUGH an
+                                                            //         [upvar]/[global]/[variable] alias): Tcl keeps the
+                                                            //         alias, undefined, still pointing at its target, so
+                                                            //         a later write through it revives the target rather
+                                                            //         than creating an unrelated local.
+                                                            //
                                                             IVariable removeVariable = null;
 
                                                             if ((variables != null) &&
                                                                 (!variables.TryGetValue(name, out removeVariable) ||
-                                                                    !EntityOps.IsLinkTarget(removeVariable)))
+                                                                    (!EntityOps.IsLinkTarget(removeVariable) &&
+                                                                    !EntityOps.IsLink(removeVariable))))
                                                             {
                                                                 variables.Remove(name);
                                                             }
@@ -107285,10 +107293,18 @@ namespace CodeBrix.Platform.TclTk._Components.Public //was previously: Eagle._Co
                                             //         to it keep working while it stays invisible to
                                             //         [info exists], et al.
                                             //
+                                            //         Likewise when the frame entry being removed is
+                                            //         itself a LINK (the variable was unset THROUGH an
+                                            //         [upvar]/[global]/[variable] alias): Tcl keeps the
+                                            //         alias, undefined, still pointing at its target, so
+                                            //         a later write through it revives the target rather
+                                            //         than creating an unrelated local.
+                                            //
                                             IVariable removeVariable = null;
 
                                             if (!variables.TryGetValue(newName, out removeVariable) ||
-                                                !EntityOps.IsLinkTarget(removeVariable))
+                                                (!EntityOps.IsLinkTarget(removeVariable) &&
+                                                !EntityOps.IsLink(removeVariable)))
                                             {
                                                 variables.Remove(newName);
                                             }

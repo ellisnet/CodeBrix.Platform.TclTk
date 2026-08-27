@@ -420,13 +420,15 @@ public sealed class TreeviewWidget : WidgetBase
                 paint.IsAntialias = true;
                 string treeHead;
                 _headings.TryGetValue("#0", out treeHead);
-                canvas.DrawText(treeHead ?? "", inset + 4, inset + 2 + metrics.Ascent, SKTextAlign.Left, skFont, paint);
+                DrawClippedText(canvas, treeHead ?? "", inset + 4, inset + 2 + metrics.Ascent,
+                        CellRect(0, inset, headingH), skFont, paint);
                 for (int c = 0; c < _columns.Count; c++)
                 {
                     string ht;
                     _headings.TryGetValue(_columns[c], out ht);
                     float cx = inset + treeWidth + c * ColumnWidth + 4;
-                    canvas.DrawText(ht ?? "", cx, inset + 2 + metrics.Ascent, SKTextAlign.Left, skFont, paint);
+                    DrawClippedText(canvas, ht ?? "", cx, inset + 2 + metrics.Ascent,
+                            CellRect(c + 1, inset, headingH), skFont, paint);
                 }
             }
 
@@ -455,6 +457,13 @@ public sealed class TreeviewWidget : WidgetBase
                 paint.Style = SKPaintStyle.Fill;
                 paint.Color = selected ? selFg : fg;
 
+                // The tree column (#0) cell: expander, image and text are all
+                // clipped to the column, as ttk does (hard clip, no ellipsis),
+                // so a long name never overruns the first value column.
+                SKRect treeCell = CellRect(0, top, rowHeight);
+                canvas.Save();
+                canvas.ClipRect(treeCell);
+
                 // Expander triangle for parents.
                 if (item.Children.Count > 0)
                 {
@@ -472,14 +481,52 @@ public sealed class TreeviewWidget : WidgetBase
                     textX += itemImage.Width + 4;
                 }
                 canvas.DrawText(item.Text, textX, top + 2 + metrics.Ascent, SKTextAlign.Left, skFont, paint);
+                canvas.Restore();
 
                 for (int c = 0; c < _columns.Count && c < item.Values.Count; c++)
                 {
                     float cx = inset + treeWidth + c * ColumnWidth + 4;
-                    canvas.DrawText(item.Values[c], cx, top + 2 + metrics.Ascent, SKTextAlign.Left, skFont, paint);
+                    DrawClippedText(canvas, item.Values[c], cx, top + 2 + metrics.Ascent,
+                            CellRect(c + 1, top, rowHeight), skFont, paint);
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// The clip rectangle of one cell: column 0 is the tree column (#0),
+    /// column c &gt;= 1 is the (c-1)th value column. Columns tile the content
+    /// width exactly (see <see cref="TreeColumnWidth"/>); the last one is
+    /// additionally bounded by the widget's content edge.
+    /// </summary>
+    private SKRect CellRect(int column, float top, int height)
+    {
+        int inset = Inset;
+        float left, right;
+        if (column == 0)
+        {
+            left = inset;
+            right = inset + TreeColumnWidth;
+        }
+        else
+        {
+            left = inset + TreeColumnWidth + (column - 1) * ColumnWidth;
+            right = left + ColumnWidth;
+        }
+        float contentRight = Window.Width - inset;
+        if (right > contentRight) { right = contentRight; }
+        if (left > right) { left = right; }
+        return new SKRect(left, top, right, top + height);
+    }
+
+    /// <summary>Draws a text run hard-clipped to a cell rectangle (ttk clips, never ellipsizes).</summary>
+    private static void DrawClippedText(SKCanvas canvas, string text, float x, float baseline,
+            SKRect cell, SKFont skFont, SKPaint paint)
+    {
+        canvas.Save();
+        canvas.ClipRect(cell);
+        canvas.DrawText(text, x, baseline, SKTextAlign.Left, skFont, paint);
+        canvas.Restore();
     }
 
     private Images.PhotoImage ResolveItemImage(TreeItem item)

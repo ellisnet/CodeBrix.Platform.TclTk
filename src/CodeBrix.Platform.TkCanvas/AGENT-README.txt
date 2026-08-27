@@ -374,6 +374,8 @@ WIDGETS — the classes (all constructors take the owning TkWindow)
         IReadOnlyList<string> VisibleItems()
         string ItemAt(int y)
         void YViewMoveTo(double fraction); void YViewScroll(int count, bool pages)
+        (every cell - the #0 tree column, each value column and the headings -
+         is hard-clipped to its column when painted, as ttk does; no ellipsis)
         options: -columns -height -font
     public sealed class TreeItem
         string Id; string Text; List<string> Values; bool Open; string Image;
@@ -731,10 +733,20 @@ OVERLAY TOPLEVELS AND DIALOGS (Overlay, Dialogs)
         void SetTransient(TkWindow window, TkWindow master)
         void SetOverrideRedirect(TkWindow window, bool overrideRedirect)
         void SetResizable(TkWindow window, bool width, bool height)
+        void SetMinSize(TkWindow window, int width, int height)     wm minsize
+        void SetMaxSize(TkWindow window, int width, int height)     wm maxsize
+        ResizeEdge HitTestResizeEdge(int rootX, int rootY)   [Flags] None/Left/Right/Top/Bottom
+        const int ResizeBand = 6                             px just inside each frame edge
         void Grab(TkWindow window); void ReleaseGrab()
+        Frames drag by the title bar and resize by the band inside any edge or
+        corner (left/top edges move the origin); resizing honours wm resizable
+        per axis and is clamped to min/max size and the root. There is no
+        cursor feedback (the host layer has no cursor plumbing); a host can
+        poll HitTestResizeEdge to add its own.
     public sealed class OverlayState
         TkWindow Window; string Title; bool Withdrawn; bool OverrideRedirect
         bool ResizableWidth, ResizableHeight; TkWindow TransientFor
+        int MinWidth, MinHeight (1 by default); int? MaxWidth, MaxHeight (null = root size)
         int? GeometryWidth, GeometryHeight, GeometryX, GeometryY
         int BorderWidth; int TitleBarHeight
         SKRectI FrameRect; SKRectI TitleBarRect; SKRectI CloseBoxRect
@@ -835,6 +847,11 @@ TEXT WIDGET AND TEXT INPUT (Text)
         IReadOnlyList<string> TagRanges(string name); IReadOnlyList<string> TagNames()
         TextTag GetTag(string name)
         void See(string index)
+        void XViewFractions(out double first, out double last)   fractions of the
+            widest display line (0 1 whenever every line fits - always under
+            -wrap char/word); wish byte-identical under -wrap none
+        void XViewMoveTo(double fraction)      rounds to the pixel, as Tk
+        void XViewScroll(int count, bool pages)   unit = width of "0"; page = view - 2 units
         void YViewFractions(out double first, out double last)
         void YViewMoveTo(double fraction); void YViewScroll(int count, bool pages)
         TextPosition PositionAt(string atExpr)
@@ -953,7 +970,8 @@ Registered command surface (all drive the widget classes above):
     interpreter's variable traces (a check/radio group over one variable
     shares one ToggleVariable).
   * Windowing: wm (title/geometry/withdraw/deiconify/transient/
-    overrideredirect/resizable), winfo, destroy, focus, grab, raise/lower.
+    overrideredirect/resizable/minsize/maxsize), winfo, destroy, focus, grab,
+    raise/lower.
     ". configure -menu" builds the root menubar. "tkwait visibility" flushes
     and returns.
   * Resources: image (photo names become instance commands), font (measure/
@@ -1430,7 +1448,8 @@ WHAT THIS PACKAGE DOES NOT DO
   * Accessibility / screen-reader bridge: none (a fully Skia-drawn UI has no
     native control tree).
   * Native OS windows: toplevels are Skia overlays inside the host control
-    with their own mini window-manager, not OS windows.
+    with their own mini window-manager (title-bar drag, close box, edge and
+    corner resize honouring wm resizable/minsize/maxsize), not OS windows.
   * Native file pickers on its own: only through ITkFileDialogProvider
     (TkHostFileDialogs in a CodeBrix.Platform app).
   * IME pre-edit display beyond what the platform head's composition events
@@ -1453,6 +1472,11 @@ FIDELITY NOTES / KNOWN EDGES
     pre-theming rendering; tk_setPalette derivation uses Tk's exact math.
   * Option-database matching: highest priority wins, ties go to the most
     recently added entry — no pattern-specificity ranking (as in Tk).
+  * Text xview / see under -wrap none reproduce wish's fractions exactly
+    (units = character width, pages = view less two characters, "see" scrolls
+    minimally within a third of the view of an edge and centres otherwise).
+  * Overlay resize bands (6 px inside each frame edge) give no cursor
+    feedback: the host layer has no cursor plumbing.
 
 HEADLESS / CUSTOM HOSTS
 =======================
