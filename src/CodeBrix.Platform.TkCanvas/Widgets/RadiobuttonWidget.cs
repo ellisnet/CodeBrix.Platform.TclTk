@@ -198,7 +198,7 @@ public sealed class RadiobuttonWidget : WidgetBase
             paint.Color = fg;
             paint.IsAntialias = true;
             float baseline = (Window.Height - metrics.LineSpace) / 2f + metrics.Ascent;
-            canvas.DrawText(text, inset + 2 + IndicatorSize + Gap, baseline, SKTextAlign.Left, skFont, paint);
+            Fonts.DrawText(canvas, text, inset + 2 + IndicatorSize + Gap, baseline, font, paint);
         }
     }
 

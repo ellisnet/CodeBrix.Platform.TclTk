@@ -108,7 +108,33 @@
          both pinned in step with the platform release the family targets. -->
     <PackageReference Include="CodeBrix.Platform.ApacheLicenseForever" Version="1.0.231.233" />
     <PackageReference Include="CodeBrix.Platform.SkiaSharp.Views.MitLicenseForever" Version="4.151.0" />
+    <!--
+      THE font supply. TkCanvas renders with package fonts only and never with an
+      operating-system font, so a Tk program measures and looks the same on every
+      machine (see the FONTS section of AGENT-README.txt).
+
+      NOTE THE NAME: this package is a BUNDLE of monospace families, and TkCanvas uses
+      NOTO SANS MONO out of it — NOT Roboto Mono, despite the package id. Roboto Mono
+      advances 8.0013px at Tk's default size, which rounds up to a 9px cell on Windows
+      while Linux produces 8; Noto Sans Mono is exactly 0.6em and lands on 8 everywhere.
+      Keep this reference even if the id reads oddly — there is no NotoSansMono package.
+    -->
+    <PackageReference Include="CodeBrix.Platform.Fonts.RobotoMono.OflLicenseForever" Version="1.0.238.534" />
+    <!-- sans-serif (TkDefaultFont and most widgets) and serif. Same three font
+         packages CodeBrix.PdfDocCreate.Html2Pdf pairs together. -->
+    <PackageReference Include="CodeBrix.Platform.Fonts.Roboto.OflLicenseForever" Version="1.0.238.528" />
+    <PackageReference Include="CodeBrix.Platform.Fonts.Merriweather.OflLicenseForever" Version="1.0.238.511" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- Pack the font-delivery target for consumers of the nuget... -->
+    <None Include="buildTransitive\net10.0\CodeBrix.Platform.TkCanvas.BsdLicenseForever.targets"
+          Pack="true" PackagePath="buildTransitive\net10.0\" />
+  </ItemGroup>
+
+  <!-- ...and run it for THIS project too, so the fonts land beside this assembly and
+       flow on to anything that consumes it by ProjectReference (the test suite). -->
+  <Import Project="buildTransitive\net10.0\CodeBrix.Platform.TkCanvas.BsdLicenseForever.targets" />
 
   <ItemGroup>
     <None Include="..\..\icon-codebrix-128.png" Pack="true" PackagePath="" />

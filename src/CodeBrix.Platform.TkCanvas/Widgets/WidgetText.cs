@@ -110,7 +110,7 @@ internal static class WidgetText
                     default: x = blockLeft; break;
                 }
                 float baseline = blockTop + i * lineHeight + metrics.Ascent;
-                canvas.DrawText(lines[i], x, baseline, SKTextAlign.Left, skFont, paint);
+                fonts.DrawText(canvas, lines[i], x, baseline, font, paint);
             }
         }
     }

@@ -320,8 +320,8 @@ public sealed class ListboxWidget : WidgetBase
                 paint.Color = selected ? selFg : fg;
                 paint.IsAntialias = true;
                 paint.Style = SKPaintStyle.Fill;
-                canvas.DrawText(_items[index], inset + 3, top + 1 + metrics.Ascent,
-                        SKTextAlign.Left, skFont, paint);
+                Fonts.DrawText(canvas, _items[index], inset + 3, top + 1 + metrics.Ascent,
+                        font, paint);
             }
         }
     }

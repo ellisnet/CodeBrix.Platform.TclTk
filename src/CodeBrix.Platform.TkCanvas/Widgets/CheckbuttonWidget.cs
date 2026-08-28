@@ -197,7 +197,7 @@ public sealed class CheckbuttonWidget : WidgetBase
             paint.Color = fg;
             paint.IsAntialias = true;
             float baseline = (Window.Height - metrics.LineSpace) / 2f + metrics.Ascent;
-            canvas.DrawText(text, box.Right + Gap, baseline, SKTextAlign.Left, skFont, paint);
+            Fonts.DrawText(canvas, text, box.Right + Gap, baseline, font, paint);
         }
     }
 

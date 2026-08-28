@@ -298,8 +298,7 @@ public sealed class EntryWidget : WidgetBase, ITextInputTarget
             paint.IsAntialias = true;
             if (shown.Length > _leftIndex)
             {
-                canvas.DrawText(shown.Substring(_leftIndex), inset, baseline,
-                        SKTextAlign.Left, skFont, paint);
+                Fonts.DrawText(canvas, shown.Substring(_leftIndex), inset, baseline, font, paint);
             }
 
             // Caret (only when this entry holds focus) — preceded, during
@@ -320,7 +319,7 @@ public sealed class EntryWidget : WidgetBase, ITextInputTarget
                     canvas.DrawRect(new SKRect(cx, inset, cx + compWidth, Window.Height - inset), paint);
                     paint.Color = fg;
                     paint.IsAntialias = true;
-                    canvas.DrawText(_composition, cx, baseline, SKTextAlign.Left, skFont, paint);
+                    Fonts.DrawText(canvas, _composition, cx, baseline, font, paint);
                     paint.IsAntialias = false;
                     canvas.DrawRect(new SKRect(cx, baseline + 1, cx + compWidth, baseline + 2), paint);
                     cx += compWidth;

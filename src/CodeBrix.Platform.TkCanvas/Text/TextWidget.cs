@@ -1330,7 +1330,7 @@ public sealed class TextWidget : IWidget, ITextInputTarget
                     paint.Color = textColor;
                     paint.Style = SKPaintStyle.Fill;
                     paint.IsAntialias = true;
-                    canvas.DrawText(run, xPixel, top + metrics.Ascent, SKTextAlign.Left, skFont, paint);
+                    fonts.DrawText(canvas, run, xPixel, top + metrics.Ascent, font, paint);
                     paint.IsAntialias = false;
 
                     if (underline)
@@ -1377,8 +1377,8 @@ public sealed class TextWidget : IWidget, ITextInputTarget
                         paint.Color = Theming.TkTheme.Color(
                                 Options.Get("-foreground", theme.FieldForeground));
                         paint.IsAntialias = true;
-                        canvas.DrawText(_composition, caretX, top + metrics.Ascent,
-                                SKTextAlign.Left, skFont, paint);
+                        fonts.DrawText(canvas, _composition, caretX, top + metrics.Ascent,
+                                font, paint);
                         paint.IsAntialias = false;
                         canvas.DrawRect(new SKRect(caretX, top + metrics.Ascent + 1,
                                 caretX + compWidth, top + metrics.Ascent + 2), paint);

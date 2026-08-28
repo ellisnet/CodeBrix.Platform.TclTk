@@ -127,7 +127,7 @@ public sealed class LabelframeWidget : WidgetBase
         {
             paint.Color = fg;
             paint.IsAntialias = true;
-            canvas.DrawText(text, x, highlight + metrics.Ascent, SKTextAlign.Left, skFont, paint);
+            Fonts.DrawText(canvas, text, x, highlight + metrics.Ascent, font, paint);
         }
     }
 

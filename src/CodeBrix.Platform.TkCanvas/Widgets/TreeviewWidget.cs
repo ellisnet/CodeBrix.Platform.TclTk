@@ -421,14 +421,14 @@ public sealed class TreeviewWidget : WidgetBase
                 string treeHead;
                 _headings.TryGetValue("#0", out treeHead);
                 DrawClippedText(canvas, treeHead ?? "", inset + 4, inset + 2 + metrics.Ascent,
-                        CellRect(0, inset, headingH), skFont, paint);
+                        CellRect(0, inset, headingH), font, paint);
                 for (int c = 0; c < _columns.Count; c++)
                 {
                     string ht;
                     _headings.TryGetValue(_columns[c], out ht);
                     float cx = inset + treeWidth + c * ColumnWidth + 4;
                     DrawClippedText(canvas, ht ?? "", cx, inset + 2 + metrics.Ascent,
-                            CellRect(c + 1, inset, headingH), skFont, paint);
+                            CellRect(c + 1, inset, headingH), font, paint);
                 }
             }
 
@@ -467,8 +467,8 @@ public sealed class TreeviewWidget : WidgetBase
                 // Expander triangle for parents.
                 if (item.Children.Count > 0)
                 {
-                    canvas.DrawText(item.Open ? "▾" : "▸", indent - 14, top + 2 + metrics.Ascent,
-                            SKTextAlign.Left, skFont, paint);
+                    Fonts.DrawText(canvas, item.Open ? "▾" : "▸", indent - 14, top + 2 + metrics.Ascent,
+                            font, paint);
                 }
 
                 // Item image (Tk draws it between the indent and the text,
@@ -480,14 +480,14 @@ public sealed class TreeviewWidget : WidgetBase
                     itemImage.Draw(canvas, indent, top + (rowHeight - itemImage.Height) / 2f);
                     textX += itemImage.Width + 4;
                 }
-                canvas.DrawText(item.Text, textX, top + 2 + metrics.Ascent, SKTextAlign.Left, skFont, paint);
+                Fonts.DrawText(canvas, item.Text, textX, top + 2 + metrics.Ascent, font, paint);
                 canvas.Restore();
 
                 for (int c = 0; c < _columns.Count && c < item.Values.Count; c++)
                 {
                     float cx = inset + treeWidth + c * ColumnWidth + 4;
                     DrawClippedText(canvas, item.Values[c], cx, top + 2 + metrics.Ascent,
-                            CellRect(c + 1, top, rowHeight), skFont, paint);
+                            CellRect(c + 1, top, rowHeight), font, paint);
                 }
             }
         }
@@ -520,12 +520,12 @@ public sealed class TreeviewWidget : WidgetBase
     }
 
     /// <summary>Draws a text run hard-clipped to a cell rectangle (ttk clips, never ellipsizes).</summary>
-    private static void DrawClippedText(SKCanvas canvas, string text, float x, float baseline,
-            SKRect cell, SKFont skFont, SKPaint paint)
+    private void DrawClippedText(SKCanvas canvas, string text, float x, float baseline,
+            SKRect cell, TkFont font, SKPaint paint)
     {
         canvas.Save();
         canvas.ClipRect(cell);
-        canvas.DrawText(text, x, baseline, SKTextAlign.Left, skFont, paint);
+        Fonts.DrawText(canvas, text, x, baseline, font, paint);
         canvas.Restore();
     }
 

@@ -643,8 +643,135 @@ FONTS (Fonts)
                                                 (mapped to the default)
         SKFont GetSkFont(TkFont font)
         int Measure(TkFont font, string text)   ("font measure", pixels)
+        void DrawText(SKCanvas canvas, string text, float x, float baseline,
+                      TkFont font, SKPaint paint)   THE painter entry point:
+                                                 whole-pixel glyph grid +
+                                                 per-glyph fallback chain
+        bool HasGlyph(TkFont font, int codepoint)   false => renders as tofu
         FontMetrics Metrics(TkFont font)        ("font metrics")
         float PixelSize(TkFont font)
+        bool AllowSystemFontFallback { get; set; }   OPT-IN; default false.
+                                                 The only way a host font is
+                                                 ever used — see below.
+        void AddFontDirectory(string directory)  extra place to find the
+                                                 packaged .ttf files
+
+  THE TOOLKIT SHIPS ITS OWN FONTS — READ THIS BEFORE TOUCHING FONTS.
+
+  * WE NEVER RESOLVE A FONT FROM THE HOST. A toolkit that measures its own
+    layout cannot gamble on the machine's font set; the same Tcl program must
+    produce the same geometry on a dev box and in a stripped container. All
+    three CSS generics come out of nuget packages (FontManager.PackagedFaces):
+
+        monospace   -> Noto Sans Mono  (Fonts.RobotoMono package)
+        sans-serif  -> Roboto          (Fonts.Roboto package)
+        serif       -> Merriweather    (Fonts.Merriweather package)
+
+    The same three font packages CodeBrix.PdfDocCreate.Html2Pdf pairs together.
+  * A MISSING FONT FILE THROWS — it does not quietly borrow a host font. If the
+    .ttf files did not reach the output directory, FontManager raises
+    InvalidOperationException naming the file, everywhere it looked, and both
+    ways out. A silent substitution would mean the same program lays out
+    differently on the next machine, which is the whole thing the packaged fonts
+    exist to prevent, so a broken deployment is made to fail loudly.
+  * A FAMILY WE DO NOT SHIP IS SERVED BY A PACKAGED FACE, not by the host. A
+    Tcl script asking for "{Segoe UI 12}" gets Roboto. Named families that map
+    to a generic (helvetica/arial -> sans-serif, courier -> monospace,
+    times -> serif) resolve as usual.
+  * CONSUMERS CAN OPT IN TO HOST FONTS:
+
+        tree.Fonts.AllowSystemFontFallback = true;   // default: false
+
+    With it on, TkCanvas resolves a family the packages do not carry through the
+    operating system, and a missing packaged font degrades to a host font
+    instead of throwing. It is the ONLY way a system font is ever reached. Turn
+    it on deliberately — to pick up a corporate typeface, or to keep an app
+    running on a deployment whose font assets are known to be missing — and
+    accept that geometry then varies by machine. Set it before anything renders;
+    resolved faces are cached and are not re-resolved. FontManager.
+    AddFontDirectory(dir) is the other escape hatch, for packaged fonts that
+    simply live somewhere else; it does NOT enable host fonts.
+  * SCOPE: EUROPEAN SCRIPTS. Latin, Latin Extended, Cyrillic, Greek (modern AND
+    polytonic), Armenian and Georgian all render. Hebrew, Arabic, CJK and other
+    non-European scripts are deliberately OUT of scope and render as tofu; there
+    is no bidi and no complex shaping anywhere in this toolkit.
+  * PER-GLYPH FALLBACK CHAIN (FontManager.FallbackChains). The primaries do not
+    cover everything, so each generic has an ordered list of packaged companions
+    consulted per codepoint. Coverage was MEASURED, not assumed:
+
+        monospace   Noto Sans Mono -> Iosevka (Armenian) -> NotoSansGeorgian
+        sans-serif  Roboto -> NotoSansArmenian -> NotoSansGeorgian -> NotoSerif
+        serif       Merriweather -> NotoSerif -> NotoSerifArmenian
+                                 -> NotoSerifGeorgian
+
+    Surprises worth keeping in mind, all MEASURED over the full Unicode blocks:
+      - Roboto has the complete MODERN (monotonic) Greek alphabet, 58/58 — modern
+        Greek never needs a fallback. What it lacks is Greek Extended
+        (U+1F00-1FFF), the POLYTONIC block for Ancient Greek: 1 of 233. The
+        static Roboto-Regular is identical, so this is not a variable-font quirk,
+        and Open Sans (2/233) and Roboto Mono (1/233) are no better. Of the
+        packaged faces only NotoSerif, NotoSansMono and Iosevka have all 233 —
+        so sans-serif borrows NOTO SERIF for polytonic Greek. A serif glyph in a
+        sans run beats a tofu box. The real fix is a packaged plain NOTO SANS
+        (measured against the real font: 233/233 polytonic, 256/256 Cyrillic) —
+        it would slot in as "Roboto -> NotoSans -> ..." and retire the serif
+        borrow. It would NOT retire the Armenian/Georgian entries: plain Noto
+        Sans has 0/88 of each. That is Noto's design — Noto Sans is the
+        Latin/Greek/Cyrillic core and every other script is a separate family,
+        which is why this package ships NotoSansArmenian/NotoSansGeorgian at
+        all. Noto Serif is the same shape (0/88 Armenian, 1/88 Georgian).
+      - Merriweather has almost no Greek at all: 9/58 modern, 0/233 polytonic.
+      - NotoSansArmenian/NotoSansGeorgian carry NO Greek (0/58) — they are
+        script-specific subsets, not general Noto Sans.
+    FontManager.HasGlyph(font, codepoint) answers "will this render or tofu?".
+  * A FIXED-PITCH PRIMARY KEEPS ITS COLUMN GRID THROUGH THE FALLBACK. The
+    companions are proportional, so under a monospace font their glyphs are
+    pinned to the primary's cell width — a Georgian line in a text widget still
+    sits on the same columns as the Latin line above it, and xview/see/index @x,y
+    stay truthful. Under a proportional primary the fallback keeps its own
+    advances.
+  * A MISSING FALLBACK FILE IS SKIPPED, NOT FATAL — losing optional coverage just
+    degrades that script to tofu, which is what an uncovered script does anyway.
+    Only a missing PRIMARY throws.
+  * MISSING GLYPHS ARE TOFU, NOT AN ERROR. A codepoint no face in the chain
+    carries maps to glyph 0 (.notdef): it measures with a real advance and paints
+    the font's tofu box, identically on Windows and Linux. Nothing throws — an
+    unsupported script is a rendering limitation, not a broken install.
+  * FAST PATH: when every codepoint is served by the primary (almost all text),
+    run splitting is skipped entirely and drawing costs exactly what it did
+    before the chain existed.
+  * THE MONOSPACE FONT IS NOT THE ONE ITS PACKAGE IS NAMED FOR. The dependency
+    is "CodeBrix.Platform.Fonts.RobotoMono.OflLicenseForever", but that package
+    is a BUNDLE of monospace families and we deliberately use Noto Sans Mono
+    out of it. Roboto Mono advances 1229/2048 em = 8.0013px at Tk's default
+    size 10; rounding that hair-over-8 up yields a 9px cell on Windows while
+    Linux produces 8. Noto Sans Mono is exactly 0.6 em and lands on 8
+    everywhere. There is no NotoSansMono-only package — do not "fix" the odd
+    -looking reference by switching to the font in the package id.
+  * WEIGHT IS PINNED EXPLICITLY, both normal (400) and bold (700), and not left
+    at the face's own axis default: Merriweather's wght axis defaults to 300, so
+    an unpinned face renders body text in Light.
+  * HINTING IS OFF for all packaged faces, and must stay off. FreeType (Linux)
+    hints each glyph to its own whole pixel and only forces a single uniform
+    advance when fontconfig tags the face as mono — which never happens for a
+    face loaded from a FILE. Hinted, packaged Noto Sans Mono measures '0'=8 but
+    'M'=9, 'i'=7, '@'=10, and the text widget's column grid collapses. Unhinted,
+    every glyph is the design advance. It also puts Windows, Linux and macOS on
+    the same advances instead of one rasterizer's opinion.
+  * BOLD comes off the variable font's "wght" axis (SKTypeface.Clone), NOT from
+    a second file: the static weight instances are pruned on platforms without
+    font-manifest support. For the monospace face the advance is identical at
+    every weight, so the column grid is safe. ITALIC is synthesised with
+    SKFont.SkewX — none of the packaged faces carries an italic axis — which
+    shears outlines without touching advances.
+  * Metrics(...).IsFixed MEASURES a spread of glyphs; it does not report
+    SKTypeface.IsFixedPitch. That flag is unreliable: the same Noto Sans Mono
+    reports fixed-pitch via fontconfig and NOT fixed-pitch loaded from a file.
+  * DELIVERY: buildTransitive/net10.0/*.targets copies the package's .ttf files
+    to <app base>/CodeBrix.Platform.Fonts.<Name>/Fonts/ — the same layout a
+    CodeBrix.Platform app's asset pipeline uses, so FontManager finds them
+    either way. Mirrors the equivalent target in CodeBrix.PdfDocCreate.Html2Pdf;
+    keep the two in step. Opt out with CodeBrixTkCanvasDisableFontCopy=true.
 
 IMAGES (Images)
 ---------------

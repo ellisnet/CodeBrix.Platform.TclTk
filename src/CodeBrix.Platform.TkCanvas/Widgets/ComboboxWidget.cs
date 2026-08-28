@@ -156,7 +156,7 @@ public sealed class ComboboxWidget : WidgetBase
             if (!TkColor.TryParse(ResolveOption("-foreground", Theme.FieldForeground), out fg)) { fg = SKColors.Black; }
             paint.Color = fg;
             paint.IsAntialias = true;
-            canvas.DrawText(_value, inset + 2, baseline, SKTextAlign.Left, skFont, paint);
+            Fonts.DrawText(canvas, _value, inset + 2, baseline, font, paint);
         }
 
         // Drop-down arrow button on the right edge.

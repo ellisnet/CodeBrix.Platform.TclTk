@@ -311,8 +311,7 @@ public sealed class TextItem : CanvasItem
                 if (_lines[i].Length == 0) { continue; }
                 double lx, ly, lw, lh;
                 LineRect(i, out lx, out ly, out lw, out lh);
-                canvas.DrawText(_lines[i], (float)lx, (float)(ly + ascent),
-                        SKTextAlign.Left, skFont, paint);
+                fonts.DrawText(canvas, _lines[i], (float)lx, (float)(ly + ascent), font, paint);
             }
         }
     }

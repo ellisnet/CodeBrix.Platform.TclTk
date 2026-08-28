@@ -125,8 +125,7 @@ public static class TkRenderer
                 {
                     paint.Color = TkTheme.Color(theme.TitleBarForeground);
                     paint.IsAntialias = true;
-                    canvas.DrawText(overlay.Title, bar.Left + 6, baseline,
-                            SKTextAlign.Left, skFont, paint);
+                    fonts.DrawText(canvas, overlay.Title, bar.Left + 6, baseline, font, paint);
                     paint.IsAntialias = false;
                 }
             }

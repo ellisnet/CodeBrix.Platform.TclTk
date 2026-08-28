@@ -1,14 +1,11 @@
-using System;
-using System.Collections.Generic;
-
 using CodeBrix.Platform.TclTk._Components.Public;
-using CodeBrix.Platform.TkCanvas.Canvas;
 using CodeBrix.Platform.TkCanvas.Events;
 using CodeBrix.Platform.TkCanvas.Overlay;
 using CodeBrix.Platform.TkCanvas.Tcl;
 using CodeBrix.Platform.TkCanvas.Widgets;
 using CodeBrix.Platform.TkCanvas.Windowing;
 using SilverAssertions;
+using System;
 using Xunit;
 
 namespace CodeBrix.Platform.TkCanvas.Tests;

@@ -1,0 +1,54 @@
+<Project>
+  <!--
+    Delivers the font files shipped by the CodeBrix.Platform.Fonts.* packages into the
+    consuming application's build output.
+
+    TkCanvas renders with PACKAGE fonts only - never with an operating-system font - so
+    a Tk program looks and measures the same on every machine (see the FONTS section of
+    AGENT-README.txt). Those fonts have to be findable at run time, and nothing puts
+    them there on their own: the font packages pack their .ttf and .ttf.manifest files
+    under lib/net10.0/<PackageName>/Fonts/ inside the nupkg, and in a plain .NET
+    application NuGet copies only the package ASSEMBLIES. In a CodeBrix.Platform
+    application the platform asset pipeline delivers them; this target closes the gap
+    everywhere else, so FontManager can always discover fonts at:
+
+        <application base directory>/CodeBrix.Platform.Fonts.<Name>/Fonts/
+
+    which is the same layout a CodeBrix.Platform application uses. (This mirrors the
+    equivalent target in CodeBrix.PdfDocCreate.Html2Pdf; keep the two in step.)
+
+    How it works: every CodeBrix.Platform.Fonts.* package ships an assembly that IS
+    copied local, so it appears in @(RuntimeCopyLocalItems) with its full path inside
+    the resolved package folder. The font files live in a folder named after that
+    assembly, next to it. Globbing relative to the assembly path therefore finds the
+    exact restored version of each font package, wherever the package cache lives.
+
+    Opt out (for example when a CodeBrix.Platform app's own asset pipeline already
+    delivers the fonts and the duplicate copy is unwanted) by setting:
+
+        <CodeBrixTkCanvasDisableFontCopy>true</CodeBrixTkCanvasDisableFontCopy>
+  -->
+  <Target Name="_CodeBrixTkCanvasCollectPackageFonts"
+          AfterTargets="ResolveReferences"
+          BeforeTargets="AssignTargetPaths"
+          Condition="'$(CodeBrixTkCanvasDisableFontCopy)' != 'true'">
+    <ItemGroup>
+      <_CodeBrixTkCanvasFontAssembly
+          Include="@(RuntimeCopyLocalItems)"
+          Condition="$([System.String]::Copy('%(RuntimeCopyLocalItems.NuGetPackageId)').StartsWith('CodeBrix.Platform.Fonts.'))" />
+    </ItemGroup>
+    <ItemGroup>
+      <_CodeBrixTkCanvasFontFile
+          Include="%(_CodeBrixTkCanvasFontAssembly.RootDir)%(_CodeBrixTkCanvasFontAssembly.Directory)%(_CodeBrixTkCanvasFontAssembly.Filename)\Fonts\*.ttf*">
+        <FontPackageFolder>%(_CodeBrixTkCanvasFontAssembly.Filename)</FontPackageFolder>
+      </_CodeBrixTkCanvasFontFile>
+    </ItemGroup>
+    <ItemGroup>
+      <None Include="@(_CodeBrixTkCanvasFontFile)"
+            Condition="'@(_CodeBrixTkCanvasFontFile)' != ''"
+            Link="%(_CodeBrixTkCanvasFontFile.FontPackageFolder)\Fonts\%(Filename)%(Extension)"
+            CopyToOutputDirectory="PreserveNewest"
+            Visible="false" />
+    </ItemGroup>
+  </Target>
+</Project>

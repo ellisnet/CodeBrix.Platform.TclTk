@@ -421,11 +421,11 @@ public sealed class MenuWidget : WidgetBase
                 if ((entry.Type == MenuEntryType.Checkbutton || entry.Type == MenuEntryType.Radiobutton)
                         && entry.Selected)
                 {
-                    canvas.DrawText(entry.Type == MenuEntryType.Radiobutton ? "•" : "✓",
-                            r.Left + 3, baseline, SKTextAlign.Left, skFont, paint);
+                    Fonts.DrawText(canvas, entry.Type == MenuEntryType.Radiobutton ? "•" : "✓", r.Left + 3, baseline,
+                            font, paint);
                 }
 
-                canvas.DrawText(entry.Label, textLeft, baseline, SKTextAlign.Left, skFont, paint);
+                Fonts.DrawText(canvas, entry.Label, textLeft, baseline, font, paint);
 
                 // Mnemonic underline.
                 if (entry.Underline >= 0 && entry.Underline < entry.Label.Length)
@@ -442,12 +442,12 @@ public sealed class MenuWidget : WidgetBase
                 if (!IsMenubar && entry.Accelerator.Length > 0)
                 {
                     float ax = r.Right - ArrowColumn - Fonts.Measure(font, entry.Accelerator);
-                    canvas.DrawText(entry.Accelerator, ax, baseline, SKTextAlign.Left, skFont, paint);
+                    Fonts.DrawText(canvas, entry.Accelerator, ax, baseline, font, paint);
                 }
 
                 if (!IsMenubar && entry.Type == MenuEntryType.Cascade)
                 {
-                    canvas.DrawText("▶", r.Right - ArrowColumn + 2, baseline, SKTextAlign.Left, skFont, paint);
+                    Fonts.DrawText(canvas, "▶", r.Right - ArrowColumn + 2, baseline, font, paint);
                 }
             }
         }
