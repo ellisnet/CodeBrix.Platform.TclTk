@@ -200,11 +200,17 @@ PACKAGING AND PUBLISHING
       - .TkCanvas packs src/CodeBrix.Platform.TkCanvas/AGENT-README.txt.
     Keep each AGENT-README about exactly its own package; the root file
     carries only a catalogue line for the other two.
-  * License metadata: .TclTk declares "TCL AND BSD-2-Clause" and PREPENDS
-    the upstream attribution to the family copyright line (the upstream
-    license requires the original notice to travel with derivatives);
-    .Extras and .TkCanvas are entirely original code and declare plain
-    BSD-2-Clause with the family copyright only.
+  * License metadata: ALL THREE declare plain BSD-2-Clause, matching their
+    .BsdLicenseForever package ids. .TclTk additionally PREPENDS the upstream
+    attribution to the family copyright line (the upstream license requires
+    the original notice to travel with derivatives) and discloses the
+    Eagle-derived, Tcl/Tk-licensed half through THIRD-PARTY-NOTICES.txt,
+    which is packed. .Extras and .TkCanvas are entirely original code and
+    carry the family copyright only.
+    DO NOT declare "TCL AND BSD-2-Clause": nuget.org accepts an expression
+    only when every SPDX identifier in it is OSI- or FSF-approved, and "TCL"
+    is not, so the push is rejected with "Unsupported licenses: TCL". The
+    alternative is a <PackageLicenseFile>; we chose the expression.
     PackageRequireLicenseAcceptance is on for all three.
   * PackageProjectUrl / RepositoryUrl:
     https://github.com/ellisnet/CodeBrix.Platform.TclTk

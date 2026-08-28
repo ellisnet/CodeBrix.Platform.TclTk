@@ -67,7 +67,8 @@
     <Description>A retained-mode reimplementation of the classic Tk widget toolkit, drawn entirely onto a SkiaSharp surface and scripted through CodeBrix.Platform.TclTk. Provides the Tk geometry managers (pack, grid), the classic widget set, the canvas widget with its scene-graph item model, and the Tk event/bind/focus system - so existing Tcl/Tk programs can present their user interface inside a CodeBrix.Platform application with the classic Tk look, identically on every platform.</Description>
     <!--
       Unlike CodeBrix.Platform.TclTk (which contains the ported Eagle engine and
-      therefore declares "TCL AND BSD-2-Clause" plus the Eagle attribution), this
+      therefore carries the Eagle attribution and the Tcl license in its
+      THIRD-PARTY-NOTICES.txt), this
       assembly is entirely original CodeBrix code: plain BSD-2-Clause and the
       family copyright line. The TCL-licensed half arrives via the .TclTk
       dependency, which carries its own license metadata.

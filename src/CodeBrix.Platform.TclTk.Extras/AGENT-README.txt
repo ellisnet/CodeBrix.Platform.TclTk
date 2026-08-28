@@ -31,8 +31,9 @@ INSTALLATION
     dotnet add package CodeBrix.Platform.TclTk.Extras.BsdLicenseForever
 
 PackageId: CodeBrix.Platform.TclTk.Extras.BsdLicenseForever
-License:   BSD-2-Clause (the interpreter dependency carries its own
-           "TCL AND BSD-2-Clause" metadata)
+License:   BSD-2-Clause (the interpreter dependency is BSD-2-Clause too,
+           and discloses its Eagle-derived, Tcl/Tk-licensed half in its
+           own THIRD-PARTY-NOTICES.txt)
 
 NuGet dependencies you get transitively:
   * CodeBrix.Platform.TclTk.BsdLicenseForever   (the interpreter)

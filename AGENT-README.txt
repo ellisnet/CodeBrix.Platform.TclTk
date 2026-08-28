@@ -56,9 +56,12 @@ INSTALLATION
   * Target framework: .NET 10 or later (net10.0). No multi-targeting.
   * NuGet dependency (transitive): System.Security.Cryptography.Pkcs
     (Microsoft first-party; used by the engine's PKCS#7 signature checks).
-  * License: TCL AND BSD-2-Clause (Tcl/Tk License for the ported engine,
-    BSD-2-Clause for the modifications). PackageRequireLicenseAcceptance is
-    on.
+  * License: BSD-2-Clause. The package ALSO contains Eagle-derived source
+    under the Tcl/Tk License (permissive and BSD-style, but not the
+    BSD-2-Clause text); that half is disclosed by THIRD-PARTY-NOTICES.txt,
+    which ships in the package and reproduces the Tcl license verbatim, and
+    by the copyright line, which leads with the Eagle attribution.
+    PackageRequireLicenseAcceptance is on.
   * Requirements: none beyond the runtime. Works on Windows, Linux and
     macOS; no native libraries, no display, no console needed.
   * Nullable reference types are OFF in this library: its public signatures

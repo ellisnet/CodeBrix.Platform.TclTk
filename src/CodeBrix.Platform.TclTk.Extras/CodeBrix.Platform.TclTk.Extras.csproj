@@ -63,7 +63,8 @@
     <Description>Interpreter-side Tcl command extensions for CodeBrix.Platform.TclTk: a tclsqlite-compatible "sqlite3" database command backed by CodeBrix.Sqlite, and a pdf4tcl-compatible PDF drawing command set backed by CodeBrix.PdfDocuments. Lets existing Tcl programs that expect the sqlite3 and pdf4tcl packages run unmodified on the managed interpreter, with no native Tcl dependencies.</Description>
     <!--
       Unlike CodeBrix.Platform.TclTk (which contains the ported Eagle engine and
-      therefore declares "TCL AND BSD-2-Clause" plus the Eagle attribution), this
+      therefore carries the Eagle attribution and the Tcl license in its
+      THIRD-PARTY-NOTICES.txt), this
       assembly is entirely original CodeBrix code: plain BSD-2-Clause and the
       family copyright line. The TCL-licensed half arrives via the .TclTk
       dependency, which carries its own license metadata.

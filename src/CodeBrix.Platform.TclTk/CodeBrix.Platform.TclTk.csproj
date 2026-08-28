@@ -106,7 +106,20 @@
     <Title>CodeBrix.Platform.TclTk</Title>
     <Authors>Jeremy Ellis</Authors>
     <Description>A fully managed, cross-platform implementation of the Tcl scripting language for .NET. Provides an embeddable Tcl interpreter supporting variables, expressions, commands, procedures, namespaces, and a rich .NET object-interop bridge, with no native dependencies.</Description>
-    <PackageLicenseExpression>TCL AND BSD-2-Clause</PackageLicenseExpression>
+    <!--
+      BSD-2-Clause, matching the .BsdLicenseForever package id and the family
+      convention. NOTE what this does and does not say: it declares the license of
+      the CODEBRIX code. This assembly also contains source derived from the Eagle
+      project under the Tcl/Tk License — a permissive BSD-STYLE license, but not
+      the BSD-2-Clause text (it adds a U.S. Government "Restricted Rights" clause
+      and a modification-relicensing clause). That half is disclosed inside the
+      package by THIRD-PARTY-NOTICES.txt, which reproduces the Tcl license
+      verbatim, and by the <Copyright> below, which leads with the Eagle
+      attribution. Do NOT try "TCL AND BSD-2-Clause" here: nuget.org accepts an
+      expression only when every SPDX identifier in it is OSI- or FSF-approved,
+      and "TCL" is not, so publishing is rejected with "Unsupported licenses: TCL".
+    -->
+    <PackageLicenseExpression>BSD-2-Clause</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/ellisnet/CodeBrix.Platform.TclTk</PackageProjectUrl>
     <RepositoryUrl>https://github.com/ellisnet/CodeBrix.Platform.TclTk</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
