@@ -700,27 +700,28 @@ FONTS (Fonts)
     consulted per codepoint. Coverage was MEASURED, not assumed:
 
         monospace   Noto Sans Mono -> Iosevka (Armenian) -> NotoSansGeorgian
-        sans-serif  Roboto -> NotoSansArmenian -> NotoSansGeorgian -> NotoSerif
+        sans-serif  Roboto -> NotoSans -> NotoSansArmenian -> NotoSansGeorgian
         serif       Merriweather -> NotoSerif -> NotoSerifArmenian
                                  -> NotoSerifGeorgian
 
     Surprises worth keeping in mind, all MEASURED over the full Unicode blocks:
-      - Roboto has the complete MODERN (monotonic) Greek alphabet, 58/58 — modern
-        Greek never needs a fallback. What it lacks is Greek Extended
-        (U+1F00-1FFF), the POLYTONIC block for Ancient Greek: 1 of 233. The
-        static Roboto-Regular is identical, so this is not a variable-font quirk,
-        and Open Sans (2/233) and Roboto Mono (1/233) are no better. Of the
-        packaged faces only NotoSerif, NotoSansMono and Iosevka have all 233 —
-        so sans-serif borrows NOTO SERIF for polytonic Greek. A serif glyph in a
-        sans run beats a tofu box. The real fix is a packaged plain NOTO SANS
-        (measured against the real font: 233/233 polytonic, 256/256 Cyrillic) —
-        it would slot in as "Roboto -> NotoSans -> ..." and retire the serif
-        borrow. It would NOT retire the Armenian/Georgian entries: plain Noto
-        Sans has 0/88 of each. That is Noto's design — Noto Sans is the
+      - Roboto has the complete MODERN (monotonic) Greek alphabet — modern Greek
+        never needs a fallback. What it lacks is Greek Extended (U+1F00-1FFF),
+        the POLYTONIC block for Ancient Greek: 1 of 233. The static
+        Roboto-Regular is identical, so this is not a variable-font quirk, and
+        Open Sans (2/233) and Roboto Mono (1/233) are no better. NOTO SANS
+        (added to the Fonts.Roboto package in 1.0.240.51) carries all 233 in
+        matching sans letterforms and sits directly behind Roboto; it also
+        covers the one Cyrillic codepoint Roboto misses (256/256 vs 255/256).
+        Before it was packaged, sans-serif had to borrow the SERIF face for
+        polytonic Greek.
+      - NOTO SANS DOES NOT RETIRE the Armenian/Georgian entries: it has 0/88
+        Armenian and 1/88 Georgian. That is Noto's design — Noto Sans is the
         Latin/Greek/Cyrillic core and every other script is a separate family,
-        which is why this package ships NotoSansArmenian/NotoSansGeorgian at
-        all. Noto Serif is the same shape (0/88 Armenian, 1/88 Georgian).
-      - Merriweather has almost no Greek at all: 9/58 modern, 0/233 polytonic.
+        which is why the package ships NotoSansArmenian/NotoSansGeorgian at all.
+        Noto Serif is the same shape (0/88 Armenian, 1/88 Georgian).
+      - Merriweather has almost no Greek at all: 9/56 modern, 0/233 polytonic,
+        so the SERIF chain leans on NotoSerif for Greek of either kind.
       - NotoSansArmenian/NotoSansGeorgian carry NO Greek (0/58) — they are
         script-specific subsets, not general Noto Sans.
     FontManager.HasGlyph(font, codepoint) answers "will this render or tofu?".

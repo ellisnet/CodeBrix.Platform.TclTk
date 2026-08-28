@@ -85,11 +85,15 @@ public sealed class FontManager
                 },
                 ["sans-serif"] = new[]
                 {
+                    // Noto Sans sits directly behind Roboto: it carries the
+                    // polytonic Greek Roboto lacks (233/233 against Roboto's 1),
+                    // in matching sans letterforms, and it quietly covers Roboto's
+                    // one missing Cyrillic codepoint too.
+                    new PackagedFace("CodeBrix.Platform.Fonts.Roboto", "NotoSans.ttf"),
+                    // Noto Sans is the Latin/Greek/Cyrillic core only — it has no
+                    // Armenian and no Georgian, so those stay script-specific.
                     new PackagedFace("CodeBrix.Platform.Fonts.Roboto", "NotoSansArmenian.ttf"),
                     new PackagedFace("CodeBrix.Platform.Fonts.Roboto", "NotoSansGeorgian.ttf"),
-                    // No packaged SANS face carries polytonic Greek; Noto Serif does.
-                    // A serif glyph in a sans run beats a tofu box.
-                    new PackagedFace("CodeBrix.Platform.Fonts.Merriweather", "NotoSerif.ttf"),
                 },
                 ["serif"] = new[]
                 {

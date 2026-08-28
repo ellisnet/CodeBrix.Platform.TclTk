@@ -240,6 +240,34 @@ public class FontManagerTests
     }
 
     [Fact]
+    public void Polytonic_greek_falls_back_within_the_sans_family_not_to_a_serif()
+    {
+        // Roboto has the complete MODERN Greek alphabet but only 1 of 233
+        // polytonic (Greek Extended) codepoints, so Ancient Greek needs a
+        // fallback. It must land on Noto Sans — a sans face — and not on the
+        // Noto Serif this chain used before Noto Sans was packaged.
+        //Arrange
+        var fonts = new FontManager();
+        TkFont sans = fonts.GetNamed("TkDefaultFont");
+
+        //Act / Assert — modern Greek never leaves the primary
+        using (SKFont primary = fonts.GetSkFont(sans))
+        {
+            foreach (char c in "αβγδεζηθικλμνξοπρςστυφχψω")
+            {
+                primary.ContainsGlyph(c).Should().BeTrue("Roboto covers modern Greek itself");
+            }
+
+            // ...while polytonic does, and is covered by the chain.
+            foreach (char c in "ᾳῆῷἀἐἠὠῥ")
+            {
+                primary.ContainsGlyph(c).Should().BeFalse("Roboto has no Greek Extended");
+                fonts.HasGlyph(sans, c).Should().BeTrue("the sans chain must cover polytonic Greek");
+            }
+        }
+    }
+
+    [Fact]
     public void Unsupported_scripts_are_tofu_and_never_throw()
     {
         // Hebrew, Arabic and CJK are deliberately out of scope. They must degrade
