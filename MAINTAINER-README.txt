@@ -15,8 +15,8 @@ The packages publish together, at ONE shared version, in one event.
   CodeBrix.Platform.TclTk.Extras.BsdLicenseForever   src/CodeBrix.Platform.TclTk.Extras   src/CodeBrix.Platform.TclTk.Extras/AGENT-README.txt
   CodeBrix.Platform.TkCanvas.BsdLicenseForever       src/CodeBrix.Platform.TkCanvas       src/CodeBrix.Platform.TkCanvas/AGENT-README.txt
 
-  * .TclTk    — the managed Tcl interpreter (ported engine; TCL AND
-                BSD-2-Clause).
+  * .TclTk    — the managed Tcl interpreter (ported engine; BSD-2-Clause,
+                Tcl-licensed half disclosed in THIRD-PARTY-NOTICES.txt).
   * .Extras   — original CodeBrix code: tclsqlite-compatible "sqlite3"
                 over CodeBrix.Sqlite and the pdf4tcl command surface over
                 CodeBrix.PdfDocuments (BSD-2-Clause).
@@ -30,9 +30,13 @@ REPOSITORY LAYOUT
 =================
     CodeBrix.Platform.TclTk.slnx     the solution: three src projects, three
                                      test projects under /Tests/, and the
-                                     "Solution Items" folder (AGENT-README.txt,
-                                     README.md, LICENSE, LICENSE-MODIFICATIONS.txt,
-                                     THIRD-PARTY-NOTICES.txt, icon-codebrix-128.png)
+                                     "Solution Items" folder — the authored docs
+                                     plus the build config: .gitignore,
+                                     AGENT-README.txt, EXTRAS-README.txt,
+                                     global.json, icon-codebrix-128.png, LICENSE,
+                                     LICENSE-MODIFICATIONS.txt, MAINTAINER-README.txt,
+                                     README-INDEX.txt, README.md,
+                                     THIRD-PARTY-NOTICES.txt
     src/CodeBrix.Platform.TclTk/     the interpreter. Ported layout is kept
                                      verbatim: Components/{Public,Private},
                                      Interfaces/{Public,Private}, Containers/
@@ -120,10 +124,28 @@ BUILDING
     CodeBrix.PdfDocuments.MitLicenseForever. .TkCanvas references
     SkiaSharp, CodeBrix.Imaging.ApacheLicenseForever (core, NOT .Drawing —
     TkCanvas must remain the single owner of the SkiaSharp stack),
-    CodeBrix.Platform.ApacheLicenseForever and
-    CodeBrix.Platform.SkiaSharp.Views.MitLicenseForever. Keep the
+    CodeBrix.Platform.ApacheLicenseForever,
+    CodeBrix.Platform.SkiaSharp.Views.MitLicenseForever and three font
+    packages — CodeBrix.Platform.Fonts.RobotoMono.OflLicenseForever,
+    CodeBrix.Platform.Fonts.Roboto.OflLicenseForever and
+    CodeBrix.Platform.Fonts.Merriweather.OflLicenseForever. Keep the
     SkiaSharp pin in step with the CodeBrix.Platform Skia runtime heads so
     consuming apps never see a SkiaSharp diamond conflict.
+  * PACKAGED FONTS ONLY, and the three references are load-bearing.
+    .TkCanvas renders every glyph from the font files those packages ship
+    and never from an operating-system font, so a Tk program measures and
+    looks identical on every machine; system fonts are reachable only
+    through the opt-in FontManager.AllowSystemFontFallback (default false).
+    A missing PRIMARY .ttf is fatal — FontManager throws
+    InvalidOperationException (MissingPackagedFont, Fonts/FontManager.cs)
+    naming the file and both ways out; a missing FALLBACK face is skipped.
+    Note the odd-looking one: the monospace primary is NOTO SANS MONO,
+    which arrives inside the RobotoMono package (a bundle of monospace
+    families) — NOT Roboto Mono, whose advance rounds to a different cell
+    width on Windows than on Linux. There is no NotoSansMono package, so
+    the RobotoMono reference must stay. The full rules, the fallback
+    chains and the measured coverage numbers are in the FONTS section of
+    src/CodeBrix.Platform.TkCanvas/AGENT-README.txt.
   * The host-integration layer (TkHostView, dispatcher/clipboard bridges,
     the hidden-input-element IME sink) lives INSIDE .TkCanvas by decision;
     there is no separate host package.
@@ -135,6 +157,16 @@ TESTING
 =======
     dotnet test CodeBrix.Platform.TclTk.slnx
 
+  * The repo-root global.json is what makes that command find tests: it
+    selects the Microsoft.Testing.Platform runner
+    ("test": { "runner": "Microsoft.Testing.Platform" }) and pins no SDK
+    version. Do not delete it — without it the current SDK discovers no
+    tests in these projects and reports success on zero tests. It is a
+    Solution Items entry so it stays visible in the IDE.
+  * The three test projects reference Microsoft.NET.Test.Sdk, xunit.v3,
+    xunit.runner.visualstudio and SilverAssertions only. No coverage
+    collector package is referenced; there is no coverage step in this
+    repo.
   * xUnit v3 + SilverAssertions ("x.Should()...") in all three test
     projects; xunit.runner.json in each sets parallelizeTestCollections
     = false, parallelizeAssembly = false, maxParallelThreads = 1. The
@@ -168,8 +200,8 @@ TESTING
     per-area widget/layout/event/font/image/menu/dialog/scheduler/style
     tests, TkTclBridgeTests, TkBootstrapTests.
   * Approximate size (grep of [Fact]/[Theory] attributes): interpreter
-    ~170 test methods (+~300 inline cases), Extras ~100, TkCanvas ~310
-    (+~40 inline cases).
+    ~175 test methods (+~310 inline cases), Extras ~100, TkCanvas ~340
+    (+~50 inline cases).
   * The DRAKON.Brix sample has its own test project
     (samples/DRAKON.Brix/tests/libs/DRAKON.Brix.TclBridge.Tests:
     DrakonRuntimeTests, DrnFileOpenTests, ProfileOpenTests) that boots the
@@ -200,6 +232,21 @@ PACKAGING AND PUBLISHING
       - .TkCanvas packs src/CodeBrix.Platform.TkCanvas/AGENT-README.txt.
     Keep each AGENT-README about exactly its own package; the root file
     carries only a catalogue line for the other two.
+  * .TkCanvas ALSO packs an MSBuild file:
+    src/CodeBrix.Platform.TkCanvas/buildTransitive/net10.0/
+    CodeBrix.Platform.TkCanvas.BsdLicenseForever.targets, packed to
+    buildTransitive\net10.0\ so NuGet auto-imports it into consuming
+    projects (the csproj also Imports it directly, so the fonts land beside
+    this assembly and flow on to the test projects that reference it by
+    ProjectReference). It defines the _CodeBrixTkCanvasCollectPackageFonts
+    target, which copies the .ttf/.ttf.manifest files out of the restored
+    CodeBrix.Platform.Fonts.* packages into
+    <app base>/CodeBrix.Platform.Fonts.<Name>/Fonts/ — the layout
+    FontManager probes and the same layout a CodeBrix.Platform app's asset
+    pipeline produces. Consumers opt out with
+    <CodeBrixTkCanvasDisableFontCopy>true</CodeBrixTkCanvasDisableFontCopy>.
+    Keep this file in step with the equivalent target in
+    CodeBrix.PdfDocCreate.Html2Pdf.
   * License metadata: ALL THREE declare plain BSD-2-Clause, matching their
     .BsdLicenseForever package ids. .TclTk additionally PREPENDS the upstream
     attribution to the family copyright line (the upstream license requires

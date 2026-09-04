@@ -53,6 +53,24 @@ NuGet dependencies you get transitively:
                                                         XAML elements)
   * CodeBrix.Platform.SkiaSharp.Views.MitLicenseForever (the SKXamlCanvas
                                                         TkHostView paints on)
+  * CodeBrix.Platform.Fonts.RobotoMono.OflLicenseForever (the MONOSPACE face:
+                                                        this package is a
+                                                        bundle, and the face
+                                                        used out of it is Noto
+                                                        Sans Mono, not Roboto
+                                                        Mono - see FONTS)
+  * CodeBrix.Platform.Fonts.Roboto.OflLicenseForever   (the SANS-SERIF face,
+                                                        plus the Noto Sans
+                                                        fallbacks - see FONTS)
+  * CodeBrix.Platform.Fonts.Merriweather.OflLicenseForever (the SERIF face,
+                                                        plus the Noto Serif
+                                                        fallbacks - see FONTS)
+
+The three font packages are not optional and are not a convenience: this
+toolkit renders with PACKAGE fonts only and never with an operating-system
+font, so a Tk program measures and looks the same on every machine. A missing
+PRIMARY font file throws. Read the FONTS section before changing anything
+font-related, including how the .ttf files reach your build output.
 
 Requirements: to show a TkHostView you need a CodeBrix.Platform application
 with exactly one platform head package (for example
@@ -710,8 +728,8 @@ FONTS (Fonts)
         never needs a fallback. What it lacks is Greek Extended (U+1F00-1FFF),
         the POLYTONIC block for Ancient Greek: 1 of 233. The static
         Roboto-Regular is identical, so this is not a variable-font quirk, and
-        Open Sans (2/233) and Roboto Mono (1/233) are no better. NOTO SANS
-        (added to the Fonts.Roboto package in 1.0.240.51) carries all 233 in
+        Open Sans (2/233) and Roboto Mono (1/233) are no better. NOTO SANS,
+        which the Fonts.Roboto package ships, carries all 233 in
         matching sans letterforms and sits directly behind Roboto; it also
         covers the one Cyrillic codepoint Roboto misses (256/256 vs 255/256).
         Before it was packaged, sans-serif had to borrow the SERIF face for
