@@ -64,22 +64,14 @@
     <Product>CodeBrix.Platform.TkCanvas</Product>
     <Title>CodeBrix.Platform.TkCanvas</Title>
     <Authors>Jeremy Ellis</Authors>
-    <Description>A retained-mode reimplementation of the classic Tk widget toolkit, drawn entirely onto a SkiaSharp surface and scripted through CodeBrix.Platform.TclTk. Provides the Tk geometry managers (pack, grid), the classic widget set, the canvas widget with its scene-graph item model, and the Tk event/bind/focus system - so existing Tcl/Tk programs can present their user interface inside a CodeBrix.Platform application with the classic Tk look, identically on every platform.</Description>
-    <!--
-      Unlike CodeBrix.Platform.TclTk (which contains the ported Eagle engine and
-      therefore carries the Eagle attribution and the Tcl license in its
-      THIRD-PARTY-NOTICES.txt), this
-      assembly is entirely original CodeBrix code: plain BSD-2-Clause and the
-      family copyright line. The TCL-licensed half arrives via the .TclTk
-      dependency, which carries its own license metadata.
-    -->
+    <Description>A retained-mode reimplementation of the classic Tk widget toolkit, drawn entirely onto a SkiaSharp surface and scripted through CodeBrix.Platform.TclTk. Provides the Tk geometry managers (pack, grid), the classic widget set, the canvas widget with its scene-graph item model, and the Tk event/bind/focus system.</Description>
     <PackageLicenseExpression>BSD-2-Clause</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/ellisnet/CodeBrix.Platform.TclTk</PackageProjectUrl>
     <RepositoryUrl>https://github.com/ellisnet/CodeBrix.Platform.TclTk</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageIcon>icon-codebrix-128.png</PackageIcon>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <Copyright>Copyright (c) 2026 Jeremy Ellis and contributors.</Copyright>
+    <Copyright>Copyright (c) 2026 Jeremy Ellis and contributors</Copyright>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
     <IsPackable>true</IsPackable>
