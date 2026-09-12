@@ -5,19 +5,19 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
-    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.11" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.0" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.12" />
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="xunit.v3" Version="4.0.0" />
-    <PackageReference Include="SilverAssertions.ApacheLicenseForever" Version="1.0.237.1200" />
+    <PackageReference Include="SilverAssertions.ApacheLicenseForever" Version="1.0.248.1071" />
     <!-- The library references only the managed SkiaSharp package (consuming
          apps get the native asset from their CodeBrix.Platform Skia runtime
          head). The TESTS run headless on Linux and need the native library
          directly. Keep the version in step with the library's SkiaSharp pin. -->
-    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.151.0" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.152.0" />
   </ItemGroup>
 
   <ItemGroup>

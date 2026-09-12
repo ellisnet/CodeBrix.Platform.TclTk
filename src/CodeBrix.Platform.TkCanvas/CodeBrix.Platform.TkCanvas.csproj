@@ -87,20 +87,20 @@
          Skia runtime heads resolve (see CodeBrix.Platform.Runtime.Skia.*),
          so a consuming app never sees a SkiaSharp diamond conflict. Keep this in step
          with CodeBrix.Platform when bumping. -->
-    <PackageReference Include="SkiaSharp" Version="4.151.0" />
+    <PackageReference Include="SkiaSharp" Version="4.152.0" />
     <!-- CodeBrix.Imaging CORE (not .Drawing): decode/encode + raw pixel access only.
          TkCanvas does the pixel-to-SKBitmap bridge itself and remains the single
          owner of the SkiaSharp stack (.Drawing would drag a second SkiaSharp
          reference into the dependency graph). -->
-    <PackageReference Include="CodeBrix.Imaging.ApacheLicenseForever" Version="1.0.238.393" />
+    <PackageReference Include="CodeBrix.Imaging.ApacheLicenseForever" Version="1.0.248.1113" />
     <!-- The host-integration layer (Hosting/): the ready-made TkHostView control
          (an SKXamlCanvas hosting the whole Tk tree), the dispatcher/clipboard
          bridges, and the hidden-input-element IME sink all live IN this library
          (decided 2026-07-10: no separate host package), so it references the
          CodeBrix.Platform UI stack and its SkiaSharp XAML canvas directly. Keep
          both pinned in step with the platform release the family targets. -->
-    <PackageReference Include="CodeBrix.Platform.ApacheLicenseForever" Version="1.0.231.233" />
-    <PackageReference Include="CodeBrix.Platform.SkiaSharp.Views.MitLicenseForever" Version="4.151.0" />
+    <PackageReference Include="CodeBrix.Platform.ApacheLicenseForever" Version="1.0.254.167" />
+    <PackageReference Include="CodeBrix.Platform.SkiaSharp.Views.MitLicenseForever" Version="4.152.0" />
     <!--
       THE font supply. TkCanvas renders with package fonts only and never with an
       operating-system font, so a Tk program measures and looks the same on every
@@ -112,17 +112,16 @@
       while Linux produces 8; Noto Sans Mono is exactly 0.6em and lands on 8 everywhere.
       Keep this reference even if the id reads oddly — there is no NotoSansMono package.
     -->
-    <PackageReference Include="CodeBrix.Platform.Fonts.RobotoMono.OflLicenseForever" Version="1.0.238.534" />
+    <PackageReference Include="CodeBrix.Platform.Fonts.RobotoMono.OflLicenseForever" Version="1.0.248.1223" />
     <!-- sans-serif (TkDefaultFont and most widgets) and serif. Same three font
          packages CodeBrix.PdfDocCreate.Html2Pdf pairs together. -->
-    <PackageReference Include="CodeBrix.Platform.Fonts.Roboto.OflLicenseForever" Version="1.0.240.51" />
-    <PackageReference Include="CodeBrix.Platform.Fonts.Merriweather.OflLicenseForever" Version="1.0.238.511" />
+    <PackageReference Include="CodeBrix.Platform.Fonts.Roboto.OflLicenseForever" Version="1.0.248.1219" />
+    <PackageReference Include="CodeBrix.Platform.Fonts.Merriweather.OflLicenseForever" Version="1.0.248.1209" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- Pack the font-delivery target for consumers of the nuget... -->
-    <None Include="buildTransitive\net10.0\CodeBrix.Platform.TkCanvas.BsdLicenseForever.targets"
-          Pack="true" PackagePath="buildTransitive\net10.0\" />
+    <None Include="buildTransitive\net10.0\CodeBrix.Platform.TkCanvas.BsdLicenseForever.targets" Pack="true" PackagePath="buildTransitive\net10.0\" />
   </ItemGroup>
 
   <!-- ...and run it for THIS project too, so the fonts land beside this assembly and
