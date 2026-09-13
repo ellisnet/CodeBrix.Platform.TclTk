@@ -1,6 +1,10 @@
+using System;
+using System.Data;
 using System.IO;
 
 using CodeBrix.Platform.TclTk._Components.Public;
+using CodeBrix.Platform.TclTk._Interfaces.Public;
+using CodeBrix.Platform.TclTk.Extras.Sqlite;
 using CodeBrix.Platform.TclTk.Extras.Tests.Support;
 using SilverAssertions;
 using Xunit;
@@ -188,6 +192,122 @@ public class Sqlite3CommandTests
                 .Should().Be("two");
 
             ExtrasTestHelpers.Eval(interpreter, "db1 close");
+            ExtrasTestHelpers.Eval(interpreter, "db2 close");
+        }
+    }
+
+    // ------------------------------------------- release without an explicit close
+
+    private static SqliteHandleCommand GetHandle(Interpreter interpreter, string name)
+    {
+        long token = 0;
+        ICommand command = null;
+        Result error = null;
+
+        //Without the Wrapper flag the lookup returns the handle itself, not the
+        //engine's wrapper around it.
+        interpreter.GetCommand(
+                name, LookupFlags.Default & ~LookupFlags.Wrapper, ref token, ref command, ref error)
+            .Should().Be(ReturnCode.Ok,
+                "the handle command should exist; error: " + (error != null ? error.ToString() : "<null>"));
+
+        return (SqliteHandleCommand)command;
+    }
+
+    [Fact]
+    public void disposing_the_interpreter_closes_a_handle_that_was_never_closed()
+    {
+        string folder = ExtrasTestHelpers.CreateTempFolder();
+        Interpreter interpreter = null;
+        try
+        {
+            //Arrange - the DRAKON pattern: the open .drn stays open for the whole
+            // session, and nothing runs "db close" before the interpreter goes away.
+            string path = Path.Combine(folder, "left-open.db");
+            interpreter = ExtrasTestHelpers.CreateInterpreter();
+            ExtrasTestHelpers.Eval(interpreter, "sqlite3 db {" + path + "}");
+            ExtrasTestHelpers.Eval(interpreter, "db eval {create table t (a integer)}");
+            SqliteHandleCommand handle = GetHandle(interpreter, "db");
+            handle.Database.State.Should().Be(ConnectionState.Open);
+
+            //Act
+            interpreter.Dispose();
+
+            //Assert
+            handle.Database.State.Should().Be(ConnectionState.Closed);
+        }
+        finally
+        {
+            interpreter?.Dispose();
+            ExtrasTestHelpers.DeleteTempFolder(folder);
+        }
+    }
+
+    [Fact]
+    public void disposing_the_interpreter_lets_windows_delete_a_file_that_was_never_closed()
+    {
+        //Only Windows refuses to delete a file that is still open; Linux and macOS
+        //delete it anyway, so on those systems this check would prove nothing.
+        Assert.SkipUnless(OperatingSystem.IsWindows(),
+            "Only Windows refuses to delete a file that is still open.");
+
+        string folder = ExtrasTestHelpers.CreateTempFolder();
+        Interpreter interpreter = null;
+        try
+        {
+            //Arrange
+            string path = Path.Combine(folder, "left-open.db");
+            interpreter = ExtrasTestHelpers.CreateInterpreter();
+            ExtrasTestHelpers.Eval(interpreter, "sqlite3 db {" + path + "}");
+            ExtrasTestHelpers.Eval(interpreter, "db eval {create table t (a integer)}");
+
+            //Act
+            interpreter.Dispose();
+
+            //Assert - File.Delete throws IOException on Windows while the file is open.
+            File.Delete(path);
+            File.Exists(path).Should().BeFalse();
+        }
+        finally
+        {
+            interpreter?.Dispose();
+            ExtrasTestHelpers.DeleteTempFolder(folder);
+        }
+    }
+
+    [Fact]
+    public void deleting_the_handle_command_closes_the_database()
+    {
+        using (Interpreter interpreter = ExtrasTestHelpers.CreateInterpreter())
+        {
+            //Arrange
+            ExtrasTestHelpers.Eval(interpreter, "sqlite3 db :memory:");
+            SqliteHandleCommand handle = GetHandle(interpreter, "db");
+
+            //Act - tclsqlite closes the database when its command is deleted.
+            ExtrasTestHelpers.Eval(interpreter, "rename db {}");
+
+            //Assert
+            handle.Database.State.Should().Be(ConnectionState.Closed);
+            ExtrasTestHelpers.Eval(interpreter, "info commands db").Should().Be("");
+        }
+    }
+
+    [Fact]
+    public void renaming_the_handle_command_keeps_the_database_open()
+    {
+        using (Interpreter interpreter = ExtrasTestHelpers.CreateInterpreter())
+        {
+            //Arrange
+            ExtrasTestHelpers.Eval(interpreter, "sqlite3 db :memory:");
+            ExtrasTestHelpers.Eval(interpreter, "db eval {create table t (a integer)}");
+
+            //Act
+            ExtrasTestHelpers.Eval(interpreter, "rename db db2");
+
+            //Assert - the same database answers under the new name.
+            ExtrasTestHelpers.Eval(interpreter, "db2 onecolumn {select count(*) from sqlite_master}")
+                .Should().Be("1");
             ExtrasTestHelpers.Eval(interpreter, "db2 close");
         }
     }

@@ -121,6 +121,14 @@ Handle verbs (the complete set)
         released immediately, like tclsqlite) and DELETES the HANDLE command.
         Any other verb after close is 'invalid command name "HANDLE"'.
 
+    Deleting the HANDLE command without "close" ("rename HANDLE {}", or
+    redefining HANDLE with proc) and disposing the Interpreter both release
+    the database exactly as "close" does, as tclsqlite's command-delete
+    callback does. A file opened by a script that never closes it is
+    therefore not left open (on Windows: locked against deletion) once the
+    Interpreter is disposed. Renaming HANDLE to another name keeps the
+    database open under the new name.
+
 Any other verb fails with:
     bad option "X": must be changes, close, eval, or onecolumn
 
@@ -490,6 +498,10 @@ COMMON PITFALLS TO AVOID
     stores "True" unless the interpreter was created in TclshCompat mode.
   * "db close" deletes the handle command; a second close is an "invalid
     command name" error, not a no-op.
+  * A handle left open is released when the Interpreter is disposed, so
+    dispose the Interpreter (a using block) before deleting or moving a
+    database file the script opened. Until then the file stays open, and
+    Windows refuses to delete it.
   * pdf4tcl text -x/-y is the BASELINE origin, not the top-left corner: a
     glyph drawn at -y 0 sits above the margin box.
   * pdf4tcl::new with -unit mm makes EVERY later number (coordinates, sizes,

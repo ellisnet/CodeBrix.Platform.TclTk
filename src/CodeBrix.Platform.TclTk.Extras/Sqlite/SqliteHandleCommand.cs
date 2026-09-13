@@ -28,6 +28,12 @@ internal sealed class SqliteHandleCommand : Default
         _database = database;
     }
 
+    /// <summary>
+    /// The database this handle owns. Internal so the tests can observe whether
+    /// it has been released.
+    /// </summary>
+    internal SqliteDatabase Database => _database;
+
     public override ReturnCode Execute(
         Interpreter interpreter, IClientData clientData, ArgumentList arguments, ref Result result)
     {
@@ -222,14 +228,9 @@ internal sealed class SqliteHandleCommand : Default
 
         if (!_closed)
         {
-            _closed = true;
-
-            SqliteConnection connection = _database.Connection;
-            _database.Dispose();
-
-            // Microsoft.Data.Sqlite pools connections; without clearing the pool the
-            // database file stays locked/open after close, unlike tclsqlite.
-            if (connection != null) { SqliteConnection.ClearPool(connection); }
+            // Release first: removing the command terminates it, and Terminate
+            // must then find the database already released.
+            ReleaseDatabase();
 
             Result removeError = null;
             interpreter.RemoveCommand(Token, null, ref removeError);
@@ -237,6 +238,38 @@ internal sealed class SqliteHandleCommand : Default
 
         result = string.Empty;
         return ReturnCode.Ok;
+    }
+
+    /// <summary>
+    /// Called by the interpreter when this command goes away without "close":
+    /// the command is deleted (<c>rename db {}</c>) or replaced, or the
+    /// interpreter is disposed. Releases the database the way <c>close</c> does,
+    /// as tclsqlite's command-delete callback does, so a script that never
+    /// closes its database does not leave the file open after the interpreter
+    /// is gone. Windows cannot delete a file that is still open.
+    /// </summary>
+    public override ReturnCode Terminate(
+        Interpreter interpreter, IClientData clientData, ref Result result)
+    {
+        ReleaseDatabase();
+        return base.Terminate(interpreter, clientData, ref result);
+    }
+
+    /// <summary>
+    /// Disposes the database and clears its connection pool. Only the first
+    /// call does anything, so <c>close</c> followed by termination is safe.
+    /// </summary>
+    private void ReleaseDatabase()
+    {
+        if (_closed) { return; }
+        _closed = true;
+
+        SqliteConnection connection = _database.Connection;
+        _database.Dispose();
+
+        // Microsoft.Data.Sqlite pools connections; without clearing the pool the
+        // database file stays locked/open after close, unlike tclsqlite.
+        if (connection != null) { SqliteConnection.ClearPool(connection); }
     }
 
     /// <summary>
