@@ -79,8 +79,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="CodeBrix.Sqlite.ApacheLicenseForever" Version="1.0.250.22" />
-    <PackageReference Include="CodeBrix.PdfDocuments.MitLicenseForever" Version="1.0.254.196" />
+    <PackageReference Include="CodeBrix.Sqlite.ApacheLicenseForever" Version="1.0.275.125" />
+    <PackageReference Include="CodeBrix.PdfDocuments.MitLicenseForever" Version="1.0.271.1182" />
   </ItemGroup>
 
   <ItemGroup>
