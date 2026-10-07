@@ -52,6 +52,35 @@ public class TraceCommandTests
     }
 
     [Fact]
+    public void Trace_unset_callback_sees_the_variable_as_gone()
+        => TclTkTest.EvalOnce(
+            "set ::log {}; proc ucb2 {n1 n2 op} { lappend ::log in:[info exists ::w] };" +
+            " set ::w 1; trace add variable ::w unset ucb2; unset ::w;" +
+            " list $::log [info exists ::w]")
+            .Should().Be("in:0 0"); // tclsh: plain: in:0 exists=0
+
+    [Fact]
+    public void Trace_unset_callback_can_recreate_the_variable()
+    {
+        //Arrange (tclsh: log=in:0 exists=1 v=recreated traces={unset cb};
+        //second: v=recreated)
+        using Interpreter interpreter = TclTkTest.CreateInterpreter();
+        TclTkTest.Eval(interpreter,
+            "set ::log {}; proc rcb {n1 n2 op} { lappend ::log in:[info exists ::rv];" +
+            " set ::rv recreated; trace add variable ::rv unset rcb };" +
+            " set ::rv 1; trace add variable ::rv unset rcb");
+
+        //Act
+        TclTkTest.Eval(interpreter, "unset ::rv");
+
+        //Assert
+        TclTkTest.Eval(interpreter, "set ::log").Should().Be("in:0");
+        TclTkTest.Eval(interpreter, "set ::rv").Should().Be("recreated");
+        TclTkTest.Eval(interpreter, "trace info variable ::rv").Should().Be("{unset rcb}");
+        TclTkTest.Eval(interpreter, "unset ::rv; set ::rv").Should().Be("recreated");
+    }
+
+    [Fact]
     public void Trace_multiple_operations_fire_in_sequence()
         => TclTkTest.EvalOnce(
             "set ::log {}; proc cb {n1 n2 op} { lappend ::log $op };" +

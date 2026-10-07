@@ -73,6 +73,7 @@ public sealed class CanvasWidget : IWidget
         window.ClassName = "Canvas";
         window.Widget = this;
         window.ClassEventHandler = HandleWindowEvent;
+        ItemBindings.WindowingSystemSource = () => window.Tree.WindowingSystem;
 
         Theming.OptionDatabase database = window.Tree.OptionDatabaseIfCreated;
         if (database != null && !database.IsEmpty)

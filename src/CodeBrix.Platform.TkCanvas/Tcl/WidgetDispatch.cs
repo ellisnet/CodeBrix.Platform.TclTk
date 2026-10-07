@@ -9,6 +9,8 @@ using CodeBrix.Platform.TkCanvas.Text;
 using CodeBrix.Platform.TkCanvas.Widgets;
 using CodeBrix.Platform.TkCanvas.Windowing;
 
+using SkiaSharp;
+
 namespace CodeBrix.Platform.TkCanvas.Tcl;
 
 /// <summary>
@@ -32,7 +34,15 @@ internal static class WidgetDispatch
             return Configure(ctx, path, words);
         }
 
-        return ctx.Ui(() => ExecuteOnUi(ctx, path, words));
+        string result = ctx.Ui(() => ExecuteOnUi(ctx, path, words));
+
+        // A listbox's insert/delete writes its items back to the linked
+        // -listvariable (on the Tcl thread, before the command returns).
+        if ((sub == "insert" || sub == "delete") && ctx.VarLinks.HasListLink(path))
+        {
+            ctx.VarLinks.PushList(ctx, path);
+        }
+        return result;
     }
 
     private static string Configure(BridgeContext ctx, string path, string[] words)
@@ -59,6 +69,15 @@ internal static class WidgetDispatch
         }
 
         Dictionary<string, string> options = BridgeRegistrar.ParseOptionPairs(words, 2);
+
+        // Tk rejects the whole configure (every option keeps its old value)
+        // when a listbox's new -listvariable holds an invalid list.
+        string listVariable;
+        if (options.TryGetValue("-listvariable", out listVariable) && listVariable.Length > 0 &&
+            ctx.Ui(() => path != TkPaths.Root && ctx.ResolveWindow(path).Widget is ListboxWidget ? "1" : "0") == "1")
+        {
+            VariableLinks.ValidateListVariable(ctx, listVariable);
+        }
 
         ctx.Ui(() =>
         {
@@ -567,7 +586,8 @@ internal static class WidgetDispatch
             case "insert":
                 if (words.Length >= 3)
                 {
-                    int at = ListboxIndex(listbox, words[2]);
+                    // For insert, "end" is the item count (append), as in Tk.
+                    int at = words[2] == "end" ? listbox.Size : ListboxIndex(listbox, words[2]);
                     var items = new string[words.Length - 3];
                     Array.Copy(words, 3, items, 0, items.Length);
                     listbox.Insert(at, items);
@@ -779,6 +799,9 @@ internal static class WidgetDispatch
             case "see":
                 return "";
 
+            case "bbox":
+                return TreeviewBBox(ctx, tree, words);
+
             case "identify":
                 // identify row X Y / identify item X Y — the item id at the
                 // given widget coordinates ("" for empty space; a consumer
@@ -811,6 +834,53 @@ internal static class WidgetDispatch
             default:
                 return string.Empty;
         }
+    }
+
+    private static string TreeviewBBox(BridgeContext ctx, TreeviewWidget tree, string[] words)
+    {
+        // bbox itemid ?column? — the usage text is Tk's, verbatim.
+        if (words.Length < 3 || words.Length > 4)
+        {
+            throw BridgeRegistrar.WrongArgs(ctx.PathOf(tree.Window) + " bbox itemid ?column");
+        }
+
+        string id = words[2];
+        if (tree.Item(id) == null) { throw new TkTclError("Item " + id + " not found"); }
+
+        int column = -1;
+        if (words.Length == 4)
+        {
+            string columnText = words[3];
+            int number;
+            if (columnText.StartsWith("#", StringComparison.Ordinal) &&
+                int.TryParse(columnText.Substring(1), NumberStyles.Integer, CultureInfo.InvariantCulture, out number))
+            {
+                if (number < 0 || number > tree.Columns.Count)
+                {
+                    throw new TkTclError("Column " + columnText + " out of range");
+                }
+                column = number;
+            }
+            else
+            {
+                int named = -1;
+                for (int i = 0; i < tree.Columns.Count; i++)
+                {
+                    if (tree.Columns[i] == columnText) { named = i; break; }
+                }
+                if (named < 0) { throw new TkTclError("Invalid column index " + columnText); }
+                column = named + 1;
+            }
+        }
+
+        SKRectI? box = tree.BBox(id, column);
+        if (!box.HasValue) { return ""; }
+        SKRectI rect = box.Value;
+        return string.Join(" ",
+            rect.Left.ToString(CultureInfo.InvariantCulture),
+            rect.Top.ToString(CultureInfo.InvariantCulture),
+            rect.Width.ToString(CultureInfo.InvariantCulture),
+            rect.Height.ToString(CultureInfo.InvariantCulture));
     }
 
     private static string TreeviewItemDispatch(TreeviewWidget tree, string[] words)

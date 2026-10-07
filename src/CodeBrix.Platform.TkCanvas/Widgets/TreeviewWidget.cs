@@ -541,6 +541,55 @@ public sealed class TreeviewWidget : WidgetBase
         if (!Window.IsDestroyed) { Window.Tree.Scheduler.ScheduleRepaint(); }
     }
 
+    /// <summary>
+    /// The bounding box of an item's row (<paramref name="column"/> &lt; 0) or
+    /// of one of its cells — <c>bbox item ?column?</c>. Column 0 is the tree
+    /// column (<c>#0</c>), column c &gt;= 1 the c-th data column. As in Tk the
+    /// box is in window coordinates, a row spans every column, and the result
+    /// is null when the item is not visible: a closed ancestor hides it, or it
+    /// is scrolled above the view or starts below its bottom edge (a row cut
+    /// off by the bottom edge still counts as visible).
+    /// </summary>
+    /// <param name="id">The item id.</param>
+    /// <param name="column">The column number, or -1 for the whole row.</param>
+    /// <returns>The box, or null when the item is not visible.</returns>
+    public SKRectI? BBox(string id, int column = -1)
+    {
+        IReadOnlyList<string> visible = VisibleItems();
+        int position = -1;
+        for (int i = 0; i < visible.Count; i++)
+        {
+            if (visible[i] == id) { position = i; break; }
+        }
+        int row = position - _top;
+        if (position < 0 || row < 0) { return null; }
+
+        int inset = Inset;
+        int rowHeight = RowHeight;
+        int top = inset + HeadingHeight + row * rowHeight;
+        if (top >= Window.Height - inset) { return null; }
+
+        int treeWidth = TreeColumnWidth;
+        int left;
+        int width;
+        if (column < 0)
+        {
+            left = inset;
+            width = treeWidth + _columns.Count * ColumnWidth;
+        }
+        else if (column == 0)
+        {
+            left = inset;
+            width = treeWidth;
+        }
+        else
+        {
+            left = inset + treeWidth + (column - 1) * ColumnWidth;
+            width = ColumnWidth;
+        }
+        return new SKRectI(left, top, left + width, top + rowHeight);
+    }
+
     /// <summary>The visible item id at a window y coordinate, or null.</summary>
     /// <param name="y">The window-relative y.</param>
     /// <returns>The item id, or null.</returns>

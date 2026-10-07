@@ -198,7 +198,19 @@ TESTING
     SqlParameterScannerTests, Pdf4Tcl*Tests, DrakonDrnCompatibilityTests,
     TclTkExtrasTests. TkCanvas: *OracleTests (pack/canvas/bind/theming),
     per-area widget/layout/event/font/image/menu/dialog/scheduler/style
-    tests, TkTclBridgeTests, TkBootstrapTests.
+    tests, TkTclBridgeTests, TkBootstrapTests, the bridge-dispatch tests
+    (VariableLinksTests, MenuDispatchTests, WidgetDispatchTests),
+    TkKeyMapperTests and WindowingSystemModeTests.
+  * Windowing system in tests: a widget tree's windowing system ("x11",
+    "aqua", "win32") is fixed by the first TkTclBridge registered on it
+    (WindowingSystemMode: HostNative, or the X11 opt-out) and decides the
+    Command/Mod1/Option modifier names, the %s encoding, the host
+    Command-key mapping and "tk windowingsystem". The host is derived from
+    the OS; tests inject another one through the internal
+    TkWindowingSystem.HostOverride (Events/TkWindowingSystem.cs) BEFORE
+    creating the tree and MUST reset it to null afterwards
+    (WindowingSystemModeTests). Pattern, %s and key-mapper rules take the
+    system explicitly, so their tests need no global state.
   * Approximate size (grep of [Fact]/[Theory] attributes): interpreter
     ~175 test methods (+~310 inline cases), Extras ~100, TkCanvas ~340
     (+~50 inline cases).

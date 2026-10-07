@@ -292,6 +292,26 @@ internal sealed class ScriptVariableTrace : _Traces.Default
         }
 
         //
+        // NOTE: Stock Tcl runs unset callbacks after the variable is gone:
+        //       the callback sees it as nonexistent and may recreate it,
+        //       and a recreated variable survives the unset.  The engine
+        //       fires this trace BEFORE the unset, so for a whole scalar
+        //       variable mark it undefined first (unless an earlier
+        //       callback already recreated it) and, when the callback
+        //       defines it again, cancel the engine's pending unset.
+        //
+        IVariable unsetVariable = null;
+
+        if ((breakpointType == BreakpointType.BeforeVariableUnset) &&
+            (index == null) && !traceInfo.Cancel &&
+            (traceInfo.Variable != null) &&
+            !EntityOps.IsArray(traceInfo.Variable))
+        {
+            unsetVariable = traceInfo.Variable;
+            EntityOps.SetUndefined(unsetVariable, true);
+        }
+
+        //
         // NOTE: For a write, store the new value FIRST, so the callback
         //       observes it (and so the value remains set even when the
         //       callback fails), matching stock Tcl, which fires write
@@ -321,6 +341,9 @@ internal sealed class ScriptVariableTrace : _Traces.Default
 
         ReturnCode code = interpreter.EvaluateScript(
             callback, ref localResult);
+
+        if ((unsetVariable != null) && !EntityOps.IsUndefined(unsetVariable))
+            traceInfo.Cancel = true;
 
         if (code == ReturnCode.Ok)
         {

@@ -45,6 +45,16 @@ public sealed class EventPattern : IEquatable<EventPattern>
     /// <returns>The parsed pattern.</returns>
     public static EventPattern Parse(string text)
     {
+        return Parse(text, TkWindowingSystem.HostNative);
+    }
+
+    /// <summary>
+    /// Parses a pattern reading the system-dependent modifier names
+    /// (Command/Mod1/M1, Option/Mod2/M2) by the rules of
+    /// <paramref name="windowingSystem"/>.
+    /// </summary>
+    internal static EventPattern Parse(string text, string windowingSystem)
+    {
         if (string.IsNullOrEmpty(text)) { throw new ArgumentException("empty event pattern", nameof(text)); }
 
         var pattern = new EventPattern { Text = text };
@@ -70,7 +80,7 @@ public sealed class EventPattern : IEquatable<EventPattern>
         while (index < parts.Length)
         {
             EventModifiers modifier;
-            if (!TryParseModifier(parts[index], out modifier)) { break; }
+            if (!TryParseModifier(windowingSystem, parts[index], out modifier)) { break; }
             pattern.Modifiers |= modifier;
             index++;
         }
@@ -158,16 +168,18 @@ public sealed class EventPattern : IEquatable<EventPattern>
         return pattern;
     }
 
-    private static bool TryParseModifier(string word, out EventModifiers modifier)
+    private static bool TryParseModifier(string windowingSystem, string word, out EventModifiers modifier)
     {
+        // The Mod1/Mod2 names depend on the windowing system, as in Tk.
+        if (TkWindowingSystem.TryMapModifierName(windowingSystem, word, out modifier)) { return true; }
+
         switch (word)
         {
             case "Shift": modifier = EventModifiers.Shift; return true;
             case "Lock": modifier = EventModifiers.Lock; return true;
             case "Control": modifier = EventModifiers.Control; return true;
-            case "Alt": case "Mod1": case "M1": modifier = EventModifiers.Alt; return true;
+            case "Alt": modifier = EventModifiers.Alt; return true;
             case "Meta": case "M": modifier = EventModifiers.Meta; return true;
-            case "Command": case "Cmd": modifier = EventModifiers.Command; return true;
             case "B1": case "Button1": modifier = EventModifiers.Button1; return true;
             case "B2": case "Button2": modifier = EventModifiers.Button2; return true;
             case "B3": case "Button3": modifier = EventModifiers.Button3; return true;

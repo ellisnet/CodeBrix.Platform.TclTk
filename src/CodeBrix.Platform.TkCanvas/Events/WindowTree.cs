@@ -22,9 +22,13 @@ public sealed class WindowTree
     private FontManager _fonts;
     private Overlay.WindowManager _windowManager;
 
+    private string _windowingSystem;
+    private bool _windowingSystemFixed;
+
     internal WindowTree(TkWindow root)
     {
         Root = root;
+        Bindings.WindowingSystemSource = () => WindowingSystem;
     }
 
     /// <summary>The root window of this tree.</summary>
@@ -32,6 +36,40 @@ public sealed class WindowTree
 
     /// <summary>The binding table of this tree (<c>bind</c>).</summary>
     public BindingTable Bindings { get; } = new BindingTable();
+
+    /// <summary>
+    /// The Tk windowing system this tree behaves as (<c>x11</c>,
+    /// <c>aqua</c> or <c>win32</c>): what <c>tk windowingsystem</c> reports,
+    /// how modifier names in event patterns are read, how <c>%s</c> encodes
+    /// the state, and whether the host's Command key is a modifier. The
+    /// host's native system until a Tcl bridge is registered with
+    /// <c>WindowingSystemMode.X11</c>, which switches all of it to x11.
+    /// </summary>
+    public string WindowingSystem
+    {
+        get
+        {
+            if (_windowingSystem == null) { _windowingSystem = TkWindowingSystem.HostNative; }
+            return _windowingSystem;
+        }
+    }
+
+    /// <summary>
+    /// Fixes the tree's windowing system (the bridge's
+    /// <c>WindowingSystemMode</c>). A tree serves one windowing system: a
+    /// second bridge asking for a different one is refused.
+    /// </summary>
+    internal void FixWindowingSystem(string system)
+    {
+        if (_windowingSystemFixed && !string.Equals(_windowingSystem, system, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "the widget tree already behaves as windowing system \"" + _windowingSystem +
+                "\"; it cannot switch to \"" + system + "\"");
+        }
+        _windowingSystem = system;
+        _windowingSystemFixed = true;
+    }
 
     /// <summary>
     /// The tree's work scheduler: idle callbacks, <c>after</c> timers, and

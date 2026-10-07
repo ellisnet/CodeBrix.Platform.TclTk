@@ -180,17 +180,17 @@ public sealed class TkHostTextInputSink : ITextInputSink
         {
             string keySym;
             EventModifiers state;
-            if (!TkKeyMapper.TryMapSpecialOrControl(args.Key, out keySym, out state))
+            if (!TkKeyMapper.TryMapSpecialOrControl(args.Key, tree.WindowingSystem, out keySym, out state))
             {
                 return; // plain character keys arrive through TextChanged
             }
 
-            // Control-v is NOT forwarded: the element's native paste inserts
-            // the clipboard text, which then commits through TextChanged —
-            // the single paste path. (Forwarding too would paste twice, and
-            // the element's Paste event ignores Handled on the X11 head —
-            // both X11-head-verified.)
-            if (keySym == "v" && (state & EventModifiers.Control) != 0)
+            // Control-v (Command-v on macOS) is NOT forwarded: the element's
+            // native paste inserts the clipboard text, which then commits
+            // through TextChanged — the single paste path. (Forwarding too
+            // would paste twice, and the element's Paste event ignores
+            // Handled on the X11 head — both X11-head-verified.)
+            if (keySym == "v" && (state & (EventModifiers.Control | EventModifiers.Command)) != 0)
             {
                 return;
             }
@@ -205,7 +205,7 @@ public sealed class TkHostTextInputSink : ITextInputSink
         string viewKeySym;
         string character;
         EventModifiers viewState;
-        if (TkKeyMapper.TryMapViewKey(args.Key, out viewKeySym, out character, out viewState))
+        if (TkKeyMapper.TryMapViewKey(args.Key, tree.WindowingSystem, out viewKeySym, out character, out viewState))
         {
             tree.KeyEvent(TkEventType.KeyPress, viewKeySym, character, viewState);
             args.Handled = true;

@@ -4,13 +4,15 @@ using System.Globalization;
 
 using CodeBrix.Platform.TkCanvas.Menus;
 
+using SkiaSharp;
+
 namespace CodeBrix.Platform.TkCanvas.Tcl;
 
 /// <summary>
 /// The menu instance-command dispatcher: <c>add</c>/<c>insert</c>/
 /// <c>delete</c>/<c>entryconfigure</c>/<c>entrycget</c>/<c>index</c>/
-/// <c>invoke</c>/<c>post</c>/<c>unpost</c> over <see cref="MenuWidget"/>.
-/// Runs on the UI thread.
+/// <c>invoke</c>/<c>post</c>/<c>unpost</c>/<c>xposition</c>/<c>yposition</c>
+/// over <see cref="MenuWidget"/>. Runs on the UI thread.
 /// </summary>
 internal static class MenuDispatch
 {
@@ -95,6 +97,28 @@ internal static class MenuDispatch
             case "activate":
                 if (words.Length >= 3) { menu.ActiveIndex = EntryIndex(menu, words[2]); }
                 return "";
+
+            case "xposition":
+            case "yposition":
+            {
+                if (words.Length != 3) { throw BridgeRegistrar.WrongArgs(path + " " + sub + " index"); }
+
+                // Tk: the entry's left (x) or top (y) edge in the menu window;
+                // a number past the last entry means the last entry, and
+                // "none" (or no such entry at all) reports 0.
+                int index = EntryIndex(menu, words[2]);
+                int number;
+                if (int.TryParse(words[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out number) &&
+                    number < 0)
+                {
+                    throw new TkTclError("bad menu entry index \"" + words[2] + "\"");
+                }
+                if (index >= menu.Entries.Count) { index = menu.Entries.Count - 1; }
+                if (index < 0) { return "0"; }
+
+                SKRectI rect = menu.EntryRect(index);
+                return (sub == "xposition" ? rect.Left : rect.Top).ToString(CultureInfo.InvariantCulture);
+            }
 
             case "type":
                 if (words.Length >= 3)
@@ -229,7 +253,10 @@ internal static class MenuDispatch
         }
     }
 
-    /// <summary>Resolves a Tk menu entry index (number, end, last, active, or a label match).</summary>
+    /// <summary>
+    /// Resolves a Tk menu entry index (number, end, last, active, none,
+    /// <c>@y</c> / <c>@x,y</c>, or a label match).
+    /// </summary>
     private static int EntryIndex(MenuWidget menu, string index)
     {
         switch (index)
@@ -241,6 +268,11 @@ internal static class MenuDispatch
                 return menu.ActiveIndex;
             case "none":
                 return -1;
+        }
+
+        if (index.Length > 1 && index[0] == '@')
+        {
+            return EntryIndexAt(menu, index);
         }
 
         int value;
@@ -255,5 +287,42 @@ internal static class MenuDispatch
         }
 
         throw new TkTclError("bad menu entry index \"" + index + "\"");
+    }
+
+    /// <summary>
+    /// The <c>@y</c> / <c>@x,y</c> index form: the entry whose rectangle holds
+    /// the point (separators included, as in Tk), or -1 ("none") when the
+    /// point is outside every entry. A popup menu uses y, a menubar x.
+    /// </summary>
+    private static int EntryIndexAt(MenuWidget menu, string index)
+    {
+        string coords = index.Substring(1);
+        string xText = null;
+        string yText = coords;
+        int comma = coords.IndexOf(',');
+        if (comma >= 0)
+        {
+            xText = coords.Substring(0, comma);
+            yText = coords.Substring(comma + 1);
+        }
+
+        int x = 0;
+        int y;
+        if ((xText != null && !int.TryParse(xText, NumberStyles.Integer, CultureInfo.InvariantCulture, out x)) ||
+            !int.TryParse(yText, NumberStyles.Integer, CultureInfo.InvariantCulture, out y))
+        {
+            throw new TkTclError("bad menu entry index \"" + index + "\"");
+        }
+        if (xText == null) { x = y; }
+
+        for (int i = 0; i < menu.Entries.Count; i++)
+        {
+            SKRectI rect = menu.EntryRect(i);
+            if (menu.IsMenubar ? (x >= rect.Left && x < rect.Right) : (y >= rect.Top && y < rect.Bottom))
+            {
+                return i;
+            }
+        }
+        return -1;
     }
 }

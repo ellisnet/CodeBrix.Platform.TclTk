@@ -872,7 +872,10 @@ picks the wrong one. Boolean results follow BooleanResultMode (section
 --------------------------------------------
 Script side: the full [trace] command — trace add/remove/info for
 variable (read/write/unset/array), command (rename/delete) and execution
-traces (see the divergence notes in section 15).
+traces (see the divergence notes in section 15). As in Tcl, an unset
+callback sees the variable as already gone ([info exists] is 0), and a
+scalar variable the callback sets again survives the unset (with any
+traces the callback re-added).
 
 C# side: a trace is an ITrace whose Execute fires on variable access.
     delegate ReturnCode TraceCallback(BreakpointType breakpointType,
@@ -1001,7 +1004,9 @@ changed afterward, so nothing can flip it mid-run and desync your scripts):
 -------------------------------------------------------------
   * "binary format" integers wider than 64 bits wrap instead of erroring.
   * trace's variable "array" operation is accepted but never fires;
-    command delete traces fire only for deletions via [rename].
+    command delete traces fire only for deletions via [rename]; an unset
+    callback can recreate a scalar variable but not an array or an array
+    element (the unset still completes).
   * "string is dict" (not in tclsh either), "file owned", and the
     "chan eof"/"chan blocked" aliases are unimplemented.
   * Boolean rendering: section 14.

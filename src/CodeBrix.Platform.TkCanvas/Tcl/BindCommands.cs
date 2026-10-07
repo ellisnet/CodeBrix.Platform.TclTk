@@ -249,7 +249,7 @@ internal static class BindCommands
                     result.Append(tkEvent.Height.ToString(CultureInfo.InvariantCulture));
                     break;
                 case 's':
-                    result.Append(((int)tkEvent.State).ToString(CultureInfo.InvariantCulture));
+                    result.Append(TkWindowingSystem.StateValue(tkEvent.State, ctx.Tree.WindowingSystem).ToString(CultureInfo.InvariantCulture));
                     break;
                 case 'T':
                     result.Append(((int)tkEvent.Type).ToString(CultureInfo.InvariantCulture));

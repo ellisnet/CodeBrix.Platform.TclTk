@@ -368,6 +368,12 @@ WIDGETS — the classes (all constructors take the owning TkWindow)
         int Size; IReadOnlyList<string> Items; int Active
         void Insert(int index, params string[] values)
         void Delete(int first, int last = -1)
+            (as in Tk, the selection stays on the same items: it moves with
+             inserts and deletes; a deleted item's selection goes with it)
+        void SetItems(IEnumerable<string> items)
+            replaces the whole list — what a -listvariable write does: no
+            <<ListboxSelect>>, selected indices past the new end are dropped,
+            the rest stay selected, the view is clamped
         string Get(int index)
         IReadOnlyList<int> CurSelection()
         void SelectionSet(int index)
@@ -377,6 +383,8 @@ WIDGETS — the classes (all constructors take the owning TkWindow)
         void YViewMoveTo(double fraction); void YViewScroll(int count, bool pages)
         fires the <<ListboxSelect>> virtual event on selection change
         options: -height -width -font -selectmode
+                 -listvariable (Tcl bridge only: see "Registered command
+                 surface" in THE Tcl COMMAND BRIDGE)
 
     TreeviewWidget(TkWindow)               "Treeview"
         event Action<double, double> YScrollChanged
@@ -392,6 +400,11 @@ WIDGETS — the classes (all constructors take the owning TkWindow)
         void SetOpen(string id, bool open)
         IReadOnlyList<string> VisibleItems()
         string ItemAt(int y)
+        SKRectI? BBox(string id, int column = -1)
+            the row (column -1) or one cell (0 = the #0 tree column, c = the
+            c-th value column) in window coordinates; null when the item is
+            not visible (closed ancestor, scrolled above the view, or starting
+            below its bottom edge — a row cut off by the bottom edge counts)
         void YViewMoveTo(double fraction); void YViewScroll(int count, bool pages)
         (every cell - the #0 tree column, each value column and the headings -
          is hard-clipped to its column when painted, as ttk does; no ellipsis)
@@ -557,6 +570,14 @@ EVENTS — bind, dispatch and synthetic input (Events)
     [Flags] public enum EventModifiers { None, Shift, Lock, Control, Alt,
         Meta, Command, Button1, Button2, Button3, Button4, Button5, Double,
         Triple, Quadruple }
+        Alt is the Alt key (the Option key on macOS); Command is the macOS
+        Command key. TkHostView reports Command only when the tree's
+        WindowingSystem is "aqua" (the CodeBrix.Platform macOS head delivers
+        the Command key as the Windows key/flag). Pattern names: under x11
+        "Command"/"Mod1"/"M1" mean Alt; under aqua they mean Command and
+        "Option"/"Mod2"/"M2" mean Alt; under win32 they mean NumLock and never
+        fire (see "Modifiers follow the windowing system" in THE Tcl COMMAND
+        BRIDGE)
     public enum DispatchResult { Continue, Break }
     public delegate DispatchResult TkEventHandler(TkEvent tkEvent);
 
@@ -588,6 +609,8 @@ EVENTS — bind, dispatch and synthetic input (Events)
         ITextInputSink InputSink { get; set; }
         TkTheme Theme { get; set; }; OptionDatabase OptionDatabase
         TtkStyleEngine Styles
+        string WindowingSystem                  "x11" | "aqua" | "win32" (see
+                                                WindowingSystemMode)
         void SetPalette(IReadOnlyList<string> args)      (tk_setPalette)
         TkWindow FocusWindow; TkWindow GrabWindow { get; set; }
         TkWindow PointerWindow
@@ -863,6 +886,15 @@ MENUS (Menus)
 
 A menubar with -underline cascades answers Alt+<letter> traversal.
 
+Through the Tcl bridge a menu instance command also answers "xposition"
+and "yposition" (the entry's left / top edge in the menu window, from
+EntryRect; a number past the last entry means the last entry, "none" or an
+empty menu gives 0, a negative number is "bad menu entry index") and
+accepts the "@y" / "@x,y" index form everywhere an index is taken
+(separators are indexable; a point outside every entry is "none"). Menus
+have no tear-off entry: index 0 is the first entry added, even without
+"-tearoff 0".
+
 OVERLAY TOPLEVELS AND DIALOGS (Overlay, Dialogs)
 ------------------------------------------------
     public sealed class WindowManager           (tree.WindowManager — "wm")
@@ -1065,6 +1097,21 @@ THE Tcl COMMAND BRIDGE (TkBootstrap, Tcl)
             scripts back to the Tcl thread. Modal commands (tk_messageBox,
             tk_dialog, the file pickers) block the Tcl thread while the UI
             stays live.
+        static TkTclBridge Register(Interpreter interpreter, WindowTree tree,
+                WindowingSystemMode windowingSystemMode)
+        static TkTclBridge RegisterHosted(Interpreter interpreter, WindowTree tree,
+                WindowingSystemMode windowingSystemMode)
+            the same, choosing the windowing system (the two-argument forms
+            use HostNative); fixed for the tree by the first bridge — a
+            second bridge asking for a different one throws
+            InvalidOperationException
+    public enum WindowingSystemMode
+        HostNative (default)  behave as Tk on the host: "aqua" on macOS,
+                              "win32" on Windows, "x11" elsewhere
+        X11                   the opt-out: "x11" on every host
+        One switch moves everything that depends on it together, so they
+        never disagree: "tk windowingsystem", the modifier names in bind
+        patterns, the %s encoding and TkHostView's Command-key mapping.
         event Action<string> BackgroundError    bgerror analogue: the Tcl
                                                 error text of a failed
                                                 callback script
@@ -1116,6 +1163,41 @@ Registered command surface (all drive the widget classes above):
     bindtags; -command / -textvariable / -variable wired through the
     interpreter's variable traces (a check/radio group over one variable
     shares one ToggleVariable).
+  * listbox -listvariable, with Tk's semantics: the variable (always a
+    global name; namespace and array-element names work) holds the items
+    as a Tcl list; an existing variable fills the listbox, a missing one is
+    created from the items; any write to it (set, lappend, lset, from any
+    scope through global/upvar) replaces the items; insert/delete write the
+    list back (other write traces on it fire); unset recreates it at once
+    from the items and keeps the link (an unset array element stays unset,
+    the link stays); configure -listvariable to another
+    name or "" detaches the old variable (the listbox keeps its items);
+    destroy drops the link. A value that is not a valid list is an error:
+    at create/configure "unmatched open brace in list: invalid
+    -listvariable value" (nothing changes, no widget is created); on a
+    later write "can't set "NAME": invalid listvar value" with the previous
+    list put back. A change never fires <<ListboxSelect>>; selected
+    indices past the new end are dropped. No ttk widget takes
+    -listvariable (as in Tk).
+  * Modifiers follow the windowing system "tk windowingsystem" reports,
+    which the bridge's WindowingSystemMode chooses: by default (HostNative)
+    "aqua" on a macOS host, "win32" on a Windows host, "x11" elsewhere;
+    WindowingSystemMode.X11 forces "x11" on every host (for example to keep
+    a Mac behaving as before). Under x11, Command = Mod1 = M1 = Alt (the
+    Alt key) and %s reports Alt as 8. Under aqua, Command = Mod1 = M1 is
+    the Command key and Option = Mod2 = M2 = Alt is the Option key, so
+    <Command-KeyPress>, <Command-Return>, <Command-Shift-KeyPress> fire on
+    the Command key and %s reports Command as 8 and Option as 16, as Tk on
+    macOS does. Under win32, as in Tk on Windows, Mod1 = M1 = Command is
+    NumLock (never reported by the toolkit, so those bindings never fire),
+    Alt stays the Alt key and %s reports it as 131072 (0x20000). "Cmd" is
+    not a modifier name (Tk rejects it). Choose the mode before binding
+    Command/Mod1/Option patterns from C# code: the tree reads modifier
+    names by the system in force when the binding is made.
+  * ttk::treeview "bbox item ?column?" returns "x y width height" (the row,
+    or the cell of a column given as #N or by name) or "" when the item is
+    not visible, with Tk's errors ("Item X not found", "Column #N out of
+    range", "Invalid column index X").
   * Windowing: wm (title/geometry/withdraw/deiconify/transient/
     overrideredirect/resizable/minsize/maxsize), winfo, destroy, focus, grab,
     raise/lower.
@@ -1624,6 +1706,16 @@ FIDELITY NOTES / KNOWN EDGES
     minimally within a third of the view of an edge and centres otherwise).
   * Overlay resize bands (6 px inside each frame edge) give no cursor
     feedback: the host layer has no cursor plumbing.
+  * "tk windowingsystem" is "aqua" on a macOS host, "win32" on a Windows
+    host and "x11" elsewhere, or "x11" everywhere with
+    WindowingSystemMode.X11; the modifier names follow it (see THE Tcl
+    COMMAND BRIDGE). The %k (keycode) and %N
+    (keysym number) substitutions are not produced; scripts that compare
+    them should fall back to %K, as portable Tk code does.
+  * Menus have no tear-off entry (Tk's default -tearoff 1 adds one at index
+    0). Through the bridge a treeview's "heading" and "column" subcommands
+    are accepted and ignored, so a Tcl-built treeview has no heading row
+    and fixed-width value columns (bbox reports that geometry).
 
 HEADLESS / CUSTOM HOSTS
 =======================

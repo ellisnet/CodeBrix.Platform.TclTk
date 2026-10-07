@@ -34,6 +34,18 @@ public sealed class BindingTable
             new Dictionary<string, Dictionary<EventPattern, TkEventHandler>>(StringComparer.Ordinal);
 
     /// <summary>
+    /// Supplies the windowing system whose modifier names patterns are read
+    /// with (the owning tree's); the host's native system when unset.
+    /// </summary>
+    internal Func<string> WindowingSystemSource { get; set; }
+
+    private EventPattern ParsePattern(string pattern)
+    {
+        Func<string> source = WindowingSystemSource;
+        return EventPattern.Parse(pattern, source != null ? source() : TkWindowingSystem.HostNative);
+    }
+
+    /// <summary>
     /// Registers (or replaces) the binding of <paramref name="pattern"/> on
     /// <paramref name="tag"/> — the analogue of <c>bind TAG PATTERN script</c>.
     /// </summary>
@@ -45,7 +57,7 @@ public sealed class BindingTable
         if (string.IsNullOrEmpty(tag)) { throw new ArgumentException("empty bind tag", nameof(tag)); }
         if (handler == null) { throw new ArgumentNullException(nameof(handler)); }
 
-        EventPattern parsed = EventPattern.Parse(pattern);
+        EventPattern parsed = ParsePattern(pattern);
         Dictionary<EventPattern, TkEventHandler> patterns;
         if (!_byTag.TryGetValue(tag, out patterns))
         {
@@ -67,7 +79,7 @@ public sealed class BindingTable
         Dictionary<EventPattern, TkEventHandler> patterns;
         if (_byTag.TryGetValue(tag, out patterns))
         {
-            patterns.Remove(EventPattern.Parse(pattern));
+            patterns.Remove(ParsePattern(pattern));
         }
     }
 

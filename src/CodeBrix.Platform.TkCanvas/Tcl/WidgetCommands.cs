@@ -69,6 +69,14 @@ internal static class WidgetCommands
         string path = words[1];
         Dictionary<string, string> options = BridgeRegistrar.ParseOptionPairs(words, 2);
 
+        // Tk refuses a listbox whose -listvariable holds an invalid list; the
+        // widget is never created.
+        string listVariable;
+        if (kind == "listbox" && options.TryGetValue("-listvariable", out listVariable))
+        {
+            VariableLinks.ValidateListVariable(ctx, listVariable);
+        }
+
         ctx.Ui(() =>
         {
             string parentPath;
@@ -281,12 +289,21 @@ internal static class WidgetCommands
 
     /// <summary>
     /// Applies the option links that live in the interpreter (variable
-    /// traces): <c>-textvariable</c> and <c>-variable</c>. Runs on the Tcl
-    /// thread; called at creation and by <c>configure</c>.
+    /// traces): <c>-textvariable</c>, <c>-variable</c> and a listbox's
+    /// <c>-listvariable</c>. Runs on the Tcl thread; called at creation and
+    /// by <c>configure</c>.
     /// </summary>
     internal static void ApplyLinkedOptions(
         BridgeContext ctx, string path, IReadOnlyDictionary<string, string> options)
     {
+        string listVariable;
+        if (options.TryGetValue("-listvariable", out listVariable) &&
+            ctx.Ui(() => ctx.ResolveWindow(path).Widget is ListboxWidget ? "1" : "0") == "1")
+        {
+            if (listVariable.Length > 0) { ctx.VarLinks.LinkList(ctx, path, listVariable); }
+            else { ctx.VarLinks.UnlinkList(ctx, path); }
+        }
+
         string textVariable;
         if (options.TryGetValue("-textvariable", out textVariable) && textVariable.Length > 0)
         {

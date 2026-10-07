@@ -19,6 +19,8 @@ namespace CodeBrix.Platform.TkCanvas.Widgets;
 /// <c>yview</c> — with the <c>&lt;&lt;ListboxSelect&gt;&gt;</c> virtual event
 /// fired on selection change and the <c>-yscrollcommand</c> surfaced through
 /// <see cref="YScrollChanged"/> so a scrollbar can track it.
+/// <see cref="SetItems"/> replaces the whole list (the <c>-listvariable</c>
+/// path).
 /// </summary>
 public sealed class ListboxWidget : WidgetBase
 {
@@ -114,6 +116,10 @@ public sealed class ListboxWidget : WidgetBase
     {
         if (index < 0 || index > _items.Count) { index = _items.Count; }
         _items.InsertRange(index, values);
+
+        // Tk keeps the selection on the same items: selected indices at or
+        // after the insertion point move down by the inserted count.
+        ShiftSelection(index, values.Length);
         Repaint();
     }
 
@@ -126,9 +132,47 @@ public sealed class ListboxWidget : WidgetBase
         first = Math.Max(0, first);
         last = Math.Min(_items.Count - 1, last);
         if (last < first) { return; }
-        _items.RemoveRange(first, last - first + 1);
-        _selection.Clear();
+        int count = last - first + 1;
+        _items.RemoveRange(first, count);
+
+        // Tk drops the deleted items' selection and moves the selection of
+        // the items after them up by the deleted count.
+        for (int i = first; i <= last; i++) { _selection.Remove(i); }
+        ShiftSelection(last + 1, -count);
         Repaint();
+    }
+
+    /// <summary>
+    /// Replaces the whole item list — what a <c>-listvariable</c> write does.
+    /// As in Tk, selected indices past the new end are dropped, the rest stay
+    /// selected by index, no <c>&lt;&lt;ListboxSelect&gt;&gt;</c> fires, and
+    /// the view is clamped to the new length.
+    /// </summary>
+    /// <param name="items">The new items, in order.</param>
+    public void SetItems(IEnumerable<string> items)
+    {
+        int oldCount = _items.Count;
+        _items.Clear();
+        if (items != null) { _items.AddRange(items); }
+        _selection.RemoveWhere(i => i >= _items.Count);
+        if (_items.Count != oldCount)
+        {
+            ClampTop();
+            NotifyScroll();
+        }
+        Repaint();
+    }
+
+    private void ShiftSelection(int from, int delta)
+    {
+        if (delta == 0 || _selection.Count == 0) { return; }
+        var shifted = new List<int>();
+        foreach (int index in _selection)
+        {
+            shifted.Add(index >= from ? index + delta : index);
+        }
+        _selection.Clear();
+        foreach (int index in shifted) { _selection.Add(index); }
     }
 
     /// <summary>The item text at an index — <c>get index</c>.</summary>

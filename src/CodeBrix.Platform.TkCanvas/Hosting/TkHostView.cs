@@ -12,8 +12,6 @@ using Microsoft.UI.Xaml.Input;
 
 using SkiaSharp.Views.Windows;
 
-using Windows.System;
-
 using XamlCanvas = Microsoft.UI.Xaml.Controls.Canvas;
 
 namespace CodeBrix.Platform.TkCanvas.Hosting;
@@ -365,7 +363,7 @@ public sealed class TkHostView : Grid
         _lastPressY = y;
 
         _root.Tree.PointerEvent(TkEventType.ButtonPress, x, y, button,
-                Modifiers(args), 0, _clickCount);
+                Modifiers(args, Tree), 0, _clickCount);
         _root.Tree.Scheduler.UpdateIdleTasks();
 
         // Keyboard always routes through the hidden input element; (re)take
@@ -378,7 +376,7 @@ public sealed class TkHostView : Grid
     {
         var point = args.GetCurrentPoint(_surface);
         _root.Tree.PointerEvent(TkEventType.Motion,
-                (int)point.Position.X, (int)point.Position.Y, 0, Modifiers(args));
+                (int)point.Position.X, (int)point.Position.Y, 0, Modifiers(args, Tree));
         _root.Tree.Scheduler.UpdateIdleTasks();
     }
 
@@ -389,7 +387,7 @@ public sealed class TkHostView : Grid
         if (button == 0) { button = _lastPressButton; }
         if (button == 0) { button = 1; }
         _root.Tree.PointerEvent(TkEventType.ButtonRelease,
-                (int)point.Position.X, (int)point.Position.Y, button, Modifiers(args));
+                (int)point.Position.X, (int)point.Position.Y, button, Modifiers(args, Tree));
         _root.Tree.Scheduler.UpdateIdleTasks();
         args.Handled = true;
     }
@@ -399,7 +397,7 @@ public sealed class TkHostView : Grid
         var point = args.GetCurrentPoint(_surface);
         int delta = point.Properties.MouseWheelDelta;
         _root.Tree.PointerEvent(TkEventType.MouseWheel,
-                (int)point.Position.X, (int)point.Position.Y, 0, Modifiers(args), delta);
+                (int)point.Position.X, (int)point.Position.Y, 0, Modifiers(args, Tree), delta);
         _root.Tree.Scheduler.UpdateIdleTasks();
         args.Handled = true;
     }
@@ -422,13 +420,9 @@ public sealed class TkHostView : Grid
         }
     }
 
-    private static EventModifiers Modifiers(PointerRoutedEventArgs args)
+    private static EventModifiers Modifiers(PointerRoutedEventArgs args, WindowTree tree)
     {
-        EventModifiers state = EventModifiers.None;
-        VirtualKeyModifiers mods = args.KeyModifiers;
-        if ((mods & VirtualKeyModifiers.Shift) != 0) { state |= EventModifiers.Shift; }
-        if ((mods & VirtualKeyModifiers.Control) != 0) { state |= EventModifiers.Control; }
-        if ((mods & VirtualKeyModifiers.Menu) != 0) { state |= EventModifiers.Alt; }
-        return state;
+        // Shift/Control/Alt, plus Command under aqua (the head's Windows flag).
+        return TkKeyMapper.FromVirtualKeyModifiers(args.KeyModifiers, tree.WindowingSystem);
     }
 }

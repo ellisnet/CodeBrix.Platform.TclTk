@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
 
+using CodeBrix.Platform.TkCanvas.Events;
 using CodeBrix.Platform.TkCanvas.Overlay;
 using CodeBrix.Platform.TkCanvas.Windowing;
 using CodeBrix.Platform.TkCanvas.Canvas;
@@ -26,7 +27,12 @@ internal static class WindowCommands
     {
         BridgeRegistrar.Add(ctx, "wm", words => ctx.Ui(() => Wm(ctx, words)));
         BridgeRegistrar.Add(ctx, "winfo", words => ctx.Ui(() => Winfo(ctx, words)));
-        BridgeRegistrar.Add(ctx, "destroy", words => ctx.Ui(() => Destroy(ctx, words)));
+        BridgeRegistrar.Add(ctx, "destroy", words =>
+        {
+            string result = ctx.Ui(() => Destroy(ctx, words));
+            ctx.VarLinks.UnlinkDestroyedLists(ctx);
+            return result;
+        });
         BridgeRegistrar.Add(ctx, "focus", words => ctx.Ui(() => Focus(ctx, words)));
         BridgeRegistrar.Add(ctx, "grab", words => ctx.Ui(() => Grab(ctx, words)));
         BridgeRegistrar.Add(ctx, "raise", words => ctx.Ui(() => RaiseLower(ctx, words, true)));
@@ -376,7 +382,7 @@ internal static class WindowCommands
         switch (words[1])
         {
             case "appname": return "tk";
-            case "windowingsystem": return "x11";
+            case "windowingsystem": return ctx.Tree.WindowingSystem;
             case "scaling":
                 return words.Length >= 3 ? "" : TclString.FormatDouble(TclString.PixelsPerInch / 72.0);
             default: return "";

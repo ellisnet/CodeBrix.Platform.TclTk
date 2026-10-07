@@ -21,13 +21,21 @@ public enum EventModifiers
     /// <summary>The Control key (<c>Control-</c>).</summary>
     Control = 1 << 2,
 
-    /// <summary>Mod1 — the Alt key on typical X servers (<c>Alt-</c>/<c>Mod1-</c>).</summary>
+    /// <summary>
+    /// The Alt key: Mod1 on X servers (<c>Alt-</c>/<c>Mod1-</c>/<c>M1-</c>/
+    /// <c>Command-</c>); on macOS the Option key (<c>Alt-</c>/<c>Option-</c>/
+    /// <c>Mod2-</c>/<c>M2-</c>).
+    /// </summary>
     Alt = 1 << 3,
 
     /// <summary>The Meta key (<c>Meta-</c>).</summary>
     Meta = 1 << 4,
 
-    /// <summary>The macOS Command key (<c>Command-</c>).</summary>
+    /// <summary>
+    /// The macOS Command key (<c>Command-</c>/<c>Mod1-</c>/<c>M1-</c> when the
+    /// toolkit behaves as Tk on macOS; under x11 those names mean
+    /// <see cref="Alt"/>).
+    /// </summary>
     Command = 1 << 5,
 
     /// <summary>Mouse button 1 held (<c>B1-</c>).</summary>

@@ -18,9 +18,9 @@ namespace CodeBrix.Platform.TkCanvas.Tcl;
 /// toolkit.
 /// </summary>
 /// <remarks>
-/// <para><b>Threading.</b> <see cref="Register"/> creates a DIRECT bridge:
+/// <para><b>Threading.</b> <see cref="Register(Interpreter, WindowTree)"/> creates a DIRECT bridge:
 /// everything runs on the calling thread (headless use, tests — bind and
-/// -command scripts run inline, like real Tk). <see cref="RegisterHosted"/>
+/// -command scripts run inline, like real Tk). <see cref="RegisterHosted(Interpreter, WindowTree)"/>
 /// creates the hosted apartment: the interpreter runs on a dedicated Tcl
 /// worker thread, Tk commands marshal synchronously to the UI thread, and
 /// UI events post their callback scripts back to the Tcl thread — so modal
@@ -33,6 +33,12 @@ public sealed class TkTclBridge : IDisposable
 {
     private readonly BridgeContext _context;
     private readonly BridgeApartment _apartment;
+
+    /// <summary>The bridge's shared state (path registries; used by tests).</summary>
+    internal BridgeContext Context
+    {
+        get { return _context; }
+    }
 
     private TkTclBridge(BridgeContext context, BridgeApartment apartment)
     {
@@ -54,7 +60,24 @@ public sealed class TkTclBridge : IDisposable
     /// <returns>The bridge instance.</returns>
     public static TkTclBridge Register(Interpreter interpreter, WindowTree tree)
     {
-        return RegisterCore(interpreter, tree, null);
+        return Register(interpreter, tree, WindowingSystemMode.HostNative);
+    }
+
+    /// <summary>
+    /// Registers the Tk command surface in DIRECT mode, choosing the
+    /// windowing system the tree behaves as. <see cref="WindowingSystemMode.X11"/>
+    /// is the opt-out from the host-native default: <c>tk windowingsystem</c>
+    /// reports <c>x11</c> and the modifier names follow x11 on every host.
+    /// The choice is fixed for the tree once made.
+    /// </summary>
+    /// <param name="interpreter">The interpreter to register on.</param>
+    /// <param name="tree">The widget tree to drive.</param>
+    /// <param name="windowingSystemMode">The windowing system to behave as.</param>
+    /// <returns>The bridge instance.</returns>
+    public static TkTclBridge Register(Interpreter interpreter, WindowTree tree,
+        WindowingSystemMode windowingSystemMode)
+    {
+        return RegisterCore(interpreter, tree, null, windowingSystemMode);
     }
 
     /// <summary>
@@ -68,6 +91,24 @@ public sealed class TkTclBridge : IDisposable
     /// <returns>The bridge instance.</returns>
     public static TkTclBridge RegisterHosted(Interpreter interpreter, WindowTree tree)
     {
+        return RegisterHosted(interpreter, tree, WindowingSystemMode.HostNative);
+    }
+
+    /// <summary>
+    /// Registers the Tk command surface in HOSTED mode, choosing the
+    /// windowing system the tree (and so the <c>Hosting.TkHostView</c> key
+    /// and pointer mapping) behaves as. <see cref="WindowingSystemMode.X11"/>
+    /// is the opt-out from the host-native default (for example, to keep
+    /// <c>tk windowingsystem</c> at <c>x11</c> on a Mac). The choice is fixed
+    /// for the tree once made.
+    /// </summary>
+    /// <param name="interpreter">The interpreter to register on.</param>
+    /// <param name="tree">The widget tree to drive.</param>
+    /// <param name="windowingSystemMode">The windowing system to behave as.</param>
+    /// <returns>The bridge instance.</returns>
+    public static TkTclBridge RegisterHosted(Interpreter interpreter, WindowTree tree,
+        WindowingSystemMode windowingSystemMode)
+    {
         if (tree == null) { throw new ArgumentNullException(nameof(tree)); }
 
         ITkDispatcher dispatcher = tree.Scheduler.Host;
@@ -78,14 +119,17 @@ public sealed class TkTclBridge : IDisposable
                 "use Register for headless/direct operation.");
         }
 
-        return RegisterCore(interpreter, tree, dispatcher);
+        return RegisterCore(interpreter, tree, dispatcher, windowingSystemMode);
     }
 
     private static TkTclBridge RegisterCore(
-        Interpreter interpreter, WindowTree tree, ITkDispatcher dispatcher)
+        Interpreter interpreter, WindowTree tree, ITkDispatcher dispatcher,
+        WindowingSystemMode windowingSystemMode)
     {
         if (interpreter == null) { throw new ArgumentNullException(nameof(interpreter)); }
         if (tree == null) { throw new ArgumentNullException(nameof(tree)); }
+
+        tree.FixWindowingSystem(TkWindowingSystem.Resolve(windowingSystemMode == WindowingSystemMode.X11));
 
         var apartment = new BridgeApartment(dispatcher);
         var context = new BridgeContext(interpreter, tree, apartment);
