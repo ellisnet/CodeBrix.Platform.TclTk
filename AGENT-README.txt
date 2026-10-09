@@ -626,17 +626,24 @@ TkCanvas bridge uses for hosted Tcl/Tk apps.
     Name, bool IsAlive, bool IsBusy, bool IsDisposed, ReturnCode
     ReturnCode, Result Result, int Timeout, bool IsBackground, IHost Host,
     CreateFlags CreateFlags, HostCreateFlags HostCreateFlags, ...
-    ScriptThread is IDisposable (dispose stops the thread and disposes
-    its interpreter).
+    The ScriptThread CLASS is IDisposable (dispose stops the thread and
+    disposes its interpreter); the IScriptThread INTERFACE that Create
+    returns is not, so `using (IScriptThread ...)` does not compile - cast
+    to IDisposable to dispose it.
 
     Example:
         Result error = null;
-        using (IScriptThread worker = ScriptThread.Create(null, ref error))
+        IScriptThread worker = ScriptThread.Create(null, ref error);
+        if (worker == null) throw new InvalidOperationException(error);
+        try
         {
-            if (worker == null) throw new InvalidOperationException(error);
             Result result = null;
             worker.Send("proc fib {n} { expr {$n < 2 ? $n : [fib [expr {$n-1}]] + [fib [expr {$n-2}]]} }; fib 20", ref result);
             Console.WriteLine(result);   // 6765
+        }
+        finally
+        {
+            (worker as IDisposable)?.Dispose();
         }
 
 Threading rules for the plain Interpreter: drive one interpreter from one
@@ -666,7 +673,8 @@ when you host a Tk UI.
 A host is the interpreter's console/IO surface: [puts] to stdout, prompts,
 title, colors, "read line". IHost is the union of IDisplayHost,
 IInteractiveHost, IFileSystemHost, IThreadHost, IProcessHost,
-IStreamHost, IDebugHost (and more). The part you interact with:
+IStreamHost, IDebugHost, IReadHost, IWriteHost and IInformationHost. The
+part you interact with:
 
     public interface IInteractiveHost : IIdentifier
     {

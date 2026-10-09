@@ -128,7 +128,7 @@ surface, for CodeBrix.Platform applications and for headless use.
 * A Tcl command bridge that registers the classic Tk command surface on a CodeBrix.Platform.TclTk
   interpreter, so an unmodified Tcl/Tk program presents its user interface through this toolkit
 * Identical rendering and measurement on every platform: the toolkit draws with the font packages it
-  brings with it and never with an operating-system font
+  brings with it and, unless the application opts in, never with an operating-system font
 * Headless operation - build a window tree, lay it out and render it to an image with no display
 
 ## Sample Code

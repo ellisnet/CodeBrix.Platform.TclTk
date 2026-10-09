@@ -1319,7 +1319,9 @@ COMPLETE EXAMPLES
 There is deliberately no live two-way binding between widget state and
 view-model properties. When the view model needs widget state, expose
 Func/Action properties behind a small interface and wire them in
-DataContextChanged — the whole code-behind stays this size:
+DataContextChanged — the whole code-behind stays this size. ITkWidgetBridge
+below is the APPLICATION's own view-model interface (two delegate
+properties, GetEntryText and AppendOutputLine), not a toolkit type:
 
     public sealed partial class MainPage : Page
     {
@@ -1499,8 +1501,13 @@ with SetForcedSize, and call interpreter.EvaluateScript directly.
 
 5. Headless: build, lay out, render to a PNG
 --------------------------------------------
+    using System.Collections.Generic;
     using SkiaSharp;
+    using CodeBrix.Platform.TkCanvas.Events;
+    using CodeBrix.Platform.TkCanvas.Layout;
     using CodeBrix.Platform.TkCanvas.Rendering;
+    using CodeBrix.Platform.TkCanvas.Widgets;
+    using CodeBrix.Platform.TkCanvas.Windowing;
 
     TkWindow root = TkWindow.CreateRoot();
     root.SetForcedSize(320, 200);
@@ -1605,8 +1612,8 @@ CodeBrix.Develop "new application" template and samples/DRAKON.Brix use):
     </Page>
 
 Other heads swap only the head package and the UseXxx() call (UseLinuxWayland,
-UseLinuxFrameBuffer, UseMacOS, UseWin32Skia, UseWpfSkia per the platform's
-own AGENT-README). For a Tcl-driven UI the page is just the empty
+UseLinuxFrameBuffer, UseMacOS, UseWindowsWin32, UseWindowsWpf per the
+platform's own AGENT-README). For a Tcl-driven UI the page is just the empty
 TkHostView plus example 4.
 
 PERFORMANCE TIPS
